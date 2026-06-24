@@ -15,3 +15,8 @@
 **/.fastembed_cache/
 .illuminate/
 **/.illuminate/
+
+# frontend (Vite/React app)
+**/node_modules
+app/dist
+*.tsbuildinfo
