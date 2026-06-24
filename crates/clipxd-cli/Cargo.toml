@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 clipxd-index = { path = "../clipxd-index" }
 clipxd-import = { path = "../clipxd-import" }
+clipxd-browser = { path = "../clipxd-browser" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }

@@ -30,6 +30,10 @@
 | 14 | [risks-and-open-questions.md](risks-and-open-questions.md) | What could sink it, and the decisions still open. |
 | 15 | [glossary.md](glossary.md) | Terms used across these docs. |
 
+**Design / build references** (deeper dives, generated as the build progressed):
+| — | [reference-analysis.md](reference-analysis.md) | Cap / OpenVid / ScreenArc: what to take, what licenses forbid, what to clean-room. |
+| — | [phase2-browser-spec.md](phase2-browser-spec.md) | The browser-trace format + ingest mapping + salience model (Phase 2, built). |
+
 ## The one-paragraph version
 
 The screen-recorder market is solved for *humans*: Cap nailed instant + studio capture and cursor auto-zoom; Screen Studio nailed cinematic zoom, backgrounds, and device mockups. Nobody has solved it for *agents*. clipxd rebuilds that capture + beautification layer as one fast, owned Rust tool, and then does the part nobody does: turns every recording into a structured **index** an agent can query **from the URL, without downloading the video.** The recorder gets adoption. The index is the moat.

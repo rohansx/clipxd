@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Checkout — app.example.com</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0d1117; color:#e6edf3; margin:0; padding:48px; }
+    h1 { font-size: 22px; font-weight: 600; }
+    .total { font-size: 28px; margin: 24px 0; color:#c9d1d9; }
+    button { font-size: 18px; padding: 12px 22px; border-radius: 8px; border: 0;
+             background:#1f6feb; color:#fff; cursor:pointer; }
+    button[disabled] { opacity:.6; cursor:default; }
+    #status { margin-top: 28px; font-size: 18px; min-height: 28px; }
+    .toast { margin-top: 24px; padding: 18px 22px; border-radius: 8px; font-size: 20px;
+             background:#f6cccc; color:#8a0f0f; font-weight:600; }
+  </style>
+</head>
+<body>
+  <h1>Checkout — app.example.com</h1>
+  <div class="total" aria-label="order total">Total: USD 42.00</div>
+  <button id="place-order" aria-label="Place order">Place order</button>
+  <div id="status" role="status"></div>
+  <div id="notifications"></div>
+
+  <script>
+    const btn = document.getElementById('place-order');
+    const status = document.getElementById('status');
+    const notifications = document.getElementById('notifications');
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      status.textContent = 'Processing your payment...';
+      try {
+        const res = await fetch('/api/checkout', { method: 'POST', body: JSON.stringify({ amount: 4200 }) });
+        if (!res.ok) throw new Error('Payment failed (' + res.status + ')');
+        status.textContent = 'Done!';
+      } catch (err) {
+        // console error (captured by the trace) + a visible error toast (DOM mutation + a11y text)
+        console.error('Checkout failed:', err.message);
+        status.textContent = '';
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.setAttribute('role', 'alert');
+        toast.textContent = 'ERROR: Payment failed (500)';
+        notifications.appendChild(toast);
+      }
+    });
+  </script>
+</body>
+</html>

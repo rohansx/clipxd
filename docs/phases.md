@@ -28,23 +28,25 @@ The discipline: **each phase ships a usable thing and proves one risk.** Nothing
 
 ---
 
-## Phase 2 — browser backend · *cheap, exact capture for the common case*
+## Phase 2 — browser backend · *cheap, exact capture for the common case* · **BUILT & demo-proven**
 
 **Thesis it proves:** for web flows, the DOM beats video, and it produces the *same* index shape as import.
 
-**In**
-- `capture-browser`: CDP/Playwright/rrweb-style driver capturing **DOM mutations + a11y tree + console + network**, with sparse salient screenshots ([capture-backends §2](capture-backends.md#2-the-browser-backend)).
-- Normalizer: browser trace → raw-session contract (rich `event_track`: `console_error`, `network`, `dom_mutation`).
-- DOM-verbatim `on_screen_text` (no OCR needed in this mode).
-- Schema-identity tests: a browser clip and an import clip answer the same query shape.
+**Built** (crate `clipxd-browser`, spec [phase2-browser-spec.md](phase2-browser-spec.md)):
+- A clean-room **browser-trace JSON format** + ingestor: trace → clipxd `Index`, with no pixel codec.
+- Rich, lossless **`event_track`** (`navigation`, `click`, `network` w/ `is_error`, `console_error`, `dom_mutation`, `form_submit`).
+- DOM-verbatim **`on_screen_text`** (`source:"dom"`, `bbox:null`) — including searchable console + network-error lines; **masked field values never reach the index** (audited via `redaction.items`).
+- A **browser-salience model**: network ≥400, console errors, navigation, alert/toast mutations, and the **gesture→request join** (*"Clicked 'Place order' → POST /api/checkout (500)"*) with coalescing + novelty/habituation (a spinner doesn't flood; a 200→500 pattern-break still fires).
+- `clipxd ingest-browser <trace.json>`; served unchanged by `clipxd-mcp` (schema-identity).
+- A Playwright capture script (`scratchpad/browser/capture.mjs`) producing real traces.
 
 **Out**
 - Screen capture, cinematic layer (no pixels to beautify in pure browser mode).
-- DOM-level CloakPipe redaction *enforcement* (interface present; full enforcement in Phase 4).
+- DOM-level CloakPipe redaction *enforcement* (capture-side masking + markers present; full enforcement Phase 4).
 
-**Deliverable:** record a web bug-report flow → an index where an agent can read the console error, the failing request, and what was clicked right before.
+**Deliverable:** ✅ a real captured checkout-500 flow → an index where an agent reads the console error, the failing request, and what was clicked right before.
 
-**Gate:** a real QA/bug-report flow yields a correct agent answer; tests prove schema-identity with Phase 1.
+**Gate:** ✅ a **real Playwright-captured** flow yields the correct headline answer via CLI *and* MCP; 9 crate tests including a schema-identity round-trip vs Phase 1.
 
 ---
 

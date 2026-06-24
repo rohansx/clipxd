@@ -32,6 +32,17 @@ enum Cmd {
         #[arg(long)]
         salience_min: Option<f32>,
     },
+    /// Ingest a captured browser trace (DOM/console/network/a11y) into a clip index.
+    IngestBrowser {
+        /// Path to a `*.trace.json` (see docs/phase2-browser-spec.md).
+        trace: PathBuf,
+        /// Directory to write the clip into.
+        #[arg(long, default_value = "clips")]
+        out: PathBuf,
+        /// Override the salience floor (lower = more visual-timeline moments).
+        #[arg(long)]
+        salience_min: Option<f32>,
+    },
     /// Ask a question about a clip; answered from the index, no video needed.
     Query {
         /// A clip directory or an index.json path.
@@ -90,6 +101,44 @@ fn main() -> Result<()> {
                 r.index.event_track.len()
             );
             println!("  index:    {}", r.clip_dir.join("index.json").display());
+        }
+        Cmd::IngestBrowser { trace, out, salience_min } => {
+            let mut opts = clipxd_browser::SalienceOpts::default();
+            if let Some(s) = salience_min {
+                opts.salience_min = s;
+            }
+            let index = clipxd_browser::ingest_path(&trace, &opts)?;
+            let clip_dir = out.join(&index.id);
+            std::fs::create_dir_all(&clip_dir)?;
+            // copy referenced frames if a sibling `frames/` dir exists next to the trace
+            if let Some(parent) = trace.parent() {
+                let fsrc = parent.join("frames");
+                if fsrc.is_dir() {
+                    let fdst = clip_dir.join("frames");
+                    let _ = std::fs::create_dir_all(&fdst);
+                    if let Ok(entries) = std::fs::read_dir(&fsrc) {
+                        for e in entries.flatten() {
+                            let _ = std::fs::copy(e.path(), fdst.join(e.file_name()));
+                        }
+                    }
+                }
+            }
+            std::fs::write(
+                clip_dir.join("index.json"),
+                serde_json::to_string_pretty(&index)?,
+            )?;
+            println!("✓ ingested browser trace → {}", clip_dir.display());
+            println!(
+                "  source=browser  url={}",
+                index.metadata.url_context.as_deref().unwrap_or("-")
+            );
+            println!(
+                "  streams:  event_track={}  on_screen_text={}  visual_timeline={}",
+                index.event_track.len(),
+                index.on_screen_text.len(),
+                index.visual_timeline.len()
+            );
+            println!("  index:    {}", clip_dir.join("index.json").display());
         }
         Cmd::Query { clip, question } => {
             let idx = load_index(&clip)?;

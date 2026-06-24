@@ -23,6 +23,8 @@ So clipxd ships two capture backends with **different internals and an identical
 
 ## 2. The browser backend
 
+> **Status: BUILT (Phase 2).** Implemented as the `clipxd-browser` crate — a clean-room browser-trace ingestor (no pixel codec; salience derived from the event stream). Full design + the trace JSON format in [phase2-browser-spec.md](phase2-browser-spec.md). Proven on a *real* Playwright capture: the headline demo answers *"Clicked 'Place order' → POST /api/checkout (500)"* via CLI and MCP.
+
 ### What it captures
 - **DOM mutation stream** — every meaningful change to the page, as structured JSON (rrweb-class). This is the spine of the index's event track in browser mode.
 - **Accessibility tree snapshots** — roles, labels, names. This is *exact* on-screen text and structure with no OCR.

@@ -200,28 +200,62 @@ pub fn query_clip(index: &Index, question: &str) -> Answer {
     Answer { text, citations }
 }
 
-/// The most recent salient caption or transcript line strictly before `t`.
+/// What was happening just before `t`. Prefers the most recent **user action** — a click,
+/// a gesture→request cause→effect moment, a navigation — the real answer to "what was the
+/// user *doing*". Everything is strictly **before** `t` (never after — answering "what came
+/// before" with a later event would be backwards causality); a triggering action is still
+/// captured because it is recorded a hair before the symptom it causes. Falls back to the
+/// latest passive moment / transcript line when there is no action.
 fn before_context(index: &Index, t: f64) -> Option<(f64, String)> {
-    let mut candidates: Vec<(f64, String)> = Vec::new();
+    const ACTION_KINDS: &[&str] = &[
+        "click", "context_menu", "key", "input", "form_submit", "scroll", "navigate", "navigation",
+    ];
+    // cause→effect summaries (the gesture→request join) ARE "what the user did".
+    const ACTION_DELTAS: &[&str] = &["gesture_request"];
+    const LOOKBACK: f64 = 12.0;
+
+    let mut actions: Vec<(f64, String)> = Vec::new();
+    let mut others: Vec<(f64, String)> = Vec::new();
+
+    for e in &index.event_track {
+        if ACTION_KINDS.contains(&e.kind.as_str()) {
+            if e.t < t && e.t >= t - LOOKBACK {
+                let what = if e.kind == "click" || e.kind == "form_submit" {
+                    format!("clicked {}", quote_or(&e.text, "an element"))
+                } else {
+                    e.text.clone().unwrap_or_else(|| e.kind.clone())
+                };
+                actions.push((e.t, what));
+            }
+        } else if e.t < t - 0.05 {
+            others.push((e.t, e.text.clone().unwrap_or_else(|| e.kind.clone())));
+        }
+    }
     for m in &index.visual_timeline {
-        if m.t < t - 0.05 {
-            candidates.push((m.t, m.caption.clone()));
+        if ACTION_DELTAS.contains(&m.delta.as_str()) && m.t < t && m.t >= t - LOOKBACK {
+            actions.push((m.t, m.caption.clone()));
+        } else if m.t < t - 0.05 {
+            others.push((m.t, m.caption.clone()));
         }
     }
     for s in &index.transcript {
         if s.start < t - 0.05 {
-            candidates.push((s.start, s.text.clone()));
+            others.push((s.start, s.text.clone()));
         }
     }
-    for e in &index.event_track {
-        if e.t < t - 0.05 {
-            let what = e.text.clone().unwrap_or_else(|| e.kind.clone());
-            candidates.push((e.t, what));
-        }
+
+    let latest = |v: Vec<(f64, String)>| {
+        v.into_iter()
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+    };
+    latest(actions).or_else(|| latest(others))
+}
+
+fn quote_or(text: &Option<String>, fallback: &str) -> String {
+    match text {
+        Some(t) if !t.trim().is_empty() => format!("\"{}\"", t.trim()),
+        _ => fallback.to_string(),
     }
-    candidates
-        .into_iter()
-        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 #[cfg(test)]

@@ -1,0 +1,15 @@
+[package]
+name = "clipxd-browser"
+description = "Phase 2: ingest a browser trace (DOM mutations · a11y · console · network · clicks) into the SAME clipxd index. For web flows the DOM is the primitive — cheaper, exact, and more legible than captioning pixels. No pixel codec; salience is derived from the event stream."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clipxd-index = { path = "../clipxd-index" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
