@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target
+**/target
+**/*.rs.bk
+
+# OS / editor
+.DS_Store
+*.swp
+
+# clipxd: generated clip artifacts (video + frames + index live outside the repo)
+/clips
+
+# tool caches (embedding models, knowledge-graph DBs) — not source, can be huge
+.fastembed_cache/
+**/.fastembed_cache/
+.illuminate/
+**/.illuminate/

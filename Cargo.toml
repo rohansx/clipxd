@@ -1,0 +1,39 @@
+# clipxd — Cargo workspace.
+#
+# Phase 1 ships the agent-legible index from *imported* media: no capture backend yet
+# (those are Phase 2/3). The recorder is thin; the value is everything downstream that
+# turns a session into a queryable `index.json`.
+#
+# clipxd OWNS: the index schema, the import pipeline, the agent surface (MCP + JSON).
+# clipxd CONSUMES (path deps, versioned independently): veyo-core (the salience codec)
+# and veyo-enrich (transcript · OCR · caption). See docs/architecture.md.
+[workspace]
+resolver = "2"
+members = [
+    "crates/clipxd-index",    # the keystone: index.json schema + query (zero external deps)
+    "crates/clipxd-import",   # URL/file -> raw frames -> veyo gate -> veyo-enrich -> index
+    "crates/clipxd-cli",      # `clipxd import | query | info`
+    "crates/clipxd-mcp",      # MCP server over the index (the agent surface)
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"          # open-core: permissive core; commercial hosted/compliance layer
+repository = "https://github.com/rsx/clipxd"
+rust-version = "1.80"
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+anyhow = "1.0.102"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+clap = { version = "4.6", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+tokio = { version = "1.44", features = ["full"] }
+rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros"] }
+schemars = "1"
+# The engine + the meaning layer, consumed as path deps (sibling repo, ships independently).
+veyo-core = { path = "../veyo/crates/veyo-core" }
+veyo-enrich = { path = "../veyo/crates/veyo-enrich" }

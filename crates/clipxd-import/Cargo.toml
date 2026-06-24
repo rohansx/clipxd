@@ -1,0 +1,17 @@
+[package]
+name = "clipxd-import"
+description = "Phase 1: turn an existing video (URL or file) into a clipxd index — decode frames, run the veyo-core salience gate, enrich (veyo-enrich), and assemble index.json. No capture code; the fastest path to the agent-legible index."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clipxd-index = { path = "../clipxd-index" }
+veyo-core = { workspace = true }
+veyo-enrich = { workspace = true }
+image = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

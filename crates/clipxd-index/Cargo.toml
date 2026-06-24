@@ -1,0 +1,12 @@
+[package]
+name = "clipxd-index"
+description = "The clipxd clip-index schema and query surface — the structured object an agent queries from a clip's URL. Defined once; zero external deps beyond serde. THE product."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

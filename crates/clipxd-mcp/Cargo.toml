@@ -1,0 +1,23 @@
+[package]
+name = "clipxd-mcp"
+description = "MCP server over a clipxd clip index — the agent surface. Exposes query_clip / search_text / get_frame_context / get_events so any MCP agent reasons over a clip from text, without the video."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "clipxd-mcp"
+path = "src/main.rs"
+
+[dependencies]
+clipxd-index = { path = "../clipxd-index" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }

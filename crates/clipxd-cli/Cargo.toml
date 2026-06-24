@@ -1,0 +1,20 @@
+[package]
+name = "clipxd-cli"
+description = "The clipxd command line: import a video into an agent-queryable index, then query it from text."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "clipxd"
+path = "src/main.rs"
+
+[dependencies]
+clipxd-index = { path = "../clipxd-index" }
+clipxd-import = { path = "../clipxd-import" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
