@@ -6,6 +6,7 @@
 //! zoom track (beautify). This is the file-source path — the live `scap`/PipeWire backend
 //! produces the same `(frames, EventTrack)` and flows through here unchanged.
 
+use crate::capture::LiveCapture;
 use crate::{cinematic_track, to_index_events, EventTrack};
 use anyhow::{ensure, Result};
 use clipxd_cinematic::ZoomConfig;
@@ -54,6 +55,42 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
     let _ = std::fs::copy(video, clip_dir.join("video.mp4"));
+
+    Ok(RecordOutput { clip_dir, index, zoom_keyframes: zoom.len() })
+}
+
+/// Record a clip from a [`LiveCapture`] backend (frames already on disk — no ffmpeg
+/// extraction). This is the live-recording path: a `FramesDirCapture` today, a scap or
+/// PipeWire backend later, all flow through here identically.
+pub fn record_from_capture(cap: &dyn LiveCapture, id: &str, title: &str, out_dir: &Path) -> Result<RecordOutput> {
+    let info = cap.info();
+    let frames = cap.frames();
+    ensure!(!frames.is_empty(), "capture produced no frames");
+    let events = cap.events();
+
+    let clip_dir = out_dir.join(id);
+    std::fs::create_dir_all(&clip_dir)?;
+
+    let media_info = media::MediaInfo {
+        duration_s: info.duration_s,
+        width: info.width,
+        height: info.height,
+        fps: info.fps as f32,
+    };
+    let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
+    let enricher = Enricher::with_local_defaults();
+    let enrichment = enricher.enrich(&EnrichInput {
+        deltas: &gated.deltas,
+        frames: &gated.salient_frames,
+        audio: None,
+    })?;
+
+    let mut index = map::to_index(id, Source::Screen, &media_info, title, &unix_secs(), &enrichment);
+    index.event_track = to_index_events(&events);
+    let zoom = cinematic_track(&events, info.duration_s, &ZoomConfig { fps: info.fps, ..Default::default() });
+
+    std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
+    std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
 
     Ok(RecordOutput { clip_dir, index, zoom_keyframes: zoom.len() })
 }
