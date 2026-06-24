@@ -33,6 +33,21 @@ export async function fetchClip(c: Conn): Promise<Clip> {
   };
 }
 
+export type ZoomKeyframe = { t: number; scale: number; cx: number; cy: number };
+
+export async function fetchZoom(c: Conn): Promise<ZoomKeyframe[]> {
+  try {
+    const r = await fetch(`${c.api}/clip/${c.id}/zoom.json`);
+    return r.ok ? await r.json() : [];
+  } catch {
+    return [];
+  }
+}
+
+export function videoUrl(c: Conn): string {
+  return `${c.api}/clip/${c.id}/video`;
+}
+
 export async function askClip(c: Conn, q: string): Promise<{ a: string; cites: number[] }> {
   const r = await fetch(`${c.api}/clip/${c.id}/query?q=${encodeURIComponent(q)}`);
   const j = await r.json();

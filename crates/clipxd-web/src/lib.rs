@@ -28,6 +28,7 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/", get(list_clips))
         .route("/clip/:id", get(share_page))
         .route("/clip/:id/index.json", get(get_index))
+        .route("/clip/:id/zoom.json", get(get_zoom))
         .route("/clip/:id/query", get(get_query))
         .route("/clip/:id/search", get(get_search))
         .route("/clip/:id/events", get(get_events))
@@ -85,6 +86,15 @@ async fn get_events(State(s): State<AppState>, Path(id): Path<String>, Query(r):
     let (lo, hi) = (r.from.unwrap_or(0.0), r.to.unwrap_or(f64::INFINITY));
     let slice: Vec<_> = idx.event_track.iter().filter(|e| e.t >= lo && e.t <= hi).collect();
     Ok(Json(serde_json::to_value(slice).unwrap_or_default()))
+}
+
+async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let p = s.clips_dir.join(&id).join("zoom.json");
+    let bytes = std::fs::read(&p).map_err(|_| (StatusCode::NOT_FOUND, "no zoom track".into()))?;
+    Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
 }
 
 async fn get_video(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
