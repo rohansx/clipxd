@@ -1,0 +1,15 @@
+[package]
+name = "clipxd-recorder"
+description = "Phase 3: the recorder backbone — a CaptureSource abstraction (live scap backend behind a feature flag; a video-file source for testing) + the interaction event track, and the wiring that makes a RECORDING agent-queryable (its clicks/keystrokes become index events) and beautified (its cursor track drives the clean-room cinematic auto-zoom)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clipxd-index = { path = "../clipxd-index" }
+clipxd-cinematic = { path = "../clipxd-cinematic" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

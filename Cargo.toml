@@ -14,6 +14,7 @@ members = [
     "crates/clipxd-import",   # URL/file -> raw frames -> veyo gate -> veyo-enrich -> index
     "crates/clipxd-browser",  # Phase 2: browser trace (DOM/console/network/a11y) -> same index
     "crates/clipxd-cinematic", # Phase 3: clean-room cinematic auto-zoom engine (uncopyrightable math)
+    "crates/clipxd-recorder",  # Phase 3: capture abstraction + event track → agent-queryable index
     "crates/clipxd-cli",      # `clipxd import | query | info`
     "crates/clipxd-mcp",      # MCP server over the index (the agent surface)
 ]
