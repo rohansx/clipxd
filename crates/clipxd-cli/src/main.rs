@@ -4,6 +4,8 @@
 //! `clipxd query <clip> "<question>"` answers from that index **without the video**.
 //! That round trip is the headline demo (docs/overview.md §6).
 
+mod beautify;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use clipxd_index::{query, Index};
@@ -43,6 +45,22 @@ enum Cmd {
         out: PathBuf,
         #[arg(long, default_value_t = 4.0)]
         fps: f32,
+    },
+    /// Beautify a recording: cinematic auto-zoom + background/padding → an MP4.
+    Beautify {
+        /// The recorded video.
+        video: PathBuf,
+        /// Events JSON `{cursors,clicks}` driving the auto-zoom (omit for a static zoom).
+        #[arg(long)]
+        events: Option<PathBuf>,
+        #[arg(long, default_value = "beautified.mp4")]
+        out: PathBuf,
+        /// Padding around the video (slider 0..100).
+        #[arg(long, default_value_t = 6.0)]
+        padding: f64,
+        /// Background: "gradient" or a hex like "#0d1117".
+        #[arg(long, default_value = "gradient")]
+        bg: String,
     },
     /// Ingest a captured browser trace (DOM/console/network/a11y) into a clip index.
     IngestBrowser {
@@ -166,6 +184,10 @@ fn main() -> Result<()> {
                 r.zoom_keyframes
             );
             println!("  index:  {}", r.clip_dir.join("index.json").display());
+        }
+        Cmd::Beautify { video, events, out, padding, bg } => {
+            beautify::beautify(&video, events.as_deref(), &out, &beautify::BeautifyOpts { padding, bg })?;
+            println!("✓ beautified → {}", out.display());
         }
         Cmd::Query { clip, question } => {
             let idx = load_index(&clip)?;

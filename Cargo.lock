@@ -292,9 +292,11 @@ dependencies = [
  "anyhow",
  "clap",
  "clipxd-browser",
+ "clipxd-cinematic",
  "clipxd-import",
  "clipxd-index",
  "clipxd-recorder",
+ "image",
  "serde_json",
  "tracing-subscriber",
 ]
