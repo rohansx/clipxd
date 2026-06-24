@@ -294,6 +294,7 @@ dependencies = [
  "clipxd-browser",
  "clipxd-import",
  "clipxd-index",
+ "clipxd-recorder",
  "serde_json",
  "tracing-subscriber",
 ]
@@ -340,9 +341,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clipxd-cinematic",
+ "clipxd-import",
  "clipxd-index",
  "serde",
  "serde_json",
+ "veyo-core",
+ "veyo-enrich",
 ]
 
 [[package]]

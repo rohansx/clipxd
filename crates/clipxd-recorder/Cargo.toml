@@ -10,6 +10,9 @@ rust-version.workspace = true
 [dependencies]
 clipxd-index = { path = "../clipxd-index" }
 clipxd-cinematic = { path = "../clipxd-cinematic" }
+clipxd-import = { path = "../clipxd-import" }
+veyo-core = { workspace = true }
+veyo-enrich = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

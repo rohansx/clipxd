@@ -11,10 +11,12 @@
 //! Capture comes through the [`CaptureSource`] trait (live scap, video file, or in-memory).
 
 pub mod index_map;
+pub mod pipeline;
 pub mod source;
 pub mod types;
 
 pub use index_map::to_index_events;
+pub use pipeline::{record_from_video, RecordOutput};
 pub use source::{CaptureSource, InMemorySource};
 pub use types::{Click, CursorSample, EventTrack, KeyPress, SourceInfo};
 

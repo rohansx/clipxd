@@ -32,6 +32,18 @@ enum Cmd {
         #[arg(long)]
         salience_min: Option<f32>,
     },
+    /// Record a clip from a video file + an interaction event track (cursor/clicks/keys).
+    Record {
+        /// The recorded video.
+        video: PathBuf,
+        /// Events JSON `{cursors,clicks,keys}`; omit for a clip with no interaction track.
+        #[arg(long)]
+        events: Option<PathBuf>,
+        #[arg(long, default_value = "clips")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 4.0)]
+        fps: f32,
+    },
     /// Ingest a captured browser trace (DOM/console/network/a11y) into a clip index.
     IngestBrowser {
         /// Path to a `*.trace.json` (see docs/phase2-browser-spec.md).
@@ -139,6 +151,21 @@ fn main() -> Result<()> {
                 index.visual_timeline.len()
             );
             println!("  index:    {}", clip_dir.join("index.json").display());
+        }
+        Cmd::Record { video, events, out, fps } => {
+            let track = match &events {
+                Some(p) => clipxd_recorder::EventTrack::from_json(&std::fs::read_to_string(p)?)?,
+                None => clipxd_recorder::EventTrack::default(),
+            };
+            let r = clipxd_recorder::record_from_video(&video, &track, &out, fps)?;
+            println!("✓ recorded → {}", r.clip_dir.display());
+            println!(
+                "  source=screen  event_track={}  on_screen_text={}  zoom_keyframes={}",
+                r.index.event_track.len(),
+                r.index.on_screen_text.len(),
+                r.zoom_keyframes
+            );
+            println!("  index:  {}", r.clip_dir.join("index.json").display());
         }
         Cmd::Query { clip, question } => {
             let idx = load_index(&clip)?;
