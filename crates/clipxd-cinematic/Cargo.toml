@@ -1,0 +1,12 @@
+[package]
+name = "clipxd-cinematic"
+description = "Phase 3: clipxd's clean-room cinematic auto-zoom engine. Turns a cursor/click event track into a smooth zoom/pan timeline (3-phase ease-in/hold/ease-out, EMA smoothing, anti-jitter dwell). Pure math — no Cap/OpenVid/GPL source; the easing/EMA/lerp formulas are uncopyrightable. See docs/phase3-recorder-plan.md."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
