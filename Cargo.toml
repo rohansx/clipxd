@@ -17,6 +17,7 @@ members = [
     "crates/clipxd-recorder",  # Phase 3: capture abstraction + event track → agent-queryable index
     "crates/clipxd-cli",      # `clipxd import | query | info`
     "crates/clipxd-mcp",      # MCP server over the index (the agent surface)
+    "crates/clipxd-web",      # HTTP service: index.json sidecar + query/search + share page
 ]
 
 [workspace.package]
@@ -37,6 +38,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 tokio = { version = "1.44", features = ["full"] }
 rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros"] }
 schemars = "1"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 # The engine + the meaning layer, consumed from crates.io (ship independently).
 veyo-core = "0.1"
 veyo-enrich = "0.1"
