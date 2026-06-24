@@ -36,6 +36,9 @@ pub fn compute_zoom_track(
 
     let mut out = Vec::with_capacity(n);
     let (mut sx, mut sy) = (0.5, 0.5); // running smoothed center
+    let dt = 1.0 / fps;
+    let mut spring_x = cfg.spring.map(|_| crate::spring::Spring::new(0.5));
+    let mut spring_y = cfg.spring.map(|_| crate::spring::Spring::new(0.5));
     for i in 0..n {
         let t = i as f64 / fps;
         let active = segments.iter().find(|s| t >= s.start && t <= s.end);
@@ -59,8 +62,18 @@ pub fn compute_zoom_track(
             }
         };
 
-        sx = ema(sx, tx, cfg.smoothing);
-        sy = ema(sy, ty, cfg.smoothing);
+        match (cfg.spring, spring_x.as_mut(), spring_y.as_mut()) {
+            (Some(omega), Some(px), Some(py)) => {
+                px.step(tx, dt, omega);
+                py.step(ty, dt, omega);
+                sx = px.pos;
+                sy = py.pos;
+            }
+            _ => {
+                sx = ema(sx, tx, cfg.smoothing);
+                sy = ema(sy, ty, cfg.smoothing);
+            }
+        }
 
         // keep the zoomed crop window inside the frame: at `scale`, the half-extent is
         // `0.5/scale`, so the center is bounded to `[half, 1-half]`.
@@ -200,5 +213,18 @@ mod tests {
             inside = z;
         }
         assert_eq!(episodes, 1, "nearby clicks should be one episode");
+    }
+
+    #[test]
+    fn spring_smoothing_produces_a_valid_in_frame_track() {
+        let clicks = [Click { t: 2.0, x: 0.8, y: 0.3 }];
+        let cfg = ZoomConfig { fps: 30.0, spring: Some(18.0), ..Default::default() };
+        let track = compute_zoom_track(&[], &clicks, 4.0, &cfg);
+        let peak = track.iter().map(|k| k.scale).fold(0.0_f64, f64::max);
+        assert!((peak - 2.0).abs() < 1e-6, "spring path should still reach 2× zoom");
+        for k in &track {
+            let h = 0.5 / k.scale;
+            assert!(k.cx >= h - 1e-9 && k.cx <= 1.0 - h + 1e-9, "spring center left the frame");
+        }
     }
 }

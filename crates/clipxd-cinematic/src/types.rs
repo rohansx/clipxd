@@ -45,7 +45,12 @@ pub struct ZoomConfig {
     /// Clicks closer than this merge into one zoom segment.
     pub merge_gap_s: f64,
     /// EMA smoothing factor for cursor-follow (`0..1`; lower = smoother / more anti-jitter).
+    /// Used when [`spring`](Self::spring) is `None`.
     pub smoothing: f64,
+    /// Optional critically-damped spring stiffness (natural frequency ω). When set, the
+    /// camera follows the cursor with a spring instead of an EMA — velocity-continuous, no
+    /// wobble on reversals. Typical: `12.0`–`24.0`. `None` = use EMA.
+    pub spring: Option<f64>,
 }
 
 impl Default for ZoomConfig {
@@ -58,6 +63,7 @@ impl Default for ZoomConfig {
             post_click_s: 1.2,
             merge_gap_s: 1.5,
             smoothing: 0.18,
+            spring: None,
         }
     }
 }

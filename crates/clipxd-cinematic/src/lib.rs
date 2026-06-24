@@ -23,9 +23,13 @@
 
 pub mod easing;
 pub mod render;
+pub mod scene;
+pub mod spring;
 pub mod types;
 pub mod zoom;
 
 pub use render::{crop_rect, CropRect};
+pub use scene::{frame_layout, Background, FrameLayout, SceneConfig};
+pub use spring::{dead_zone, Spring};
 pub use types::{Click, CursorSample, ZoomConfig, ZoomKeyframe};
 pub use zoom::compute_zoom_track;
