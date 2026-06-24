@@ -1,0 +1,24 @@
+{
+  "clipxd_trace_version": "1",
+  "session_id": "example-checkout-500",
+  "captured_by": "clipxd-capture-playwright/0.1",
+  "started_at_ms": 1710854008000,
+  "viewport": { "w": 1280, "h": 800 },
+  "url": "https://shop.example.com/cart",
+  "events": [
+    {"type":"navigate","t_ms":1710854008100,"url":"https://shop.example.com/checkout","from":"https://shop.example.com/cart","nav_kind":"load","title":"Checkout"},
+    {"type":"dom_snapshot","t_ms":1710854008120,"url":"https://shop.example.com/checkout","node_count":842,"text":"Checkout\nOrder summary\nPayment\nCard number\nPlace order"},
+    {"type":"a11y_text","t_ms":1710854008140,"selector":"main#checkout h1","role":"heading","text":"Checkout"},
+    {"type":"a11y_text","t_ms":1710854008150,"selector":"button#place-order","role":"button","text":"Place order"},
+    {"type":"screenshot","t_ms":1710854008600,"path":"frames/000001.png","reason":"navigation","redacted":true},
+    {"type":"input","t_ms":1710854009200,"target":"input#card-number","label":"Card number","value":"4111 1111 1111 1111","masked":true,"submit":false},
+    {"type":"click","t_ms":1710854009800,"click_kind":"click","target":"button#place-order","label":"Place order","x":642,"y":511},
+    {"type":"network","t_ms":1710854009900,"method":"POST","url":"https://shop.example.com/api/checkout","status":500,"status_text":"Internal Server Error","resource_type":"fetch","mime":"application/json","duration_ms":1840,"request_id":"req-7f3a","initiator":"script"},
+    {"type":"console","t_ms":1710854009920,"level":"error","text":"Checkout failed: HTTP 500 at /api/checkout","stack":["at submitOrder (checkout.js:84:13)"],"source":"javascript","uncaught":false},
+    {"type":"dom_mutation","t_ms":1710854009950,"target":"#notifications","op":"insert","added":1,"removed":0,"text_delta":18,"role":"alert","name":"Payment failed (500)"},
+    {"type":"a11y_text","t_ms":1710854009960,"selector":"#notifications > .toast","role":"alert","text":"Payment failed (500)"},
+    {"type":"screenshot","t_ms":1710854009965,"path":"frames/000002.png","reason":"error","redacted":true},
+    {"type":"dom_mutation","t_ms":1710854010360,"target":"#checkout-form","op":"attr","attr":"aria-busy"},
+    {"type":"screenshot","t_ms":1710854010400,"path":"frames/000003.png","reason":"state_settle","redacted":true}
+  ]
+}
