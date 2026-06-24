@@ -1091,6 +1091,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "veyo-core"
 version = "0.1.0"
+source = "git+https://github.com/rohansx/veyo.git?branch=master#ce8fc5af0f4c5ba39bf0b20223fbb35a1122b94c"
 dependencies = [
  "serde",
 ]
@@ -1098,6 +1099,7 @@ dependencies = [
 [[package]]
 name = "veyo-enrich"
 version = "0.1.0"
+source = "git+https://github.com/rohansx/veyo.git?branch=master#ce8fc5af0f4c5ba39bf0b20223fbb35a1122b94c"
 dependencies = [
  "anyhow",
  "serde",

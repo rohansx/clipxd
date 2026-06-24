@@ -35,6 +35,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 tokio = { version = "1.44", features = ["full"] }
 rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros"] }
 schemars = "1"
-# The engine + the meaning layer, consumed as path deps (sibling repo, ships independently).
-veyo-core = { path = "../veyo/crates/veyo-core" }
-veyo-enrich = { path = "../veyo/crates/veyo-enrich" }
+# The engine + the meaning layer, consumed from the veyo repo (ships independently).
+# git dep today; swap to a crates.io version once veyo is published there.
+veyo-core = { git = "https://github.com/rohansx/veyo.git", branch = "master" }
+veyo-enrich = { git = "https://github.com/rohansx/veyo.git", branch = "master" }
