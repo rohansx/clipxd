@@ -1,9 +1,12 @@
 //! `clipxd beautify` — apply the clean-room cinematic layer to a recording: auto-zoom that
-//! follows the cursor/clicks, composited onto a background with padding. ffmpeg decodes +
-//! encodes; the crop/zoom/composite is ours (`clipxd-cinematic`).
+//! follows the cursor/clicks, composited onto a background with padding, optionally wrapped
+//! in a browser mockup, exported as MP4 / WebM / GIF. ffmpeg decodes + encodes; the
+//! crop/zoom/mockup compositing is ours (`clipxd-cinematic`).
 
 use anyhow::{ensure, Context, Result};
-use clipxd_cinematic::{compute_zoom_track, crop_rect, frame_layout, Background, Click, CursorSample, SceneConfig, ZoomConfig};
+use clipxd_cinematic::{
+    browser_in, compute_zoom_track, crop_rect, frame_layout, Background, Click, CursorSample, SceneConfig, ZoomConfig,
+};
 use image::{imageops, Rgba, RgbaImage};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,6 +14,8 @@ use std::process::{Command, Stdio};
 pub struct BeautifyOpts {
     pub padding: f64,
     pub bg: String,
+    pub mockup: bool,
+    pub format: String,
 }
 
 pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &BeautifyOpts) -> Result<()> {
@@ -23,8 +28,8 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         &ZoomConfig { fps: info.fps as f64, spring: Some(18.0), ..Default::default() },
     );
     eprintln!(
-        "{}x{} @ {:.0}fps {:.1}s → {} keyframes, {} clicks; bg={} padding={}",
-        info.width, info.height, info.fps, info.duration_s, track.len(), clicks.len(), opts.bg, opts.padding
+        "{}x{} @ {:.0}fps {:.1}s → {} keyframes, {} clicks; bg={} mockup={} format={}",
+        info.width, info.height, info.fps, info.duration_s, track.len(), clicks.len(), opts.bg, opts.mockup, opts.format
     );
 
     let tmp = std::env::temp_dir().join("clipxd-beautify");
@@ -51,18 +56,67 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         let (w, h) = img.dimensions();
         let r = crop_rect(&kf, w, h);
         let sub = imageops::crop_imm(&img, r.x, r.y, r.w, r.h).to_image();
-        let zoomed = imageops::resize(&sub, layout.content_w, layout.content_h, imageops::FilterType::Lanczos3);
+
         let mut canvas = background.clone();
-        imageops::overlay(&mut canvas, &zoomed, layout.content_x as i64, layout.content_y as i64);
+        if opts.mockup {
+            let m = browser_in(layout.content_w, layout.content_h);
+            fill_rect(&mut canvas, layout.content_x, layout.content_y, layout.content_w, m.bar_h, [22, 28, 39, 255]);
+            let dot_col = [[248, 81, 73, 255], [210, 153, 34, 255], [63, 185, 80, 255]];
+            for (k, dx) in m.dot_x.iter().enumerate() {
+                fill_circle(&mut canvas, (layout.content_x + dx) as i64, (layout.content_y + m.dot_y) as i64, m.dot_r as i64, dot_col[k]);
+            }
+            let vid = imageops::resize(&sub, m.video_w, m.video_h, imageops::FilterType::Lanczos3);
+            imageops::overlay(&mut canvas, &vid, (layout.content_x + m.video_x) as i64, (layout.content_y + m.video_y) as i64);
+        } else {
+            let zoomed = imageops::resize(&sub, layout.content_w, layout.content_h, imageops::FilterType::Lanczos3);
+            imageops::overlay(&mut canvas, &zoomed, layout.content_x as i64, layout.content_y as i64);
+        }
         canvas.save(fout.join(format!("{:05}.png", i + 1)))?;
     }
 
-    run(Command::new("ffmpeg")
-        .args(["-y", "-framerate", &info.fps.to_string(), "-i"])
-        .arg(fout.join("%05d.png"))
-        .args(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
-        .arg(out))?;
-    Ok(())
+    encode(&fout, info.fps, &opts.format, out)
+}
+
+fn encode(frames_dir: &Path, fps: f32, format: &str, out: &Path) -> Result<()> {
+    let pattern = frames_dir.join("%05d.png");
+    let mut c = Command::new("ffmpeg");
+    c.args(["-y", "-framerate", &fps.to_string(), "-i"]).arg(&pattern);
+    match format {
+        "gif" => {
+            c.args([
+                "-vf",
+                "fps=15,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+            ]);
+        }
+        "webm" => {
+            c.args(["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"]);
+        }
+        _ => {
+            c.args(["-c:v", "libx264", "-pix_fmt", "yuv420p"]);
+        }
+    }
+    run(c.arg(out))
+}
+
+fn fill_rect(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, c: [u8; 4]) {
+    let (iw, ih) = img.dimensions();
+    for yy in y..(y + h).min(ih) {
+        for xx in x..(x + w).min(iw) {
+            img.put_pixel(xx, yy, Rgba(c));
+        }
+    }
+}
+
+fn fill_circle(img: &mut RgbaImage, cx: i64, cy: i64, r: i64, c: [u8; 4]) {
+    let (iw, ih) = (img.width() as i64, img.height() as i64);
+    for yy in (cy - r).max(0)..(cy + r + 1).min(ih) {
+        for xx in (cx - r).max(0)..(cx + r + 1).min(iw) {
+            let (dx, dy) = (xx - cx, yy - cy);
+            if dx * dx + dy * dy <= r * r {
+                img.put_pixel(xx as u32, yy as u32, Rgba(c));
+            }
+        }
+    }
 }
 
 fn load_events(p: Option<&Path>) -> Result<(Vec<CursorSample>, Vec<Click>)> {
@@ -110,7 +164,7 @@ fn render_background(scene: &SceneConfig) -> RgbaImage {
             let b = hex(stops.last().map(String::as_str).unwrap_or("#0d1117"));
             for y in 0..h {
                 for x in 0..w {
-                    let t = (x as f32 / w as f32 + y as f32 / h as f32) / 2.0; // diagonal
+                    let t = (x as f32 / w as f32 + y as f32 / h as f32) / 2.0;
                     img.put_pixel(x, y, Rgba([lerp8(a[0], b[0], t), lerp8(a[1], b[1], t), lerp8(a[2], b[2], t), 255]));
                 }
             }

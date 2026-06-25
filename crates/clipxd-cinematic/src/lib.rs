@@ -22,12 +22,14 @@
 //! ```
 
 pub mod easing;
+pub mod mockup;
 pub mod render;
 pub mod scene;
 pub mod spring;
 pub mod types;
 pub mod zoom;
 
+pub use mockup::{browser_in, keyframe_at, keystroke_pills, pill_at, Mockup, MockupLayout, Pill};
 pub use render::{crop_rect, CropRect};
 pub use scene::{frame_layout, Background, FrameLayout, SceneConfig};
 pub use spring::{dead_zone, Spring};
