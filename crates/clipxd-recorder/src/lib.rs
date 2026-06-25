@@ -10,6 +10,7 @@
 //! That second half is the moat: no other recorder makes the recording legible to an agent.
 //! Capture comes through the [`CaptureSource`] trait (live scap, video file, or in-memory).
 
+pub mod autofocus;
 pub mod capture;
 pub mod index_map;
 pub mod pipeline;
@@ -17,6 +18,7 @@ pub mod redact;
 pub mod source;
 pub mod types;
 
+pub use autofocus::focus_track_from_deltas;
 pub use capture::{FramesDirCapture, LiveCapture};
 pub use index_map::to_index_events;
 pub use pipeline::{record_from_capture, record_from_video, RecordOutput};

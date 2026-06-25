@@ -145,6 +145,13 @@ async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_jso
 
         let out = record_from_video(&tmp, &EventTrack::default(), dir.as_path(), 4.0)?;
 
+        // give it a real title instead of the temp filename
+        {
+            let mut idx = out.index.clone();
+            idx.metadata.title = "Screen recording".into();
+            let _ = std::fs::write(out.clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+        }
+
         // record_from_video copies the source to video.mp4 verbatim; for a webm upload that's
         // mislabeled, so transcode a real H.264 mp4 the browser can play.
         let mp4 = out.clip_dir.join("video.mp4");

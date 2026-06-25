@@ -49,8 +49,15 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     let mut index = map::to_index(&id, Source::Screen, &info, &title, &unix_secs(), &enrichment);
     index.event_track = to_index_events(events);
 
-    // beautify: cursor path → cinematic zoom track (sidecar for the renderer/editor)
-    let zoom = cinematic_track(events, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() });
+    // beautify: cursor path → cinematic zoom track. With no input track (e.g. a browser
+    // screen recording) we derive the focus from veyo's salient deltas — content-aware
+    // auto-zoom — so the recording still pushes in on the action.
+    let focus = if events.is_empty() {
+        crate::autofocus::focus_track_from_deltas(&gated.deltas, info.width, info.height)
+    } else {
+        events.clone()
+    };
+    let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() });
 
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
@@ -87,7 +94,12 @@ pub fn record_from_capture(cap: &dyn LiveCapture, id: &str, title: &str, out_dir
 
     let mut index = map::to_index(id, Source::Screen, &media_info, title, &unix_secs(), &enrichment);
     index.event_track = to_index_events(&events);
-    let zoom = cinematic_track(&events, info.duration_s, &ZoomConfig { fps: info.fps, ..Default::default() });
+    let focus = if events.is_empty() {
+        crate::autofocus::focus_track_from_deltas(&gated.deltas, info.width, info.height)
+    } else {
+        events.clone()
+    };
+    let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps, ..Default::default() });
 
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
