@@ -34,6 +34,31 @@ export async function fetchClip(c: Conn): Promise<Clip> {
   };
 }
 
+export type ClipSummary = {
+  id: string;
+  title: string;
+  source: string;
+  duration: number;
+  counts: { events: number; on_screen_text: number; transcript: number; visual: number };
+};
+
+export async function fetchClips(apiBase: string): Promise<ClipSummary[]> {
+  try {
+    const r = await fetch(`${apiBase}/clips`);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.clips ?? []).map((c: any) => ({
+      id: c.id,
+      title: c.metadata?.title ?? c.id,
+      source: c.source,
+      duration: c.metadata?.duration ?? 0,
+      counts: c.counts ?? { events: 0, on_screen_text: 0, transcript: 0, visual: 0 },
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export type ZoomKeyframe = { t: number; scale: number; cx: number; cy: number };
 
 export async function fetchZoom(c: Conn): Promise<ZoomKeyframe[]> {

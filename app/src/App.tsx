@@ -5,6 +5,7 @@ import { download, editAt, newEdit, newRegion, regionAt, toProject, type EditKin
 import { RegionTrack } from "./RegionTrack";
 import { useScreenRecorder } from "./useScreenRecorder";
 import { Prompter } from "./Prompter";
+import { Library } from "./Library";
 
 const MODES = ["Screen", "Window", "Region", "Browser"] as const;
 
@@ -77,6 +78,7 @@ export default function App() {
   const apiBase = conn?.api ?? "http://127.0.0.1:8787";
   const [camera, setCamera] = useState(false);
   const [showPrompter, setShowPrompter] = useState(false);
+  const [showLib, setShowLib] = useState(false);
   const { state: rec, camStream, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
 
   return (
@@ -90,6 +92,7 @@ export default function App() {
           {MODES.map((m) => <button key={m} className={"mode" + (m === mode ? " on" : "")} onClick={() => setMode(m)}>{m}</button>)}
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
+        <button className="toggle" onClick={() => setShowLib(true)} title="Library — all your recordings">▦</button>
         <button className={"toggle" + (camera ? " on" : "")} onClick={() => setCamera((c) => !c)} title="Show your camera (a face bubble) in the recording">📷</button>
         <button className={"toggle" + (showPrompter ? " on" : "")} onClick={() => setShowPrompter((s) => !s)} title="Teleprompter — read a script while you record">📜</button>
         <button
@@ -138,6 +141,7 @@ export default function App() {
       </main>
       {camStream && <CameraBubble stream={camStream} />}
       {showPrompter && <Prompter onClose={() => setShowPrompter(false)} />}
+      {showLib && <Library apiBase={apiBase} currentId={live ? conn?.id : undefined} onClose={() => setShowLib(false)} />}
     </div>
   );
 }

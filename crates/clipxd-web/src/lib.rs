@@ -37,6 +37,7 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
+        .route("/clips", get(list_clips_json))
         .route("/ingest", post(ingest))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -211,6 +212,34 @@ async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_jso
 
     let id = join.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?;
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// `GET /clips` — JSON list of every clip in the dir (newest first) for the library view.
+async fn list_clips_json(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let mut clips: Vec<(std::time::SystemTime, serde_json::Value)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(s.clips_dir.as_path()) {
+        for e in entries.flatten() {
+            let id = e.file_name().to_string_lossy().to_string();
+            let Ok(idx) = load_index(&s, &id) else { continue };
+            let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            clips.push((
+                mtime,
+                serde_json::json!({
+                    "id": id,
+                    "metadata": idx.metadata,
+                    "source": idx.source,
+                    "counts": {
+                        "events": idx.event_track.len(),
+                        "on_screen_text": idx.on_screen_text.len(),
+                        "transcript": idx.transcript.len(),
+                        "visual": idx.visual_timeline.len(),
+                    },
+                }),
+            ));
+        }
+    }
+    clips.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    Json(serde_json::json!({ "clips": clips.into_iter().map(|(_, c)| c).collect::<Vec<_>>() }))
 }
 
 async fn list_clips(State(s): State<AppState>) -> Html<String> {
