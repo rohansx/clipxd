@@ -3,6 +3,8 @@ import { clip as sampleClip, fmt, type Clip, type ClipQA } from "./sample";
 import { askClip, fetchClip, fetchZoom, getConn, videoUrl, type Conn, type ZoomKeyframe } from "./api";
 import { download, editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
 import { RegionTrack } from "./RegionTrack";
+import { useScreenRecorder } from "./useScreenRecorder";
+import { Prompter } from "./Prompter";
 
 const MODES = ["Screen", "Window", "Region", "Browser"] as const;
 
@@ -70,37 +72,11 @@ export default function App() {
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
 
-  // ── Record: capture the screen in-browser (getDisplayMedia, works under Wayland via the
-  //    portal) → POST the webm to /ingest → server indexes it → reload on the new clip ──
+  // ── Record: screen capture (+ optional camera bubble) → /ingest → reload on the new clip ──
   const apiBase = conn?.api ?? "http://127.0.0.1:8787";
-  const [rec, setRec] = useState<"idle" | "recording" | "processing">("idle");
-  const recRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const startRec = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
-      chunksRef.current = [];
-      let mr: MediaRecorder;
-      try { mr = new MediaRecorder(stream, { mimeType: "video/webm" }); } catch { mr = new MediaRecorder(stream); }
-      mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
-      mr.onstop = async () => {
-        stream.getTracks().forEach((tr) => tr.stop());
-        setRec("processing");
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        try {
-          const r = await fetch(`${apiBase}/ingest`, { method: "POST", headers: { "content-type": "video/webm" }, body: blob });
-          const j = await r.json();
-          if (j.id) { window.location.href = `${location.pathname}?clip=${j.id}&api=${encodeURIComponent(apiBase)}`; return; }
-        } catch (e) { console.warn("ingest failed:", e); }
-        setRec("idle");
-      };
-      stream.getVideoTracks()[0].addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
-      mr.start();
-      recRef.current = mr;
-      setRec("recording");
-    } catch (e) { console.warn("screen capture canceled/failed:", e); setRec("idle"); }
-  };
-  const stopRec = () => recRef.current?.stop();
+  const [camera, setCamera] = useState(false);
+  const [showPrompter, setShowPrompter] = useState(false);
+  const { state: rec, camStream, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
 
   return (
     <div className="app">
@@ -113,9 +89,11 @@ export default function App() {
           {MODES.map((m) => <button key={m} className={"mode" + (m === mode ? " on" : "")} onClick={() => setMode(m)}>{m}</button>)}
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
+        <button className={"toggle" + (camera ? " on" : "")} onClick={() => setCamera((c) => !c)} title="Show your camera (a face bubble) in the recording">📷</button>
+        <button className={"toggle" + (showPrompter ? " on" : "")} onClick={() => setShowPrompter((s) => !s)} title="Teleprompter — read a script while you record">📜</button>
         <button
           className={"record" + (rec === "recording" ? " rec-on" : "")}
-          onClick={rec === "recording" ? stopRec : rec === "idle" ? startRec : undefined}
+          onClick={rec === "recording" ? stopRec : rec === "idle" ? () => startRec({ camera }) : undefined}
           disabled={rec === "processing"}
           title="Capture your screen in the browser → it becomes a queryable clip"
         >
@@ -157,6 +135,21 @@ export default function App() {
         </section>
         <Agent clip={data} conn={live ? conn : null} onSeek={seek} />
       </main>
+      {camStream && <CameraBubble stream={camStream} />}
+      {showPrompter && <Prompter onClose={() => setShowPrompter(false)} />}
+    </div>
+  );
+}
+
+function CameraBubble({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (v) { v.srcObject = stream; v.play().catch(() => {}); }
+  }, [stream]);
+  return (
+    <div className="cam-bubble" title="This camera bubble is baked into your recording (bottom-right)">
+      <video ref={ref} muted playsInline />
     </div>
   );
 }
