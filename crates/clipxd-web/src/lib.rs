@@ -224,10 +224,17 @@ struct RenderQ {
 /// `POST /clip/:id/render` — produce the final beautified video (browser mockup + the clip's
 /// content-aware auto-zoom from its `zoom.json`) by invoking the `clipxd beautify` renderer,
 /// and stream it back as a download. This closes the editor→output loop.
-async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<RenderQ>) -> Result<Response, WebErr> {
+async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<RenderQ>, body: Bytes) -> Result<Response, WebErr> {
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
+    // the POST body, if present, is the editor's .clipxd project (zoom/trim/speed) → bake it in
+    let project_file = if body.is_empty() {
+        None
+    } else {
+        let pf = std::env::temp_dir().join(format!("clipxd-proj-{id}.json"));
+        std::fs::write(&pf, &body).ok().map(|_| pf)
+    };
     let dir = s.clips_dir.join(&id);
     let video = dir.join("video.mp4");
     if !video.exists() {
@@ -248,21 +255,27 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         .filter(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from("clipxd"));
 
-    let (out2, fmt2) = (out.clone(), fmt.to_string());
+    let (out2, fmt2, proj) = (out.clone(), fmt.to_string(), project_file.clone());
     let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let mut c = std::process::Command::new(&bin);
         c.arg("beautify").arg(&video).args(["--format", &fmt2, "--padding", "8"]);
         if zoom.exists() {
             c.arg("--zoom").arg(&zoom);
         }
+        if let Some(pf) = &proj {
+            c.arg("--project").arg(pf);
+        }
         if mockup {
             c.arg("--mockup");
         }
         c.arg("--out").arg(&out2);
         let st = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
-        anyhow::ensure!(st.success(), "beautify exited non-zero");
-        let b = std::fs::read(&out2)?;
+        let b = if st.success() { std::fs::read(&out2)? } else { Vec::new() };
         let _ = std::fs::remove_file(&out2);
+        if let Some(pf) = &proj {
+            let _ = std::fs::remove_file(pf);
+        }
+        anyhow::ensure!(!b.is_empty(), "beautify produced no output");
         Ok(b)
     })
     .await

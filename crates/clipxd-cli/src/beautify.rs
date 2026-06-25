@@ -25,6 +25,9 @@ pub struct BeautifyOpts {
     /// Use this precomputed zoom track (a clip's `zoom.json`) instead of computing one from
     /// events — lets the server render the same content-aware auto-zoom the editor previews.
     pub zoom: Option<PathBuf>,
+    /// Apply a `.clipxd` project: manual zoom regions (override the auto-zoom), trim cuts
+    /// (drop spans), and speed ramps (decimate spans) — bake the editor's edits into output.
+    pub project: Option<PathBuf>,
 }
 
 pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &BeautifyOpts) -> Result<()> {
@@ -33,7 +36,7 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
     let auto = || {
         compute_zoom_track(&ev.cursors, &ev.clicks, info.duration_s, &ZoomConfig { fps: info.fps as f64, spring: Some(18.0), ..Default::default() })
     };
-    let track = match &opts.zoom {
+    let mut track = match &opts.zoom {
         Some(zp) => {
             let loaded: Vec<clipxd_cinematic::ZoomKeyframe> =
                 std::fs::read_to_string(zp).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -41,6 +44,15 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         }
         None => auto(),
     };
+    // the editor's .clipxd project: manual zoom regions override the auto-zoom (centered snap)
+    let project = opts.project.as_deref().and_then(load_project).unwrap_or_default();
+    for kf in track.iter_mut() {
+        if let Some(z) = project.zoom_regions.iter().find(|z| kf.t >= z.start && kf.t <= z.end) {
+            kf.scale = z.scale;
+            kf.cx = 0.5;
+            kf.cy = 0.5;
+        }
+    }
     let pills = keystroke_pills(&ev.keys, 0.4, 1.2);
     let font = text::load_font();
     eprintln!(
@@ -63,15 +75,37 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
     frames.sort();
     ensure!(!frames.is_empty(), "no frames extracted");
 
+    // apply the project's trim (drop spans) + speed (decimate spans) → the output frame order
+    let emit: Vec<usize> = (0..frames.len())
+        .filter(|&i| {
+            let t = i as f64 / info.fps as f64;
+            if project.edit_regions.iter().any(|e| e.kind == "trim" && t >= e.start && t < e.end) {
+                return false; // cut
+            }
+            if let Some(s) = project.edit_regions.iter().find(|e| e.kind == "speed" && t >= e.start && t <= e.end) {
+                let r = s.rate.round().max(1.0) as usize;
+                if r > 1 && i % r != 0 {
+                    return false; // play r× faster by keeping every r-th frame
+                }
+            }
+            true
+        })
+        .collect();
+    ensure!(!emit.is_empty(), "every frame was trimmed");
+    eprintln!(
+        "project: {} zoom-region(s), {} edit(s) → emit {}/{} frames",
+        project.zoom_regions.len(), project.edit_regions.len(), emit.len(), frames.len()
+    );
+
     let scene = SceneConfig { background: parse_bg(&opts.bg), padding: opts.padding, out_w: info.width, out_h: info.height, ..Default::default() };
     let layout = frame_layout(info.width, info.height, &scene); // constant src size → constant content rect
     let background = render_background(&scene);
 
-    // Frames are independent → render in parallel.
-    frames.par_iter().enumerate().try_for_each(|(i, f)| -> Result<()> {
-        let t = i as f64 / info.fps as f64;
-        let kf = track.get(i).or_else(|| track.last()).copied().context("empty zoom track")?;
-        let mut img = image::open(f)?.to_rgba8();
+    // Frames are independent → render in parallel (output index j ← source frame emit[j]).
+    emit.par_iter().enumerate().try_for_each(|(j, &src)| -> Result<()> {
+        let t = src as f64 / info.fps as f64;
+        let kf = track.get(src).or_else(|| track.last()).copied().context("empty zoom track")?;
+        let mut img = image::open(&frames[src])?.to_rgba8();
 
         // pixelate any active redaction region on the source frame (so blur tracks the zoom)
         for b in ev.blurs.iter().filter(|b| t >= b.start && t <= b.end) {
@@ -108,7 +142,7 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
             draw_annotations(&mut canvas, &layout, font.as_ref(), &anns);
         }
 
-        canvas.save(fout.join(format!("{:05}.png", i + 1)))?;
+        canvas.save(fout.join(format!("{:05}.png", j + 1)))?;
         Ok(())
     })?;
 
@@ -255,6 +289,53 @@ struct Events {
     keys: Vec<(f64, String)>,
     blurs: Vec<BlurRegion>,
     anns: Vec<Annotation>,
+}
+
+#[derive(Default)]
+struct Project {
+    zoom_regions: Vec<ZoomRegionJ>,
+    edit_regions: Vec<EditRegionJ>,
+}
+
+struct ZoomRegionJ {
+    start: f64,
+    end: f64,
+    scale: f64,
+}
+
+struct EditRegionJ {
+    kind: String,
+    start: f64,
+    end: f64,
+    rate: f64,
+}
+
+fn load_project(p: &Path) -> Option<Project> {
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()?;
+    let zoom_regions = v["zoom_regions"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|z| Some(ZoomRegionJ { start: z["start"].as_f64()?, end: z["end"].as_f64()?, scale: z["scale"].as_f64()? }))
+                .collect()
+        })
+        .unwrap_or_default();
+    let edit_regions = v["edit_regions"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    Some(EditRegionJ {
+                        kind: e["kind"].as_str()?.to_string(),
+                        start: e["start"].as_f64()?,
+                        end: e["end"].as_f64()?,
+                        rate: e["rate"].as_f64().unwrap_or(1.0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Project { zoom_regions, edit_regions })
 }
 
 fn load_events(p: Option<&Path>) -> Result<Events> {

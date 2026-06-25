@@ -87,7 +87,11 @@ export default function App() {
     if (!live || !conn) return;
     setRendering(true);
     try {
-      const r = await fetch(`${apiBase}/clip/${conn.id}/render?format=mp4&mockup=true`, { method: "POST" });
+      const r = await fetch(`${apiBase}/clip/${conn.id}/render?format=mp4&mockup=true`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(toProject(data.id, regions, edits)),
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const blob = await r.blob();
       const a = document.createElement("a");
