@@ -248,11 +248,14 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
     };
     let mockup = p.mockup.unwrap_or(true);
     let out = std::env::temp_dir().join(format!("clipxd-render-{id}.{fmt}"));
-    // the `clipxd` binary sits next to this one (same target dir); fall back to PATH
-    let bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("clipxd")))
+    // prefer a release `clipxd` (much faster render), then the sibling debug build, then PATH
+    let exe = std::env::current_exe().ok();
+    let dir = exe.as_ref().and_then(|p| p.parent());
+    let release = dir.and_then(|d| d.parent()).map(|t| t.join("release").join("clipxd"));
+    let debug = dir.map(|d| d.join("clipxd"));
+    let bin = release
         .filter(|p| p.exists())
+        .or_else(|| debug.filter(|p| p.exists()))
         .unwrap_or_else(|| PathBuf::from("clipxd"));
 
     let (out2, fmt2, proj) = (out.clone(), fmt.to_string(), project_file.clone());
