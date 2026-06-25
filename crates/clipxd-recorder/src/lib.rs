@@ -13,12 +13,14 @@
 pub mod capture;
 pub mod index_map;
 pub mod pipeline;
+pub mod redact;
 pub mod source;
 pub mod types;
 
 pub use capture::{FramesDirCapture, LiveCapture};
 pub use index_map::to_index_events;
 pub use pipeline::{record_from_capture, record_from_video, RecordOutput};
+pub use redact::{apply_redaction, blur_at, redaction_for, BlurRegion};
 pub use source::{CaptureSource, InMemorySource};
 pub use types::{Click, CursorSample, EventTrack, KeyPress, SourceInfo};
 
