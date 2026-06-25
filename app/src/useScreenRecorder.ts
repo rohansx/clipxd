@@ -60,8 +60,30 @@ export function useScreenRecorder(apiBase: string) {
       let mr: MediaRecorder;
       try { mr = new MediaRecorder(recordStream, { mimeType: "video/webm" }); } catch { mr = new MediaRecorder(recordStream); }
       mr.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data); };
+      // capture the cursor (screen-normalized) so the zoom follows it, Screen-Studio style.
+      // Note: pointer events only fire while the cursor is over this window — best for
+      // recording web/in-browser content; the native recorder captures the OS cursor globally.
+      const startMs = Date.now();
+      const cursors: { t: number; x: number; y: number }[] = [];
+      const clicks: { t: number; x: number; y: number }[] = [];
+      const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+      let lastSample = -1;
+      const onMove = (e: PointerEvent) => {
+        const t = (Date.now() - startMs) / 1000;
+        if (t - lastSample < 0.04) return;
+        lastSample = t;
+        cursors.push({ t, x: clamp01(e.screenX / window.screen.width), y: clamp01(e.screenY / window.screen.height) });
+      };
+      const onDown = (e: PointerEvent) => {
+        clicks.push({ t: (Date.now() - startMs) / 1000, x: clamp01(e.screenX / window.screen.width), y: clamp01(e.screenY / window.screen.height) });
+      };
+      window.addEventListener("pointermove", onMove, true);
+      window.addEventListener("pointerdown", onDown, true);
+
       mr.onstop = async () => {
         cancelAnimationFrame(raf);
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerdown", onDown, true);
         streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         setCamStream(null);
         setState("processing");
@@ -69,7 +91,20 @@ export function useScreenRecorder(apiBase: string) {
         try {
           const r = await fetch(`${apiBase}/ingest`, { method: "POST", headers: { "content-type": "video/webm" }, body: blob });
           const j = await r.json();
-          if (j.id) { window.location.href = `${location.pathname}?clip=${j.id}&api=${encodeURIComponent(apiBase)}`; return; }
+          if (j.id) {
+            // feed the captured cursor so the zoom follows it (else veyo content-zoom is used)
+            if (cursors.length || clicks.length) {
+              try {
+                await fetch(`${apiBase}/clip/${j.id}/cursor`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ cursors, clicks, keys: [] }),
+                });
+              } catch (e) { console.warn("cursor post failed:", e); }
+            }
+            window.location.href = `${location.pathname}?clip=${j.id}&api=${encodeURIComponent(apiBase)}`;
+            return;
+          }
         } catch (e) { console.warn("ingest failed:", e); }
         setState("idle");
       };

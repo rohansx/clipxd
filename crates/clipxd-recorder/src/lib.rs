@@ -36,6 +36,12 @@ pub fn cinematic_track(track: &EventTrack, duration_s: f64, cfg: &ZoomConfig) ->
     clipxd_cinematic::compute_zoom_track(&track.cursors, &track.clicks, duration_s, cfg)
 }
 
+/// Convenience: the cinematic zoom track at `fps` with default tuning. Used to recompute a
+/// clip's zoom from a real cursor track (so the camera follows the cursor, not the content).
+pub fn zoom_track(track: &EventTrack, duration_s: f64, fps: f64) -> Vec<ZoomKeyframe> {
+    cinematic_track(track, duration_s, &ZoomConfig { fps, ..Default::default() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

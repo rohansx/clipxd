@@ -39,6 +39,7 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/clips", get(list_clips_json))
         .route("/clip/:id/render", post(render_clip))
+        .route("/clip/:id/cursor", post(set_cursor))
         .route("/ingest", post(ingest))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -213,6 +214,30 @@ async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_jso
 
     let id = join.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?;
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// `POST /clip/:id/cursor` — the browser recorder captured a cursor track (pointer moves +
+/// clicks, screen-normalized). Save it and **recompute the zoom so the camera follows the
+/// cursor** (Screen-Studio style) instead of the veyo content-centroid fallback. The clicks
+/// also become queryable `event_track` entries.
+async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let events: EventTrack = serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("bad events: {e}")))?;
+    if events.is_empty() {
+        return Ok(Json(serde_json::json!({ "ok": true, "keyframes": 0, "note": "no cursor data" })));
+    }
+    let dir = s.clips_dir.join(&id);
+    let mut index = load_index(&s, &id)?;
+    let zoom = clipxd_recorder::zoom_track(&events, index.metadata.duration, index.metadata.fps.max(1.0) as f64);
+    index.event_track = clipxd_recorder::to_index_events(&events);
+    let _ = std::fs::write(dir.join("events.json"), &body);
+    std::fs::write(dir.join("zoom.json"), serde_json::to_string(&zoom).unwrap_or_default())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(dir.join("index.json"), serde_json::to_string_pretty(&index).unwrap_or_default())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true, "keyframes": zoom.len(), "events": index.event_track.len() })))
 }
 
 #[derive(Deserialize)]
