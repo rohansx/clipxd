@@ -6,8 +6,8 @@
 
 use anyhow::{ensure, Context, Result};
 use clipxd_cinematic::{
-    browser_in, compute_zoom_track, crop_rect, frame_layout, keystroke_pills, pill_at, Background, Click, CursorSample,
-    SceneConfig, ZoomConfig,
+    annotations_at, browser_in, compute_zoom_track, crop_rect, frame_layout, keystroke_pills, pill_at, Annotation,
+    Background, Click, CursorSample, FrameLayout, SceneConfig, ZoomConfig,
 };
 use clipxd_recorder::BlurRegion;
 use image::{imageops, Rgba, RgbaImage};
@@ -94,6 +94,12 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
             draw_pill(&mut canvas, &layout, font, &pill.text);
         }
 
+        // annotation overlay (arrows / boxes / text / highlights) on top of the produced frame
+        let anns = annotations_at(&ev.anns, t);
+        if !anns.is_empty() {
+            draw_annotations(&mut canvas, &layout, font.as_ref(), &anns);
+        }
+
         canvas.save(fout.join(format!("{:05}.png", i + 1)))?;
         Ok(())
     })?;
@@ -164,16 +170,88 @@ fn fill_circle(img: &mut RgbaImage, cx: i64, cy: i64, r: i64, c: [u8; 4]) {
     }
 }
 
+fn draw_annotations(canvas: &mut RgbaImage, layout: &FrameLayout, font: Option<&ab_glyph::FontVec>, anns: &[&Annotation]) {
+    let px = |x: f64| (layout.content_x as f64 + x * layout.content_w as f64) as f32;
+    let py = |y: f64| (layout.content_y as f64 + y * layout.content_h as f64) as f32;
+    for a in anns {
+        let rgb = if a.color.is_empty() { [88, 166, 255] } else { hex(&a.color) };
+        let c = [rgb[0], rgb[1], rgb[2], 255];
+        let (x0, y0, x1, y1) = (px(a.x), py(a.y), px(a.x2), py(a.y2));
+        match a.kind.as_str() {
+            "highlight" => {
+                let (lx, ly) = (x0.min(x1) as i64, y0.min(y1) as i64);
+                let (w, h) = ((x0 - x1).abs() as i64, (y0 - y1).abs() as i64);
+                blend_rect(canvas, lx, ly, w, h, [rgb[0], rgb[1], rgb[2], 96]);
+            }
+            "box" => stroke_rect(canvas, x0, y0, x1, y1, c, 3),
+            "arrow" => draw_arrow(canvas, x0, y0, x1, y1, c, 3),
+            "text" => {
+                if let Some(f) = font {
+                    let s = (layout.content_h as f32 * 0.04).clamp(18.0, 36.0);
+                    text::draw_text(canvas, x0, y0, &a.text, s, f, rgb);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn fill_square(img: &mut RgbaImage, cx: i64, cy: i64, r: i64, c: [u8; 4]) {
+    let (iw, ih) = (img.width() as i64, img.height() as i64);
+    for yy in (cy - r).max(0)..=(cy + r).min(ih - 1) {
+        for xx in (cx - r).max(0)..=(cx + r).min(iw - 1) {
+            img.put_pixel(xx as u32, yy as u32, Rgba(c));
+        }
+    }
+}
+
+fn stroke_line(img: &mut RgbaImage, x0: f32, y0: f32, x1: f32, y1: f32, c: [u8; 4], r: i64) {
+    let steps = (x1 - x0).hypot(y1 - y0).ceil().max(1.0) as i32;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        fill_square(img, (x0 + (x1 - x0) * t) as i64, (y0 + (y1 - y0) * t) as i64, r, c);
+    }
+}
+
+fn stroke_rect(img: &mut RgbaImage, x0: f32, y0: f32, x1: f32, y1: f32, c: [u8; 4], r: i64) {
+    stroke_line(img, x0, y0, x1, y0, c, r);
+    stroke_line(img, x1, y0, x1, y1, c, r);
+    stroke_line(img, x1, y1, x0, y1, c, r);
+    stroke_line(img, x0, y1, x0, y0, c, r);
+}
+
+fn blend_rect(img: &mut RgbaImage, x: i64, y: i64, w: i64, h: i64, c: [u8; 4]) {
+    let (iw, ih) = (img.width() as i64, img.height() as i64);
+    let a = c[3] as f32 / 255.0;
+    for yy in y.max(0)..(y + h).min(ih) {
+        for xx in x.max(0)..(x + w).min(iw) {
+            let bg = img.get_pixel(xx as u32, yy as u32).0;
+            let mix = |f: u8, b: u8| (f as f32 * a + b as f32 * (1.0 - a)) as u8;
+            img.put_pixel(xx as u32, yy as u32, Rgba([mix(c[0], bg[0]), mix(c[1], bg[1]), mix(c[2], bg[2]), 255]));
+        }
+    }
+}
+
+fn draw_arrow(img: &mut RgbaImage, x0: f32, y0: f32, x1: f32, y1: f32, c: [u8; 4], r: i64) {
+    stroke_line(img, x0, y0, x1, y1, c, r);
+    let ang = (y1 - y0).atan2(x1 - x0);
+    let head = (r as f32 * 6.0).max(16.0);
+    for da in [2.5_f32, -2.5] {
+        stroke_line(img, x1, y1, x1 + head * (ang + da).cos(), y1 + head * (ang + da).sin(), c, r);
+    }
+}
+
 struct Events {
     cursors: Vec<CursorSample>,
     clicks: Vec<Click>,
     keys: Vec<(f64, String)>,
     blurs: Vec<BlurRegion>,
+    anns: Vec<Annotation>,
 }
 
 fn load_events(p: Option<&Path>) -> Result<Events> {
     let Some(p) = p else {
-        return Ok(Events { cursors: vec![], clicks: vec![], keys: vec![], blurs: vec![] });
+        return Ok(Events { cursors: vec![], clicks: vec![], keys: vec![], blurs: vec![], anns: vec![] });
     };
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(p)?)?;
     let keys = v["keys"]
@@ -185,6 +263,7 @@ fn load_events(p: Option<&Path>) -> Result<Events> {
         clicks: serde_json::from_value(v["clicks"].clone()).unwrap_or_default(),
         keys,
         blurs: serde_json::from_value(v["blur"].clone()).unwrap_or_default(),
+        anns: serde_json::from_value(v["annotations"].clone()).unwrap_or_default(),
     })
 }
 

@@ -21,6 +21,7 @@
 //! let _rect = crop_rect(held, 1920, 1080);           // → the pixel window to crop
 //! ```
 
+pub mod annotate;
 pub mod easing;
 pub mod mockup;
 pub mod render;
@@ -29,6 +30,7 @@ pub mod spring;
 pub mod types;
 pub mod zoom;
 
+pub use annotate::{annotations_at, Annotation};
 pub use mockup::{browser_in, keyframe_at, keystroke_pills, pill_at, Mockup, MockupLayout, Pill};
 pub use render::{crop_rect, CropRect};
 pub use scene::{frame_layout, Background, FrameLayout, SceneConfig};
