@@ -81,6 +81,24 @@ export default function App() {
   const [showLib, setShowLib] = useState(false);
   const { state: rec, camStream, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
 
+  // render the produced video (mockup + content-aware auto-zoom) server-side, then download it
+  const [rendering, setRendering] = useState(false);
+  const renderVideo = async () => {
+    if (!live || !conn) return;
+    setRendering(true);
+    try {
+      const r = await fetch(`${apiBase}/clip/${conn.id}/render?format=mp4&mockup=true`, { method: "POST" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${data.id}.mp4`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) { console.warn("render failed:", e); }
+    setRendering(false);
+  };
+
   return (
     <div className="app">
       <header className="topbar">
@@ -115,6 +133,9 @@ export default function App() {
             <button onClick={del} disabled={!selected}>Delete</button>
             <button onClick={undo} disabled={!history.length}>↶ Undo</button>
             <span className="tb-spacer" />
+            <button className="render-btn" onClick={renderVideo} disabled={!live || rendering} title="Render the produced video (mockup + auto-zoom) and download it">
+              {rendering ? "Rendering…" : "▶ Render video"}
+            </button>
             <button className="export" onClick={exportProj}>⤓ Export .clipxd</button>
           </div>
           <Timeline clip={data} t={t} onSeek={seek} />

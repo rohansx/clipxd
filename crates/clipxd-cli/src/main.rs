@@ -68,6 +68,9 @@ enum Cmd {
         /// Output format: mp4 | gif | webm.
         #[arg(long, default_value = "mp4")]
         format: String,
+        /// Use a precomputed zoom track (a clip's zoom.json) instead of computing from events.
+        #[arg(long)]
+        zoom: Option<PathBuf>,
     },
     /// Ingest a captured browser trace (DOM/console/network/a11y) into a clip index.
     IngestBrowser {
@@ -192,8 +195,8 @@ fn main() -> Result<()> {
             );
             println!("  index:  {}", r.clip_dir.join("index.json").display());
         }
-        Cmd::Beautify { video, events, out, padding, bg, mockup, format } => {
-            beautify::beautify(&video, events.as_deref(), &out, &beautify::BeautifyOpts { padding, bg, mockup, format })?;
+        Cmd::Beautify { video, events, out, padding, bg, mockup, format, zoom } => {
+            beautify::beautify(&video, events.as_deref(), &out, &beautify::BeautifyOpts { padding, bg, mockup, format, zoom })?;
             println!("✓ beautified → {}", out.display());
         }
         Cmd::Query { clip, question } => {

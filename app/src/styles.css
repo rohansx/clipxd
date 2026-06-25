@@ -127,6 +127,9 @@ body {
 .toolbar button:hover:not(:disabled) { border-color: var(--accent2); }
 .toolbar button:disabled { opacity: .45; cursor: default; }
 .toolbar .export { background: var(--accent2); color: #fff; border: 0; }
+.toolbar .render-btn { background: var(--ok); color: #06210f; border: 0; font-weight: 700; border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+.toolbar .render-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.toolbar .render-btn:disabled { opacity: .5; cursor: default; }
 .toolbar .tb-spacer { flex: 1; }
 .regiontrack { position: relative; height: 40px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .rlane-label { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; pointer-events: none; }

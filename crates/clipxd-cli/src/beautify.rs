@@ -22,17 +22,25 @@ pub struct BeautifyOpts {
     pub bg: String,
     pub mockup: bool,
     pub format: String,
+    /// Use this precomputed zoom track (a clip's `zoom.json`) instead of computing one from
+    /// events — lets the server render the same content-aware auto-zoom the editor previews.
+    pub zoom: Option<PathBuf>,
 }
 
 pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &BeautifyOpts) -> Result<()> {
     let info = clipxd_import::media::probe(video)?;
     let ev = load_events(events)?;
-    let track = compute_zoom_track(
-        &ev.cursors,
-        &ev.clicks,
-        info.duration_s,
-        &ZoomConfig { fps: info.fps as f64, spring: Some(18.0), ..Default::default() },
-    );
+    let auto = || {
+        compute_zoom_track(&ev.cursors, &ev.clicks, info.duration_s, &ZoomConfig { fps: info.fps as f64, spring: Some(18.0), ..Default::default() })
+    };
+    let track = match &opts.zoom {
+        Some(zp) => {
+            let loaded: Vec<clipxd_cinematic::ZoomKeyframe> =
+                std::fs::read_to_string(zp).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+            if loaded.is_empty() { auto() } else { loaded }
+        }
+        None => auto(),
+    };
     let pills = keystroke_pills(&ev.keys, 0.4, 1.2);
     let font = text::load_font();
     eprintln!(

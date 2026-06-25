@@ -38,6 +38,7 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/clips", get(list_clips_json))
+        .route("/clip/:id/render", post(render_clip))
         .route("/ingest", post(ingest))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -212,6 +213,73 @@ async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_jso
 
     let id = join.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?;
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+#[derive(Deserialize)]
+struct RenderQ {
+    format: Option<String>,
+    mockup: Option<bool>,
+}
+
+/// `POST /clip/:id/render` — produce the final beautified video (browser mockup + the clip's
+/// content-aware auto-zoom from its `zoom.json`) by invoking the `clipxd beautify` renderer,
+/// and stream it back as a download. This closes the editor→output loop.
+async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<RenderQ>) -> Result<Response, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let dir = s.clips_dir.join(&id);
+    let video = dir.join("video.mp4");
+    if !video.exists() {
+        return Err((StatusCode::NOT_FOUND, "no video".into()));
+    }
+    let zoom = dir.join("zoom.json");
+    let fmt = match p.format.as_deref() {
+        Some("gif") => "gif",
+        Some("webm") => "webm",
+        _ => "mp4",
+    };
+    let mockup = p.mockup.unwrap_or(true);
+    let out = std::env::temp_dir().join(format!("clipxd-render-{id}.{fmt}"));
+    // the `clipxd` binary sits next to this one (same target dir); fall back to PATH
+    let bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("clipxd")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("clipxd"));
+
+    let (out2, fmt2) = (out.clone(), fmt.to_string());
+    let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let mut c = std::process::Command::new(&bin);
+        c.arg("beautify").arg(&video).args(["--format", &fmt2, "--padding", "8"]);
+        if zoom.exists() {
+            c.arg("--zoom").arg(&zoom);
+        }
+        if mockup {
+            c.arg("--mockup");
+        }
+        c.arg("--out").arg(&out2);
+        let st = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+        anyhow::ensure!(st.success(), "beautify exited non-zero");
+        let b = std::fs::read(&out2)?;
+        let _ = std::fs::remove_file(&out2);
+        Ok(b)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("render failed: {e:#}")))?;
+
+    let ct = match fmt {
+        "gif" => "image/gif",
+        "webm" => "video/webm",
+        _ => "video/mp4",
+    };
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{id}.{fmt}\""))
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 /// `GET /clips` — JSON list of every clip in the dir (newest first) for the library view.
