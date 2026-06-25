@@ -160,8 +160,13 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
                 let oy = vy + (py - r.y as f64) / r.h as f64 * vh;
                 Some((ox as f32, oy as f32))
             };
-            if let Some((ox, oy)) = cursor_at(&ev.cursors, t).and_then(|(sx, sy)| to_out(sx, sy)) {
-                glow(&mut canvas, ox, oy, layout.content_h as f32 * 0.03, [205, 228, 255], 0.12);
+            // styled cursor highlight at the interpolated (smooth) position: soft halo + a
+            // crisp white dot with a dark outline — a "produced" pointer that reads cleanly.
+            if let Some((ox, oy)) = cursor_lerp(&ev.cursors, t).and_then(|(sx, sy)| to_out(sx, sy)) {
+                let s = layout.content_h as f32;
+                glow(&mut canvas, ox, oy, s * 0.035, [180, 210, 255], 0.16);
+                disc(&mut canvas, ox, oy, s * 0.013, [10, 15, 25], 0.55);
+                disc(&mut canvas, ox, oy, s * 0.009, [255, 255, 255], 0.96);
             }
             for clk in ev.clicks.iter().filter(|c| t >= c.t && t <= c.t + 0.6) {
                 if let Some((ox, oy)) = to_out(clk.x, clk.y) {
@@ -282,12 +287,42 @@ fn glow(img: &mut RgbaImage, cx: f32, cy: f32, r: f32, c: [u8; 3], a: f32) {
     }
 }
 
-/// The cursor position (normalized) nearest time `t`.
-fn cursor_at(cursors: &[CursorSample], t: f64) -> Option<(f64, f64)> {
-    cursors
-        .iter()
-        .min_by(|a, b| (a.t - t).abs().partial_cmp(&(b.t - t).abs()).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|c| (c.x, c.y))
+/// A soft alpha-blended filled disc with 1px anti-aliased edge (for the cursor dot/outline).
+fn disc(img: &mut RgbaImage, cx: f32, cy: f32, r: f32, c: [u8; 3], a: f32) {
+    if a <= 0.0 || r <= 0.0 {
+        return;
+    }
+    let (iw, ih) = (img.width() as i32, img.height() as i32);
+    for y in ((cy - r) as i32).max(0)..((cy + r) as i32 + 1).min(ih) {
+        for x in ((cx - r) as i32).max(0)..((cx + r) as i32 + 1).min(iw) {
+            let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            let edge = (r - d).clamp(0.0, 1.0); // 1px feather at the rim
+            if edge > 0.0 {
+                blend_px(img, x as u32, y as u32, c, a * edge);
+            }
+        }
+    }
+}
+
+/// The cursor position (normalized) at time `t`, **linearly interpolated** between the two
+/// bracketing samples (smooth follow, vs. a jumpy nearest-sample lookup). Samples are sorted.
+fn cursor_lerp(cursors: &[CursorSample], t: f64) -> Option<(f64, f64)> {
+    if cursors.is_empty() {
+        return None;
+    }
+    let mut prev = &cursors[0];
+    for c in cursors {
+        if c.t >= t {
+            let span = c.t - prev.t;
+            if span < 1e-6 {
+                return Some((c.x, c.y));
+            }
+            let f = ((t - prev.t) / span).clamp(0.0, 1.0);
+            return Some((prev.x + (c.x - prev.x) * f, prev.y + (c.y - prev.y) * f));
+        }
+        prev = c;
+    }
+    Some((prev.x, prev.y))
 }
 
 fn draw_annotations(canvas: &mut RgbaImage, layout: &FrameLayout, font: Option<&ab_glyph::FontVec>, anns: &[&Annotation]) {
