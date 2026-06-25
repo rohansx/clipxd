@@ -49,6 +49,15 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     let mut index = map::to_index(&id, Source::Screen, &info, &title, &unix_secs(), &enrichment);
     index.event_track = to_index_events(events);
 
+    // real speech-to-text if a whisper backend is installed (audio stays on the box); the
+    // recording's narration becomes queryable alongside its on-screen text.
+    if let Some(a) = audio.as_deref() {
+        let tx = crate::transcribe::transcribe(a);
+        if !tx.is_empty() {
+            index.transcript = tx;
+        }
+    }
+
     // beautify: cursor path → cinematic zoom track. With no input track (e.g. a browser
     // screen recording) we derive the focus from veyo's salient deltas — content-aware
     // auto-zoom — so the recording still pushes in on the action.
