@@ -99,7 +99,7 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
 
     let scene = SceneConfig { background: parse_bg(&opts.bg), padding: opts.padding, out_w: info.width, out_h: info.height, ..Default::default() };
     let layout = frame_layout(info.width, info.height, &scene); // constant src size → constant content rect
-    let background = render_background(&scene);
+    let background = wallpaper(&opts.bg, info.width, info.height);
 
     // Frames are independent → render in parallel (output index j ← source frame emit[j]).
     emit.par_iter().enumerate().try_for_each(|(j, &src)| -> Result<()> {
@@ -369,34 +369,49 @@ fn hex(s: &str) -> [u8; 3] {
     [(n >> 16) as u8, (n >> 8) as u8, n as u8]
 }
 
-fn lerp8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
+/// A premium mesh-gradient wallpaper behind the video (the "beautification" background).
+/// Named presets — "aurora" (default), "dusk", "ocean", "violet", "noir" — or a hex colour.
+/// Painted once per render, not per frame.
+fn wallpaper(bg: &str, w: u32, h: u32) -> RgbaImage {
+    if bg.starts_with('#') {
+        return solid(w, h, hex(bg));
+    }
+    // base colour + radial colour blobs (fx, fy, radius_frac, rgb)
+    let (base, blobs): ([u8; 3], &[(f32, f32, f32, [u8; 3])]) = match bg {
+        "noir" => ([10, 12, 16], &[(0.2, 0.1, 0.7, [40, 46, 60]), (0.85, 0.95, 0.7, [22, 26, 36])]),
+        "dusk" => ([20, 16, 34], &[(0.15, 0.1, 0.75, [90, 70, 200]), (0.88, 0.18, 0.65, [205, 80, 150]), (0.7, 0.95, 0.7, [60, 90, 185])]),
+        "ocean" => ([7, 18, 30], &[(0.18, 0.15, 0.75, [40, 120, 205]), (0.86, 0.9, 0.7, [30, 185, 175]), (0.6, 0.25, 0.55, [80, 90, 220])]),
+        "violet" => ([16, 10, 28], &[(0.2, 0.2, 0.75, [130, 80, 235]), (0.85, 0.15, 0.65, [210, 90, 200]), (0.5, 0.95, 0.7, [90, 70, 215])]),
+        // "aurora" / "gradient" / anything else → the signature look (matches the app's backdrop)
+        _ => ([8, 11, 22], &[(0.12, 0.1, 0.72, [60, 110, 230]), (0.88, 0.14, 0.66, [120, 80, 230]), (0.8, 0.92, 0.72, [40, 200, 160]), (0.1, 0.95, 0.66, [230, 90, 150])]),
+    };
+    mesh(w, h, base, blobs)
 }
 
-fn render_background(scene: &SceneConfig) -> RgbaImage {
-    let (w, h) = (scene.out_w.max(1), scene.out_h.max(1));
+fn solid(w: u32, h: u32, c: [u8; 3]) -> RgbaImage {
+    let mut img = RgbaImage::new(w.max(1), h.max(1));
+    for px in img.pixels_mut() {
+        *px = Rgba([c[0], c[1], c[2], 255]);
+    }
+    img
+}
+
+fn mesh(w: u32, h: u32, base: [u8; 3], blobs: &[(f32, f32, f32, [u8; 3])]) -> RgbaImage {
+    let (w, h) = (w.max(1), h.max(1));
+    let (wf, hf) = (w as f32, h as f32);
     let mut img = RgbaImage::new(w, h);
-    match &scene.background {
-        Background::Solid(c) => {
-            let [r, g, b] = hex(c);
-            for px in img.pixels_mut() {
-                *px = Rgba([r, g, b, 255]);
+    for y in 0..h {
+        for x in 0..w {
+            let (mut r, mut g, mut b) = (base[0] as f32, base[1] as f32, base[2] as f32);
+            for &(fx, fy, rad, c) in blobs {
+                let (dx, dy) = (x as f32 / wf - fx, y as f32 / hf - fy);
+                let falloff = (1.0 - (dx * dx + dy * dy).sqrt() / rad).max(0.0);
+                let a = falloff * falloff * 0.8; // smooth, soft blend toward the blob colour
+                r += (c[0] as f32 - r) * a;
+                g += (c[1] as f32 - g) * a;
+                b += (c[2] as f32 - b) * a;
             }
-        }
-        Background::Linear { stops, .. } => {
-            let a = hex(stops.first().map(String::as_str).unwrap_or("#1f6feb"));
-            let b = hex(stops.last().map(String::as_str).unwrap_or("#0d1117"));
-            for y in 0..h {
-                for x in 0..w {
-                    let t = (x as f32 / w as f32 + y as f32 / h as f32) / 2.0;
-                    img.put_pixel(x, y, Rgba([lerp8(a[0], b[0], t), lerp8(a[1], b[1], t), lerp8(a[2], b[2], t), 255]));
-                }
-            }
-        }
-        Background::Image(_) => {
-            for px in img.pixels_mut() {
-                *px = Rgba([13, 17, 23, 255]);
-            }
+            img.put_pixel(x, y, Rgba([r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]));
         }
     }
     img
