@@ -168,16 +168,29 @@ fn asks_for_before(q: &str) -> bool {
         .any(|k| lc.contains(k))
 }
 
-/// A grounded, cited answer. Deterministic retrieval: find the best-matching moment,
-/// describe it with its timestamp, and — when the question asks — describe what happened
-/// just before it.
+/// A grounded, cited answer. First routes by **intent** (a transcript question → the
+/// narration; a summary question → the salient overview), then falls back to deterministic
+/// keyword retrieval, and — when nothing matches — returns a grounded summary instead of a
+/// dead end, so an agent always gets something to work with.
 pub fn query_clip(index: &Index, question: &str) -> Answer {
+    let lc = question.to_lowercase();
+
+    // intent: "what did they say" / narration → the transcript
+    if mentions(&lc, &["said", "say", "saying", "spoke", "speak", "talk", "narrat", "transcript", "voice", "audio", "mention"]) {
+        if let Some(a) = transcript_answer(index) {
+            return a;
+        }
+    }
+    // intent: summarize / overview / what's this clip about
+    if mentions(&lc, &["summar", "overview", "tldr", "recap", "gist", "what is this", "about this", "what's this"]) {
+        return summary_answer(index);
+    }
+
+    // default: keyword retrieval over transcript + on-screen text + captions
     let hits = search_text(index, question);
     let Some(best) = hits.first() else {
-        return Answer {
-            text: format!("No matching content found in the index for: \"{question}\""),
-            citations: Vec::new(),
-        };
+        // no keyword match → hand the agent a grounded summary rather than "no match"
+        return summary_answer(index);
     };
 
     let mut text = format!(
@@ -190,13 +203,49 @@ pub fn query_clip(index: &Index, question: &str) -> Answer {
 
     if asks_for_before(question) {
         // The nearest salient moment / transcript line strictly before `best.t`.
-        let before = before_context(index, best.t);
-        if let Some((t, what)) = before {
+        if let Some((t, what)) = before_context(index, best.t) {
             text.push_str(&format!(" Just before, at {t:.1}s: {what}"));
             citations.push(t);
         }
     }
 
+    Answer { text, citations }
+}
+
+fn mentions(lc: &str, keys: &[&str]) -> bool {
+    keys.iter().any(|k| lc.contains(k))
+}
+
+/// The narration as a cited answer (for "what did they say").
+fn transcript_answer(index: &Index) -> Option<Answer> {
+    if index.transcript.is_empty() {
+        return None;
+    }
+    let segs: Vec<_> = index.transcript.iter().take(5).collect();
+    let text = segs.iter().map(|s| s.text.trim()).collect::<Vec<_>>().join(" ");
+    let citations = segs.iter().take(3).map(|s| s.start).collect();
+    Some(Answer { text: format!("They said: \"{}\"", text.trim()), citations })
+}
+
+/// A grounded overview built from the most salient moments + the opening narration.
+fn summary_answer(index: &Index) -> Answer {
+    let mut parts = Vec::new();
+    let mut citations = Vec::new();
+    let mut moments: Vec<_> = index.visual_timeline.iter().collect();
+    moments.sort_by(|a, b| b.salience.partial_cmp(&a.salience).unwrap_or(std::cmp::Ordering::Equal));
+    for m in moments.iter().take(2) {
+        parts.push(m.caption.trim().to_string());
+        citations.push(m.t);
+    }
+    if let Some(s) = index.transcript.first() {
+        parts.push(format!("Narration: \"{}\"", s.text.trim()));
+        citations.push(s.start);
+    }
+    let text = if parts.is_empty() {
+        format!("\"{}\" — a {:.0}s clip; no extracted text yet.", index.metadata.title, index.metadata.duration)
+    } else {
+        parts.join(" ")
+    };
     Answer { text, citations }
 }
 
@@ -338,10 +387,32 @@ mod tests {
     }
 
     #[test]
-    fn query_clip_handles_no_match() {
+    fn query_clip_falls_back_to_a_grounded_summary() {
         let idx = checkout_index();
         let ans = query_clip(&idx, "elephant giraffe");
-        assert!(ans.text.starts_with("No matching content"));
-        assert!(ans.citations.is_empty());
+        // no keyword match → a grounded overview (salient moments), not a dead end
+        assert!(!ans.citations.is_empty(), "summary should cite moments: {}", ans.text);
+        assert!(
+            ans.text.to_lowercase().contains("error") || ans.text.to_lowercase().contains("place order"),
+            "{}",
+            ans.text
+        );
+    }
+
+    #[test]
+    fn query_clip_returns_the_transcript_for_what_did_they_say() {
+        let mut idx = checkout_index();
+        idx.transcript.push(TranscriptSegment { start: 1.0, end: 3.0, speaker: None, text: "Let me place this order".into() });
+        let ans = query_clip(&idx, "what did they say");
+        assert!(ans.text.to_lowercase().contains("place this order"), "{}", ans.text);
+        assert!(!ans.citations.is_empty());
+    }
+
+    #[test]
+    fn query_clip_summarizes_on_request() {
+        let idx = checkout_index();
+        let ans = query_clip(&idx, "summarize this clip");
+        assert!(!ans.citations.is_empty());
+        assert!(ans.text.to_lowercase().contains("error") || ans.text.to_lowercase().contains("place order"), "{}", ans.text);
     }
 }
