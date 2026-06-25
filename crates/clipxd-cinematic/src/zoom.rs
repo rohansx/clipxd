@@ -29,7 +29,12 @@ pub fn compute_zoom_track(
     duration_s: f64,
     cfg: &ZoomConfig,
 ) -> Vec<ZoomKeyframe> {
-    let segments = build_segments(clicks, cfg, duration_s);
+    // smart zoom: trigger on clicks AND on cursor dwell (where the user lingers / is working),
+    // so a recording with cursor motion but no clicks still pushes in on the focus.
+    let mut triggers = clicks.to_vec();
+    triggers.extend(dwell_anchors(cursors, cfg));
+    triggers.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    let segments = build_segments(&triggers, cfg, duration_s);
     let fps = cfg.fps.max(1.0);
     let n = (duration_s * fps).floor() as usize + 1;
     let tr = cfg.transition_s.max(1e-3);
@@ -86,6 +91,39 @@ pub fn compute_zoom_track(
         });
     }
     out
+}
+
+/// Detect cursor **dwell** moments — where the cursor lingers within a small radius for a
+/// while (the user is reading / working on one spot) — and emit a zoom anchor at each. This
+/// is what makes the zoom "smart" without requiring clicks: it pushes in wherever attention
+/// settles. Returns synthetic [`Click`]s (zoom triggers) at each dwell's centroid + midpoint.
+fn dwell_anchors(cursors: &[CursorSample], _cfg: &ZoomConfig) -> Vec<Click> {
+    const DWELL_MIN_S: f64 = 0.7; // must linger at least this long
+    const RADIUS: f64 = 0.08; // normalized radius that still counts as "the same spot"
+    if cursors.len() < 3 {
+        return Vec::new();
+    }
+    let mut anchors = Vec::new();
+    let mut i = 0;
+    while i < cursors.len() {
+        let a = cursors[i];
+        let (mut sx, mut sy, mut n) = (a.x, a.y, 1.0);
+        let mut j = i + 1;
+        while j < cursors.len() && (cursors[j].x - a.x).hypot(cursors[j].y - a.y) <= RADIUS {
+            sx += cursors[j].x;
+            sy += cursors[j].y;
+            n += 1.0;
+            j += 1;
+        }
+        let dwell = cursors[j.min(cursors.len() - 1)].t - a.t;
+        if dwell >= DWELL_MIN_S {
+            anchors.push(Click { t: a.t + dwell * 0.5, x: clamp01(sx / n), y: clamp01(sy / n) });
+            i = j; // consume the dwell window
+        } else {
+            i += 1;
+        }
+    }
+    anchors
 }
 
 /// Group clicks into padded, non-overlapping zoom episodes.

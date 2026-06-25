@@ -80,7 +80,21 @@ export default function App() {
   const [showPrompter, setShowPrompter] = useState(false);
   const [showLib, setShowLib] = useState(false);
   const [bg, setBg] = useState("aurora");
-  const { state: rec, camStream, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
+  const { state: rec, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
+
+  // camera preview: when the toggle is on, show the face bubble immediately (before/while
+  // recording), and feed that same stream into the recording composite.
+  const [camPreview, setCamPreview] = useState<MediaStream | null>(null);
+  useEffect(() => {
+    if (!camera) { setCamPreview(null); return; }
+    let stream: MediaStream | null = null;
+    let cancelled = false;
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: 640, height: 480 }, audio: false })
+      .then((s) => { if (cancelled) { s.getTracks().forEach((t) => t.stop()); return; } stream = s; setCamPreview(s); })
+      .catch((e) => { console.warn("camera unavailable:", e); setCamera(false); });
+    return () => { cancelled = true; if (stream) stream.getTracks().forEach((t) => t.stop()); };
+  }, [camera]);
 
   // render the produced video (mockup + content-aware auto-zoom) server-side, then download it
   const [rendering, setRendering] = useState(false);
@@ -116,11 +130,11 @@ export default function App() {
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
         <button className="toggle" onClick={() => setShowLib(true)} title="Library — all your recordings">▦</button>
-        <button className={"toggle" + (camera ? " on" : "")} onClick={() => setCamera((c) => !c)} title="Show your camera (a face bubble) in the recording">📷</button>
-        <button className={"toggle" + (showPrompter ? " on" : "")} onClick={() => setShowPrompter((s) => !s)} title="Teleprompter — read a script while you record">📜</button>
+        <button className={"toggle" + (camera ? " on" : "")} onClick={() => setCamera((c) => !c)} title="Show your camera (a face bubble) in the recording">📷 Camera</button>
+        <button className={"toggle" + (showPrompter ? " on" : "")} onClick={() => setShowPrompter((s) => !s)} title="Teleprompter — read a script while you record">📜 Prompter</button>
         <button
           className={"record" + (rec === "recording" ? " rec-on" : "")}
-          onClick={rec === "recording" ? stopRec : rec === "idle" ? () => startRec({ camera }) : undefined}
+          onClick={rec === "recording" ? stopRec : rec === "idle" ? () => startRec(camPreview) : undefined}
           disabled={rec === "processing"}
           title="Capture your screen in the browser → it becomes a queryable clip"
         >
@@ -172,7 +186,7 @@ export default function App() {
         </section>
         <Agent clip={data} conn={live ? conn : null} t={t} onSeek={seek} />
       </main>
-      {camStream && <CameraBubble stream={camStream} />}
+      {camPreview && <CameraBubble stream={camPreview} />}
       {showPrompter && <Prompter onClose={() => setShowPrompter(false)} />}
       {showLib && <Library apiBase={apiBase} currentId={live ? conn?.id : undefined} onClose={() => setShowLib(false)} />}
     </div>
