@@ -70,6 +70,38 @@ export default function App() {
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
 
+  // ── Record: capture the screen in-browser (getDisplayMedia, works under Wayland via the
+  //    portal) → POST the webm to /ingest → server indexes it → reload on the new clip ──
+  const apiBase = conn?.api ?? "http://127.0.0.1:8787";
+  const [rec, setRec] = useState<"idle" | "recording" | "processing">("idle");
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startRec = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+      chunksRef.current = [];
+      let mr: MediaRecorder;
+      try { mr = new MediaRecorder(stream, { mimeType: "video/webm" }); } catch { mr = new MediaRecorder(stream); }
+      mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((tr) => tr.stop());
+        setRec("processing");
+        const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        try {
+          const r = await fetch(`${apiBase}/ingest`, { method: "POST", headers: { "content-type": "video/webm" }, body: blob });
+          const j = await r.json();
+          if (j.id) { window.location.href = `${location.pathname}?clip=${j.id}&api=${encodeURIComponent(apiBase)}`; return; }
+        } catch (e) { console.warn("ingest failed:", e); }
+        setRec("idle");
+      };
+      stream.getVideoTracks()[0].addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
+      mr.start();
+      recRef.current = mr;
+      setRec("recording");
+    } catch (e) { console.warn("screen capture canceled/failed:", e); setRec("idle"); }
+  };
+  const stopRec = () => recRef.current?.stop();
+
   return (
     <div className="app">
       <header className="topbar">
@@ -81,7 +113,14 @@ export default function App() {
           {MODES.map((m) => <button key={m} className={"mode" + (m === mode ? " on" : "")} onClick={() => setMode(m)}>{m}</button>)}
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
-        <button className="record" title="Live capture lands on Mac/Win + Linux PipeWire; this build runs on a file source."><span className="dot" /> Record</button>
+        <button
+          className={"record" + (rec === "recording" ? " rec-on" : "")}
+          onClick={rec === "recording" ? stopRec : rec === "idle" ? startRec : undefined}
+          disabled={rec === "processing"}
+          title="Capture your screen in the browser → it becomes a queryable clip"
+        >
+          <span className="dot" /> {rec === "recording" ? "Stop" : rec === "processing" ? "Indexing…" : "Record"}
+        </button>
       </header>
 
       <main className="stage">

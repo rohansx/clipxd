@@ -4,16 +4,19 @@
 //! (or any agent) hits over HTTP. CORS-open for local dev.
 
 use axum::{
-    extract::{Path, Query, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use clipxd_index::{query, Index};
+use clipxd_recorder::{record_from_video, EventTrack};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
@@ -34,6 +37,8 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
+        .route("/ingest", post(ingest))
+        .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -120,6 +125,52 @@ async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, St
     let bytes = std::fs::read(&p).map_err(|_| (StatusCode::NOT_FOUND, "no frame".into()))?;
     let ct = if name.ends_with(".jpg") || name.ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
     Ok(([(header::CONTENT_TYPE, ct)], bytes))
+}
+
+/// `POST /ingest` — accept a screen-recording (webm bytes from the browser's MediaRecorder),
+/// run it through the same veyo→enrich→index pipeline as the CLI recorder, transcode a clean
+/// mp4 for playback, and return the new clip id. This is what makes the Record button real on
+/// machines where native screen-grab (scap/PipeWire) can't run — the browser captures, the
+/// server indexes. Blocking work (ffmpeg + OCR) runs off the async runtime.
+async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+    if body.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "empty body".into()));
+    }
+    let dir = s.clips_dir.clone();
+    let join = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        std::fs::create_dir_all(dir.as_path())?;
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!("clipxd-ingest-{stamp}.webm"));
+        std::fs::write(&tmp, &body)?;
+
+        let out = record_from_video(&tmp, &EventTrack::default(), dir.as_path(), 4.0)?;
+
+        // record_from_video copies the source to video.mp4 verbatim; for a webm upload that's
+        // mislabeled, so transcode a real H.264 mp4 the browser can play.
+        let mp4 = out.clip_dir.join("video.mp4");
+        let _ = std::fs::remove_file(&mp4);
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-y", "-i"])
+            .arg(&tmp)
+            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+            .arg(&mp4)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !ok {
+            // fall back to serving the original container
+            let _ = std::fs::copy(&tmp, out.clip_dir.join("video.webm"));
+        }
+        let _ = std::fs::remove_file(&tmp);
+        Ok(out.clip_dir.file_name().and_then(|n| n.to_str()).unwrap_or("clip").to_string())
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let id = join.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?;
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 async fn list_clips(State(s): State<AppState>) -> Html<String> {

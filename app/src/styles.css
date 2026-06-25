@@ -47,6 +47,11 @@ body {
 }
 .record:hover { background: var(--accent); }
 .record .dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgba(255,255,255,.18); }
+.record.rec-on { background: var(--danger); }
+.record.rec-on:hover { background: #ff6259; }
+.record.rec-on .dot { border-radius: 2px; animation: recpulse 1s infinite; }
+.record:disabled { opacity: .7; cursor: default; }
+@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 
 /* ── stage ── */
 .stage { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
