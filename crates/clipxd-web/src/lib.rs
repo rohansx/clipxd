@@ -4,10 +4,10 @@
 //! (or any agent) hits over HTTP. CORS-open for local dev.
 
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Json},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -102,7 +102,7 @@ async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<i
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
 }
 
-async fn get_video(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
+async fn get_video(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, WebErr> {
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
@@ -114,7 +114,40 @@ async fn get_video(State(s): State<AppState>, Path(id): Path<String>) -> Result<
         .ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
     let ct = if file.extension().and_then(|e| e.to_str()) == Some("webm") { "video/webm" } else { "video/mp4" };
     let bytes = std::fs::read(&file).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(([(header::CONTENT_TYPE, ct)], bytes))
+    let len = bytes.len() as u64;
+
+    // Honor a Range request so the editor can seek/scrub (browsers won't seek a <video>
+    // that doesn't advertise byte ranges, even when it's fully buffered).
+    if let Some((start, end)) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).and_then(|r| parse_range(r, len)) {
+        let slice = bytes[start as usize..=end as usize].to_vec();
+        return Ok(Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_TYPE, ct)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))
+            .header(header::CONTENT_LENGTH, end - start + 1)
+            .body(Body::from(slice))
+            .unwrap());
+    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, len)
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
+/// Parse a single `bytes=start-end` range against a known content length. Returns the
+/// inclusive `(start, end)`, clamping the end and rejecting unsatisfiable ranges.
+fn parse_range(h: &str, len: u64) -> Option<(u64, u64)> {
+    if len == 0 {
+        return None;
+    }
+    let (a, b) = h.strip_prefix("bytes=")?.split_once('-')?;
+    let start: u64 = if a.is_empty() { 0 } else { a.parse().ok()? };
+    let end: u64 = if b.is_empty() { len - 1 } else { b.parse::<u64>().ok()?.min(len - 1) };
+    (start <= end && start < len).then_some((start, end))
 }
 
 async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, String)>) -> Result<impl IntoResponse, WebErr> {
