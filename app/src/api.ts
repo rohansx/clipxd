@@ -29,6 +29,7 @@ export async function fetchClip(c: Conn): Promise<Clip> {
     })),
     events: (idx.event_track ?? []).map((e: any) => ({ t: e.t, kind: e.kind, text: e.text ?? e.kind })),
     onScreenText: (idx.on_screen_text ?? []).map((o: any) => ({ t: o.start, text: o.text })),
+    transcript: (idx.transcript ?? []).map((s: any) => ({ start: s.start, end: s.end, text: s.text })),
     qa: [],
   };
 }

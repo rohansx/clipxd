@@ -156,3 +156,11 @@ body {
 .prompter-edit { width: 100%; height: 180px; box-sizing: border-box; background: transparent; border: 0; color: var(--text); padding: 16px; font-size: 16px; line-height: 1.6; resize: vertical; outline: none; }
 .prompter-scroll { height: 230px; overflow: hidden; padding: 20px 32px; text-align: center; cursor: pointer; }
 .prompter-scroll p { margin: 0 0 14px; font-size: 26px; line-height: 1.5; font-weight: 600; color: #f0f4f8; }
+
+/* ── captions + transcript track ── */
+.caption { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); max-width: 80%; background: rgba(0,0,0,.72); color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 17px; font-weight: 600; text-align: center; z-index: 5; }
+.event.tseg { align-items: flex-start; }
+.event.tseg .et { white-space: normal; line-height: 1.45; }
+.event.tseg .tt { padding-top: 1px; }
+.event.active { background: rgba(88,166,255,.10); }
+.event.tseg.active .et { color: var(--text); }

@@ -5,6 +5,7 @@
 export type ZoomEpisode = { start: number; end: number; label: string };
 export type IndexEvent = { t: number; kind: string; text: string };
 export type ClipQA = { q: string; a: string; cites: number[] };
+export type Caption = { start: number; end: number; text: string };
 
 export type Clip = {
   id: string;
@@ -15,6 +16,7 @@ export type Clip = {
   episodes: ZoomEpisode[];
   events: IndexEvent[];
   onScreenText: { t: number; text: string }[];
+  transcript: Caption[];
   qa: ClipQA[];
 };
 
@@ -36,6 +38,10 @@ export const clip: Clip = {
   onScreenText: [
     { t: 0.2, text: "Checkout — app.example.com" },
     { t: 9.0, text: "ERROR: Payment failed (500)" },
+  ],
+  transcript: [
+    { start: 6.2, end: 8.6, text: "Okay, let me place this order." },
+    { start: 8.8, end: 12.0, text: "…and it failed with a payment error, a 500." },
   ],
   qa: [
     {

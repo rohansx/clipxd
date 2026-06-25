@@ -71,6 +71,7 @@ export default function App() {
   const activeEpisode = useMemo(() => data.episodes.find((e) => t >= e.start && t <= e.end), [data, t]);
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
+  const caption = data.transcript.find((s) => t >= s.start && t <= s.end);
 
   // ── Record: screen capture (+ optional camera bubble) → /ingest → reload on the new clip ──
   const apiBase = conn?.api ?? "http://127.0.0.1:8787";
@@ -103,7 +104,7 @@ export default function App() {
 
       <main className="stage">
         <section className="editor">
-          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} manualScale={manual?.scale} speedRate={speed?.rate} videoRef={videoRef} episode={activeEpisode?.label} />
+          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} manualScale={manual?.scale} speedRate={speed?.rate} caption={caption?.text} videoRef={videoRef} episode={activeEpisode?.label} />
           <div className="toolbar">
             <button onClick={addRegion}>+ Zoom</button>
             <button onClick={() => addEdit("trim")}>✂ Cut</button>
@@ -133,7 +134,7 @@ export default function App() {
             <span className="agentic">● {data.events.length} events · {data.onScreenText.length} on-screen text · agent-queryable</span>
           </div>
         </section>
-        <Agent clip={data} conn={live ? conn : null} onSeek={seek} />
+        <Agent clip={data} conn={live ? conn : null} t={t} onSeek={seek} />
       </main>
       {camStream && <CameraBubble stream={camStream} />}
       {showPrompter && <Prompter onClose={() => setShowPrompter(false)} />}
@@ -154,8 +155,8 @@ function CameraBubble({ stream }: { stream: MediaStream }) {
   );
 }
 
-function Preview({ clip, conn, zoom, t, manualScale, speedRate, videoRef, episode }: {
-  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number; manualScale?: number; speedRate?: number;
+function Preview({ clip, conn, zoom, t, manualScale, speedRate, caption, videoRef, episode }: {
+  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number; manualScale?: number; speedRate?: number; caption?: string;
   videoRef: React.RefObject<HTMLVideoElement>; episode?: string;
 }) {
   const hasVideo = conn && zoom.length > 0;
@@ -183,6 +184,7 @@ function Preview({ clip, conn, zoom, t, manualScale, speedRate, videoRef, episod
         <div className="zoom-badge">◎ {kf.scale.toFixed(1)}× auto-zoom</div>
       ) : null}
       {speedRate ? <div className="speed-badge">⏩ {speedRate}× speed</div> : null}
+      {caption ? <div className="caption">{caption}</div> : null}
     </div>
   );
 }
@@ -211,7 +213,7 @@ function Timeline({ clip, t, onSeek }: { clip: Clip; t: number; onSeek: (t: numb
   );
 }
 
-function Agent({ clip, conn, onSeek }: { clip: Clip; conn: Conn | null; onSeek: (t: number) => void }) {
+function Agent({ clip, conn, t, onSeek }: { clip: Clip; conn: Conn | null; t: number; onSeek: (t: number) => void }) {
   const [q, setQ] = useState(clip.qa[0]?.q ?? "what error showed up and what was the user doing right before it");
   const [answer, setAnswer] = useState<ClipQA | null>(clip.qa[0] ?? null);
   const [busy, setBusy] = useState(false);
@@ -244,6 +246,17 @@ function Agent({ clip, conn, onSeek }: { clip: Clip; conn: Conn | null; onSeek: 
         <div className="answer">
           <p>{answer.a}</p>
           {answer.cites.length > 0 && <div className="cites">{answer.cites.map((c) => <button key={c} className="cite" onClick={() => onSeek(c)}>↪ {fmt(c)}</button>)}</div>}
+        </div>
+      )}
+      {clip.transcript.length > 0 && (
+        <div className="events">
+          <div className="events-title">transcript</div>
+          {clip.transcript.map((s, i) => (
+            <button key={i} className={"event tseg" + (t >= s.start && t <= s.end ? " active" : "")} onClick={() => onSeek(s.start)}>
+              <span className="tt">{fmt(s.start)}</span>
+              <span className="et">{s.text}</span>
+            </button>
+          ))}
         </div>
       )}
       <div className="events">
