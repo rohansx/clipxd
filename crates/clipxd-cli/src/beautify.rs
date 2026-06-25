@@ -142,6 +142,36 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
             draw_annotations(&mut canvas, &layout, font.as_ref(), &anns);
         }
 
+        // cursor effects — a soft spotlight + click ripples, mapped through the zoom crop so
+        // they sit exactly where the cursor/click is even as the camera pushes in.
+        if !ev.cursors.is_empty() || !ev.clicks.is_empty() {
+            let to_out = |sx: f64, sy: f64| -> Option<(f32, f32)> {
+                let (px, py) = (sx * w as f64, sy * h as f64);
+                if px < r.x as f64 || px > (r.x + r.w) as f64 || py < r.y as f64 || py > (r.y + r.h) as f64 {
+                    return None;
+                }
+                let (vx, vy, vw, vh) = if opts.mockup {
+                    let m = browser_in(layout.content_w, layout.content_h);
+                    ((layout.content_x + m.video_x) as f64, (layout.content_y + m.video_y) as f64, m.video_w as f64, m.video_h as f64)
+                } else {
+                    (layout.content_x as f64, layout.content_y as f64, layout.content_w as f64, layout.content_h as f64)
+                };
+                let ox = vx + (px - r.x as f64) / r.w as f64 * vw;
+                let oy = vy + (py - r.y as f64) / r.h as f64 * vh;
+                Some((ox as f32, oy as f32))
+            };
+            if let Some((ox, oy)) = cursor_at(&ev.cursors, t).and_then(|(sx, sy)| to_out(sx, sy)) {
+                glow(&mut canvas, ox, oy, layout.content_h as f32 * 0.03, [205, 228, 255], 0.12);
+            }
+            for clk in ev.clicks.iter().filter(|c| t >= c.t && t <= c.t + 0.6) {
+                if let Some((ox, oy)) = to_out(clk.x, clk.y) {
+                    let p = ((t - clk.t) / 0.6) as f32;
+                    let rad = layout.content_h as f32 * 0.02 * (1.0 + p * 2.6);
+                    ring(&mut canvas, ox, oy, rad, 3.5, [140, 198, 255], (1.0 - p) * 0.85);
+                }
+            }
+        }
+
         canvas.save(fout.join(format!("{:05}.png", j + 1)))?;
         Ok(())
     })?;
@@ -210,6 +240,54 @@ fn fill_circle(img: &mut RgbaImage, cx: i64, cy: i64, r: i64, c: [u8; 4]) {
             }
         }
     }
+}
+
+fn blend_px(img: &mut RgbaImage, x: u32, y: u32, c: [u8; 3], a: f32) {
+    let bg = img.get_pixel(x, y).0;
+    let m = |f: u8, b: u8| (f as f32 * a + b as f32 * (1.0 - a)).round() as u8;
+    img.put_pixel(x, y, Rgba([m(c[0], bg[0]), m(c[1], bg[1]), m(c[2], bg[2]), 255]));
+}
+
+/// An anti-aliased alpha-blended ring (for click ripples).
+fn ring(img: &mut RgbaImage, cx: f32, cy: f32, r: f32, thick: f32, c: [u8; 3], a: f32) {
+    if a <= 0.0 {
+        return;
+    }
+    let (iw, ih) = (img.width() as i32, img.height() as i32);
+    let r1 = r + thick;
+    for y in ((cy - r1) as i32).max(0)..((cy + r1) as i32 + 1).min(ih) {
+        for x in ((cx - r1) as i32).max(0)..((cx + r1) as i32 + 1).min(iw) {
+            let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            let edge = 1.0 - ((d - r).abs() / thick).min(1.0);
+            if edge > 0.0 {
+                blend_px(img, x as u32, y as u32, c, a * edge);
+            }
+        }
+    }
+}
+
+/// A soft radial glow (for the cursor spotlight).
+fn glow(img: &mut RgbaImage, cx: f32, cy: f32, r: f32, c: [u8; 3], a: f32) {
+    if a <= 0.0 {
+        return;
+    }
+    let (iw, ih) = (img.width() as i32, img.height() as i32);
+    for y in ((cy - r) as i32).max(0)..((cy + r) as i32 + 1).min(ih) {
+        for x in ((cx - r) as i32).max(0)..((cx + r) as i32 + 1).min(iw) {
+            let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            if d < r {
+                blend_px(img, x as u32, y as u32, c, a * (1.0 - d / r));
+            }
+        }
+    }
+}
+
+/// The cursor position (normalized) nearest time `t`.
+fn cursor_at(cursors: &[CursorSample], t: f64) -> Option<(f64, f64)> {
+    cursors
+        .iter()
+        .min_by(|a, b| (a.t - t).abs().partial_cmp(&(b.t - t).abs()).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|c| (c.x, c.y))
 }
 
 fn draw_annotations(canvas: &mut RgbaImage, layout: &FrameLayout, font: Option<&ab_glyph::FontVec>, anns: &[&Annotation]) {

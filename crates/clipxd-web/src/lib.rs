@@ -244,6 +244,16 @@ async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, body: Byt
 struct RenderQ {
     format: Option<String>,
     mockup: Option<bool>,
+    bg: Option<String>,
+}
+
+/// Whitelist the wallpaper name (preset or hex) so it's safe to pass to the renderer.
+fn safe_bg(s: Option<&str>) -> String {
+    match s {
+        Some(b) if ["aurora", "dusk", "ocean", "violet", "noir", "gradient"].contains(&b) => b.to_string(),
+        Some(b) if b.starts_with('#') && b.len() <= 7 && b[1..].chars().all(|c| c.is_ascii_hexdigit()) => b.to_string(),
+        _ => "aurora".to_string(),
+    }
 }
 
 /// `POST /clip/:id/render` — produce the final beautified video (browser mockup + the clip's
@@ -266,6 +276,8 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         return Err((StatusCode::NOT_FOUND, "no video".into()));
     }
     let zoom = dir.join("zoom.json");
+    let events = dir.join("events.json");
+    let bg = safe_bg(p.bg.as_deref());
     let fmt = match p.format.as_deref() {
         Some("gif") => "gif",
         Some("webm") => "webm",
@@ -283,12 +295,15 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         .or_else(|| debug.filter(|p| p.exists()))
         .unwrap_or_else(|| PathBuf::from("clipxd"));
 
-    let (out2, fmt2, proj) = (out.clone(), fmt.to_string(), project_file.clone());
+    let (out2, fmt2, proj, bg2, ev2) = (out.clone(), fmt.to_string(), project_file.clone(), bg, events);
     let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let mut c = std::process::Command::new(&bin);
-        c.arg("beautify").arg(&video).args(["--format", &fmt2, "--padding", "8"]);
+        c.arg("beautify").arg(&video).args(["--format", &fmt2, "--padding", "8", "--bg", &bg2]);
         if zoom.exists() {
             c.arg("--zoom").arg(&zoom);
+        }
+        if ev2.exists() {
+            c.arg("--events").arg(&ev2); // cursor effects (spotlight + click ripples)
         }
         if let Some(pf) = &proj {
             c.arg("--project").arg(pf);

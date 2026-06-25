@@ -149,6 +149,9 @@ body::before {
 .toolbar .render-btn { background: linear-gradient(135deg, #46c98a, var(--ok)); color: #06210f; border: 0; font-weight: 700; border-radius: 10px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
 .toolbar .render-btn:hover:not(:disabled) { filter: brightness(1.06); }
 .toolbar .render-btn:disabled { opacity: .5; cursor: default; }
+.toolbar .wp-select { background: var(--glass); color: var(--text); border: 1px solid var(--glass-line); border-radius: 10px; padding: 7px 10px; font-size: 13px; cursor: pointer; outline: none; }
+.toolbar .wp-select:hover { border-color: var(--glass-strong); }
+.toolbar .wp-select option { background: #0f1422; color: var(--text); }
 .toolbar .tb-spacer { flex: 1; }
 .regiontrack { position: relative; height: 40px; background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--glass-line); border-radius: 12px; }
 .rlane-label { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 1.2px; pointer-events: none; }

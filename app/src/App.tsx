@@ -79,6 +79,7 @@ export default function App() {
   const [camera, setCamera] = useState(false);
   const [showPrompter, setShowPrompter] = useState(false);
   const [showLib, setShowLib] = useState(false);
+  const [bg, setBg] = useState("aurora");
   const { state: rec, camStream, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
 
   // render the produced video (mockup + content-aware auto-zoom) server-side, then download it
@@ -87,7 +88,7 @@ export default function App() {
     if (!live || !conn) return;
     setRendering(true);
     try {
-      const r = await fetch(`${apiBase}/clip/${conn.id}/render?format=mp4&mockup=true`, {
+      const r = await fetch(`${apiBase}/clip/${conn.id}/render?format=mp4&mockup=true&bg=${bg}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(toProject(data.id, regions, edits)),
@@ -137,7 +138,14 @@ export default function App() {
             <button onClick={del} disabled={!selected}>Delete</button>
             <button onClick={undo} disabled={!history.length}>↶ Undo</button>
             <span className="tb-spacer" />
-            <button className="render-btn" onClick={renderVideo} disabled={!live || rendering} title="Render the produced video (mockup + auto-zoom) and download it">
+            <select className="wp-select" value={bg} onChange={(e) => setBg(e.target.value)} title="Background wallpaper for the rendered video">
+              <option value="aurora">Aurora</option>
+              <option value="dusk">Dusk</option>
+              <option value="ocean">Ocean</option>
+              <option value="violet">Violet</option>
+              <option value="noir">Noir</option>
+            </select>
+            <button className="render-btn" onClick={renderVideo} disabled={!live || rendering} title="Render the produced video (mockup + auto-zoom + cursor effects) and download it">
               {rendering ? "Rendering…" : "▶ Render video"}
             </button>
             <button className="export" onClick={exportProj}>⤓ Export .clipxd</button>
