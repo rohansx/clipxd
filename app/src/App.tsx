@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clip as sampleClip, fmt, type Clip, type ClipQA } from "./sample";
 import { askClip, fetchClip, fetchZoom, getConn, videoUrl, type Conn, type ZoomKeyframe } from "./api";
-import { download, newRegion, regionAt, toProject, type ZoomRegion } from "./regions";
+import { download, editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
 import { RegionTrack } from "./RegionTrack";
 
 const MODES = ["Screen", "Window", "Region", "Browser"] as const;
@@ -22,15 +22,41 @@ export default function App() {
   const [mode, setMode] = useState<(typeof MODES)[number]>("Screen");
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // ── manual zoom regions (the editor's override of the auto-zoom) ──
+  // ── editor regions: manual zoom (override) + cut/speed edits ──
   const [regions, setRegions] = useState<ZoomRegion[]>([]);
-  const [history, setHistory] = useState<ZoomRegion[][]>([]);
+  const [edits, setEdits] = useState<EditRegion[]>([]);
+  const [history, setHistory] = useState<{ z: ZoomRegion[]; e: EditRegion[] }[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const snapshot = () => setHistory((h) => [...h, regions]);
+  const snapshot = () => setHistory((h) => [...h, { z: regions, e: edits }]);
   const addRegion = () => { snapshot(); setRegions((rs) => [...rs, newRegion(t, 1.5)]); };
-  const delRegion = () => { if (!selected) return; snapshot(); setRegions((rs) => rs.filter((r) => r.id !== selected)); setSelected(null); };
-  const undo = () => setHistory((h) => { if (!h.length) return h; setRegions(h[h.length - 1]); return h.slice(0, -1); });
-  const exportProj = () => download(`${data.id}.clipxd.json`, toProject(data.id, regions));
+  const addEdit = (kind: EditKind) => { snapshot(); setEdits((es) => [...es, newEdit(kind, t, 1.0)]); };
+  const del = () => { if (!selected) return; snapshot(); setRegions((rs) => rs.filter((r) => r.id !== selected)); setEdits((es) => es.filter((e) => e.id !== selected)); setSelected(null); };
+  const undo = () => setHistory((h) => { if (!h.length) return h; const p = h[h.length - 1]; setRegions(p.z); setEdits(p.e); return h.slice(0, -1); });
+  const exportProj = () => download(`${data.id}.clipxd.json`, toProject(data.id, regions, edits));
+
+  // raf reads the video clock and applies edits live: trim → skip the span, speed → ramp rate
+  const editsRef = useRef<EditRegion[]>([]);
+  editsRef.current = edits;
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) {
+        const es = editsRef.current;
+        if (!v.paused) {
+          const trim = es.find((e) => e.kind === "trim" && v.currentTime >= e.start && v.currentTime < e.end);
+          if (trim) v.currentTime = trim.end;
+        }
+        const sp = es.find((e) => e.kind === "speed" && v.currentTime >= e.start && v.currentTime <= e.end);
+        const rate = sp ? sp.rate : 1;
+        if (v.playbackRate !== rate) v.playbackRate = rate;
+        setT(v.currentTime);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   useEffect(() => {
     if (!conn) return;
@@ -38,17 +64,11 @@ export default function App() {
     fetchZoom(conn).then(setZoom);
   }, [conn]);
 
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => { const v = videoRef.current; if (v) setT(v.currentTime); raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
   const hasVideo = live && zoom.length > 0;
   const seek = (to: number) => { if (videoRef.current && hasVideo) videoRef.current.currentTime = to; setT(to); };
   const activeEpisode = useMemo(() => data.episodes.find((e) => t >= e.start && t <= e.end), [data, t]);
   const manual = regionAt(regions, t);
+  const speed = editAt(edits, t, "speed");
 
   return (
     <div className="app">
@@ -66,19 +86,33 @@ export default function App() {
 
       <main className="stage">
         <section className="editor">
-          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} manualScale={manual?.scale} videoRef={videoRef} episode={activeEpisode?.label} />
+          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} manualScale={manual?.scale} speedRate={speed?.rate} videoRef={videoRef} episode={activeEpisode?.label} />
           <div className="toolbar">
-            <button onClick={addRegion}>+ Zoom region</button>
-            <button onClick={delRegion} disabled={!selected}>Delete</button>
+            <button onClick={addRegion}>+ Zoom</button>
+            <button onClick={() => addEdit("trim")}>✂ Cut</button>
+            <button onClick={() => addEdit("speed")}>⏩ Speed</button>
+            <button onClick={del} disabled={!selected}>Delete</button>
             <button onClick={undo} disabled={!history.length}>↶ Undo</button>
             <span className="tb-spacer" />
             <button className="export" onClick={exportProj}>⤓ Export .clipxd</button>
           </div>
           <Timeline clip={data} t={t} onSeek={seek} />
-          <RegionTrack regions={regions} duration={data.duration} selected={selected} onSelect={setSelected} onDragStart={snapshot} onChange={setRegions} />
+          <RegionTrack
+            regions={regions} duration={data.duration} selected={selected} laneLabel="manual zoom"
+            onSelect={setSelected} onDragStart={snapshot} onChange={setRegions}
+            renderLabel={(r) => `⌕ ${r.scale.toFixed(1)}×`}
+            hint="“+ Zoom” adds a region at the playhead; drag to move, drag the edge to resize"
+          />
+          <RegionTrack
+            regions={edits} duration={data.duration} selected={selected} laneLabel="cut / speed" minLen={0.3}
+            onSelect={setSelected} onDragStart={snapshot} onChange={setEdits}
+            renderLabel={(r) => (r.kind === "trim" ? "✂ cut" : `⏩ ${r.rate}× speed`)}
+            regionClass={(r) => r.kind}
+            hint="“✂ Cut” skips a span on playback; “⏩ Speed” ramps it 2×"
+          />
           <div className="statusbar">
             <span><b>{data.title}</b></span>
-            <span>{data.resolution[0]}×{data.resolution[1]} · {fmt(data.duration)} · source: {data.source} · {regions.length} zoom region(s)</span>
+            <span>{data.resolution[0]}×{data.resolution[1]} · {fmt(data.duration)} · source: {data.source} · {regions.length} zoom · {edits.length} edit region(s)</span>
             <span className="agentic">● {data.events.length} events · {data.onScreenText.length} on-screen text · agent-queryable</span>
           </div>
         </section>
@@ -88,8 +122,8 @@ export default function App() {
   );
 }
 
-function Preview({ clip, conn, zoom, t, manualScale, videoRef, episode }: {
-  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number; manualScale?: number;
+function Preview({ clip, conn, zoom, t, manualScale, speedRate, videoRef, episode }: {
+  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number; manualScale?: number; speedRate?: number;
   videoRef: React.RefObject<HTMLVideoElement>; episode?: string;
 }) {
   const hasVideo = conn && zoom.length > 0;
@@ -116,6 +150,7 @@ function Preview({ clip, conn, zoom, t, manualScale, videoRef, episode }: {
       ) : kf && kf.scale > 1.05 ? (
         <div className="zoom-badge">◎ {kf.scale.toFixed(1)}× auto-zoom</div>
       ) : null}
+      {speedRate ? <div className="speed-badge">⏩ {speedRate}× speed</div> : null}
     </div>
   );
 }
