@@ -1,15 +1,21 @@
-//! `clipxd beautify` — apply the clean-room cinematic layer to a recording: auto-zoom that
-//! follows the cursor/clicks, composited onto a background with padding, optionally wrapped
-//! in a browser mockup, exported as MP4 / WebM / GIF. ffmpeg decodes + encodes; the
-//! crop/zoom/mockup compositing is ours (`clipxd-cinematic`).
+//! `clipxd beautify` — the clean-room cinematic layer: auto-zoom that follows cursor/clicks,
+//! composited onto a background with padding, optionally a browser mockup, keystroke pills,
+//! and blur (pixelation) over redacted regions — exported as MP4 / WebM / GIF. ffmpeg
+//! decodes + encodes; the per-frame compositing is ours (`clipxd-cinematic`) and runs in
+//! parallel across frames (rayon) so export isn't single-threaded-slow.
 
 use anyhow::{ensure, Context, Result};
 use clipxd_cinematic::{
-    browser_in, compute_zoom_track, crop_rect, frame_layout, Background, Click, CursorSample, SceneConfig, ZoomConfig,
+    browser_in, compute_zoom_track, crop_rect, frame_layout, keystroke_pills, pill_at, Background, Click, CursorSample,
+    SceneConfig, ZoomConfig,
 };
+use clipxd_recorder::BlurRegion;
 use image::{imageops, Rgba, RgbaImage};
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use crate::text;
 
 pub struct BeautifyOpts {
     pub padding: f64,
@@ -20,16 +26,19 @@ pub struct BeautifyOpts {
 
 pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &BeautifyOpts) -> Result<()> {
     let info = clipxd_import::media::probe(video)?;
-    let (cursors, clicks) = load_events(events)?;
+    let ev = load_events(events)?;
     let track = compute_zoom_track(
-        &cursors,
-        &clicks,
+        &ev.cursors,
+        &ev.clicks,
         info.duration_s,
         &ZoomConfig { fps: info.fps as f64, spring: Some(18.0), ..Default::default() },
     );
+    let pills = keystroke_pills(&ev.keys, 0.4, 1.2);
+    let font = text::load_font();
     eprintln!(
-        "{}x{} @ {:.0}fps {:.1}s → {} keyframes, {} clicks; bg={} mockup={} format={}",
-        info.width, info.height, info.fps, info.duration_s, track.len(), clicks.len(), opts.bg, opts.mockup, opts.format
+        "{}x{} @ {:.0}fps {:.1}s → {} keyframes, {} clicks, {} pills, {} blur; bg={} mockup={} format={}",
+        info.width, info.height, info.fps, info.duration_s, track.len(), ev.clicks.len(), pills.len(), ev.blurs.len(),
+        opts.bg, opts.mockup, opts.format
     );
 
     let tmp = std::env::temp_dir().join("clipxd-beautify");
@@ -50,9 +59,17 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
     let layout = frame_layout(info.width, info.height, &scene); // constant src size → constant content rect
     let background = render_background(&scene);
 
-    for (i, f) in frames.iter().enumerate() {
+    // Frames are independent → render in parallel.
+    frames.par_iter().enumerate().try_for_each(|(i, f)| -> Result<()> {
+        let t = i as f64 / info.fps as f64;
         let kf = track.get(i).or_else(|| track.last()).copied().context("empty zoom track")?;
-        let img = image::open(f)?.to_rgba8();
+        let mut img = image::open(f)?.to_rgba8();
+
+        // pixelate any active redaction region on the source frame (so blur tracks the zoom)
+        for b in ev.blurs.iter().filter(|b| t >= b.start && t <= b.end) {
+            pixelate(&mut img, b);
+        }
+
         let (w, h) = img.dimensions();
         let r = crop_rect(&kf, w, h);
         let sub = imageops::crop_imm(&img, r.x, r.y, r.w, r.h).to_image();
@@ -71,10 +88,41 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
             let zoomed = imageops::resize(&sub, layout.content_w, layout.content_h, imageops::FilterType::Lanczos3);
             imageops::overlay(&mut canvas, &zoomed, layout.content_x as i64, layout.content_y as i64);
         }
+
+        // keystroke pill, bottom-center of the content area
+        if let (Some(font), Some(pill)) = (font.as_ref(), pill_at(&pills, t)) {
+            draw_pill(&mut canvas, &layout, font, &pill.text);
+        }
+
         canvas.save(fout.join(format!("{:05}.png", i + 1)))?;
-    }
+        Ok(())
+    })?;
 
     encode(&fout, info.fps, &opts.format, out)
+}
+
+fn draw_pill(canvas: &mut RgbaImage, layout: &clipxd_cinematic::FrameLayout, font: &ab_glyph::FontVec, txt: &str) {
+    let px = (layout.content_h as f32 * 0.035).clamp(16.0, 30.0);
+    let tw = text::text_width(font, px, txt);
+    let (padx, pady) = (px * 0.7, px * 0.45);
+    let (pw, ph) = (tw + padx * 2.0, px + pady * 2.0);
+    let cx = layout.content_x as f32 + layout.content_w as f32 / 2.0;
+    let by = (layout.content_y + layout.content_h) as f32 - ph - px;
+    let bx = cx - pw / 2.0;
+    fill_rect(canvas, bx.max(0.0) as u32, by.max(0.0) as u32, pw as u32, ph as u32, [12, 16, 23, 235]);
+    text::draw_text(canvas, bx + padx, by + pady, txt, px, font, [230, 237, 243]);
+}
+
+fn pixelate(img: &mut RgbaImage, b: &BlurRegion) {
+    let (w, h) = img.dimensions();
+    let rx = (b.x * w as f64).clamp(0.0, w as f64 - 1.0) as u32;
+    let ry = (b.y * h as f64).clamp(0.0, h as f64 - 1.0) as u32;
+    let rw = ((b.w * w as f64) as u32).min(w - rx).max(1);
+    let rh = ((b.h * h as f64) as u32).min(h - ry).max(1);
+    let sub = imageops::crop_imm(img, rx, ry, rw, rh).to_image();
+    let small = imageops::resize(&sub, (rw / 16).max(1), (rh / 16).max(1), imageops::FilterType::Triangle);
+    let mosaic = imageops::resize(&small, rw, rh, imageops::FilterType::Nearest);
+    imageops::overlay(img, &mosaic, rx as i64, ry as i64);
 }
 
 fn encode(frames_dir: &Path, fps: f32, format: &str, out: &Path) -> Result<()> {
@@ -83,10 +131,7 @@ fn encode(frames_dir: &Path, fps: f32, format: &str, out: &Path) -> Result<()> {
     c.args(["-y", "-framerate", &fps.to_string(), "-i"]).arg(&pattern);
     match format {
         "gif" => {
-            c.args([
-                "-vf",
-                "fps=15,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
-            ]);
+            c.args(["-vf", "fps=15,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"]);
         }
         "webm" => {
             c.args(["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"]);
@@ -119,17 +164,28 @@ fn fill_circle(img: &mut RgbaImage, cx: i64, cy: i64, r: i64, c: [u8; 4]) {
     }
 }
 
-fn load_events(p: Option<&Path>) -> Result<(Vec<CursorSample>, Vec<Click>)> {
-    match p {
-        None => Ok((vec![], vec![])),
-        Some(p) => {
-            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(p)?)?;
-            Ok((
-                serde_json::from_value(v["cursors"].clone()).unwrap_or_default(),
-                serde_json::from_value(v["clicks"].clone()).unwrap_or_default(),
-            ))
-        }
-    }
+struct Events {
+    cursors: Vec<CursorSample>,
+    clicks: Vec<Click>,
+    keys: Vec<(f64, String)>,
+    blurs: Vec<BlurRegion>,
+}
+
+fn load_events(p: Option<&Path>) -> Result<Events> {
+    let Some(p) = p else {
+        return Ok(Events { cursors: vec![], clicks: vec![], keys: vec![], blurs: vec![] });
+    };
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(p)?)?;
+    let keys = v["keys"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|k| Some((k["t"].as_f64()?, k["key"].as_str()?.to_string()))).collect())
+        .unwrap_or_default();
+    Ok(Events {
+        cursors: serde_json::from_value(v["cursors"].clone()).unwrap_or_default(),
+        clicks: serde_json::from_value(v["clicks"].clone()).unwrap_or_default(),
+        keys,
+        blurs: serde_json::from_value(v["blur"].clone()).unwrap_or_default(),
+    })
 }
 
 fn parse_bg(s: &str) -> Background {

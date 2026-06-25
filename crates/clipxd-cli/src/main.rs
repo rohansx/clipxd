@@ -5,6 +5,7 @@
 //! That round trip is the headline demo (docs/overview.md §6).
 
 mod beautify;
+mod text;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
