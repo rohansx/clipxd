@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clip as sampleClip, fmt, type Clip, type ClipQA } from "./sample";
 import { askClip, fetchClip, fetchZoom, getConn, videoUrl, type Conn, type ZoomKeyframe } from "./api";
+import { download, newRegion, regionAt, toProject, type ZoomRegion } from "./regions";
+import { RegionTrack } from "./RegionTrack";
 
 const MODES = ["Screen", "Window", "Region", "Browser"] as const;
 
@@ -20,30 +22,33 @@ export default function App() {
   const [mode, setMode] = useState<(typeof MODES)[number]>("Screen");
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // ── manual zoom regions (the editor's override of the auto-zoom) ──
+  const [regions, setRegions] = useState<ZoomRegion[]>([]);
+  const [history, setHistory] = useState<ZoomRegion[][]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const snapshot = () => setHistory((h) => [...h, regions]);
+  const addRegion = () => { snapshot(); setRegions((rs) => [...rs, newRegion(t, 1.5)]); };
+  const delRegion = () => { if (!selected) return; snapshot(); setRegions((rs) => rs.filter((r) => r.id !== selected)); setSelected(null); };
+  const undo = () => setHistory((h) => { if (!h.length) return h; setRegions(h[h.length - 1]); return h.slice(0, -1); });
+  const exportProj = () => download(`${data.id}.clipxd.json`, toProject(data.id, regions));
+
   useEffect(() => {
     if (!conn) return;
     fetchClip(conn).then((c) => { setData(c); setLive(true); }).catch((e) => console.warn("clipxd-web unreachable:", e));
     fetchZoom(conn).then(setZoom);
   }, [conn]);
 
-  // drive the playhead (and thus the zoom) from the actual <video> while it plays
   useEffect(() => {
     let raf = 0;
-    const tick = () => {
-      const v = videoRef.current;
-      if (v) setT(v.currentTime);
-      raf = requestAnimationFrame(tick);
-    };
+    const tick = () => { const v = videoRef.current; if (v) setT(v.currentTime); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
 
   const hasVideo = live && zoom.length > 0;
-  const seek = (to: number) => {
-    if (videoRef.current && hasVideo) videoRef.current.currentTime = to;
-    setT(to);
-  };
+  const seek = (to: number) => { if (videoRef.current && hasVideo) videoRef.current.currentTime = to; setT(to); };
   const activeEpisode = useMemo(() => data.episodes.find((e) => t >= e.start && t <= e.end), [data, t]);
+  const manual = regionAt(regions, t);
 
   return (
     <div className="app">
@@ -53,9 +58,7 @@ export default function App() {
           <span className="tagline">Record once. Humans watch it. <b>Agents read it.</b></span>
         </div>
         <div className="modes">
-          {MODES.map((m) => (
-            <button key={m} className={"mode" + (m === mode ? " on" : "")} onClick={() => setMode(m)}>{m}</button>
-          ))}
+          {MODES.map((m) => <button key={m} className={"mode" + (m === mode ? " on" : "")} onClick={() => setMode(m)}>{m}</button>)}
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
         <button className="record" title="Live capture lands on Mac/Win + Linux PipeWire; this build runs on a file source."><span className="dot" /> Record</button>
@@ -63,11 +66,19 @@ export default function App() {
 
       <main className="stage">
         <section className="editor">
-          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} videoRef={videoRef} episode={activeEpisode?.label} />
+          <Preview clip={data} conn={live ? conn : null} zoom={zoom} t={t} manualScale={manual?.scale} videoRef={videoRef} episode={activeEpisode?.label} />
+          <div className="toolbar">
+            <button onClick={addRegion}>+ Zoom region</button>
+            <button onClick={delRegion} disabled={!selected}>Delete</button>
+            <button onClick={undo} disabled={!history.length}>↶ Undo</button>
+            <span className="tb-spacer" />
+            <button className="export" onClick={exportProj}>⤓ Export .clipxd</button>
+          </div>
           <Timeline clip={data} t={t} onSeek={seek} />
+          <RegionTrack regions={regions} duration={data.duration} selected={selected} onSelect={setSelected} onDragStart={snapshot} onChange={setRegions} />
           <div className="statusbar">
             <span><b>{data.title}</b></span>
-            <span>{data.resolution[0]}×{data.resolution[1]} · {fmt(data.duration)} · source: {data.source}</span>
+            <span>{data.resolution[0]}×{data.resolution[1]} · {fmt(data.duration)} · source: {data.source} · {regions.length} zoom region(s)</span>
             <span className="agentic">● {data.events.length} events · {data.onScreenText.length} on-screen text · agent-queryable</span>
           </div>
         </section>
@@ -77,33 +88,34 @@ export default function App() {
   );
 }
 
-function Preview({ clip, conn, zoom, t, videoRef, episode }: {
-  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number;
+function Preview({ clip, conn, zoom, t, manualScale, videoRef, episode }: {
+  clip: Clip; conn: Conn | null; zoom: ZoomKeyframe[]; t: number; manualScale?: number;
   videoRef: React.RefObject<HTMLVideoElement>; episode?: string;
 }) {
   const hasVideo = conn && zoom.length > 0;
   const kf = kfAt(zoom, t);
   const err = clip.onScreenText.find((o) => /error|fail|500/i.test(o.text))?.text ?? "ERROR: Payment failed (500)";
+  const vstyle = manualScale
+    ? { transformOrigin: "50% 50%", transform: `scale(${manualScale})` }
+    : kf
+    ? { transformOrigin: `${kf.cx * 100}% ${kf.cy * 100}%`, transform: `scale(${kf.scale})` }
+    : undefined;
 
   return (
     <div className="preview">
       {hasVideo ? (
-        <div className="vwrap">
-          <video
-            ref={videoRef}
-            src={videoUrl(conn!)}
-            controls
-            style={kf ? { transformOrigin: `${kf.cx * 100}% ${kf.cy * 100}%`, transform: `scale(${kf.scale})` } : undefined}
-          />
-        </div>
+        <div className="vwrap"><video ref={videoRef} src={videoUrl(conn!)} controls style={vstyle} /></div>
       ) : (
-        <div className={"frame" + (episode ? " zoomed" : "")}>
+        <div className={"frame" + (episode || manualScale ? " zoomed" : "")}>
           <div className="chrome"><i /><i /><i /><span>{clip.source} · {clip.title}</span></div>
           <div className="content"><h1>Checkout</h1><div className="total">Total: USD 42.00</div><div className="toast">{err}</div></div>
         </div>
       )}
-      {kf && kf.scale > 1.05 && <div className="zoom-badge">◎ {kf.scale.toFixed(1)}× auto-zoom</div>}
-      {!hasVideo && episode && <div className="zoom-badge">◎ {episode.slice(0, 48)}</div>}
+      {manualScale ? (
+        <div className="zoom-badge manual">✎ manual zoom {manualScale.toFixed(1)}×</div>
+      ) : kf && kf.scale > 1.05 ? (
+        <div className="zoom-badge">◎ {kf.scale.toFixed(1)}× auto-zoom</div>
+      ) : null}
     </div>
   );
 }
@@ -117,12 +129,8 @@ function Timeline({ clip, t, onSeek }: { clip: Clip; t: number; onSeek: (t: numb
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         onSeek(((e.clientX - r.left) / r.width) * dur);
       }}>
-        {clip.episodes.map((ep, i) => (
-          <div key={i} className="episode" title={ep.label} style={{ left: pct(ep.start), width: pct(ep.end - ep.start) }} />
-        ))}
-        {clip.events.map((ev, i) => (
-          <div key={i} className={"marker " + ev.kind} title={`${fmt(ev.t)} — ${ev.text}`} style={{ left: pct(ev.t) }} />
-        ))}
+        {clip.episodes.map((ep, i) => <div key={i} className="episode" title={ep.label} style={{ left: pct(ep.start), width: pct(ep.end - ep.start) }} />)}
+        {clip.events.map((ev, i) => <div key={i} className={"marker " + ev.kind} title={`${fmt(ev.t)} — ${ev.text}`} style={{ left: pct(ev.t) }} />)}
         <div className="playhead" style={{ left: pct(t) }} />
       </div>
       <div className="legend">
@@ -148,9 +156,7 @@ function Agent({ clip, conn, onSeek }: { clip: Clip; conn: Conn | null; onSeek: 
       return;
     }
     const terms = q.toLowerCase().split(/\W+/).filter(Boolean);
-    const best = clip.qa
-      .map((qa) => ({ qa, score: terms.filter((w) => qa.q.toLowerCase().includes(w)).length }))
-      .sort((a, b) => b.score - a.score)[0];
+    const best = clip.qa.map((qa) => ({ qa, score: terms.filter((w) => qa.q.toLowerCase().includes(w)).length })).sort((a, b) => b.score - a.score)[0];
     setAnswer(best && best.score > 0 ? best.qa : { q, a: "No matching content found in this clip's index.", cites: [] });
   };
 
@@ -170,9 +176,7 @@ function Agent({ clip, conn, onSeek }: { clip: Clip; conn: Conn | null; onSeek: 
       {answer && (
         <div className="answer">
           <p>{answer.a}</p>
-          {answer.cites.length > 0 && (
-            <div className="cites">{answer.cites.map((c) => <button key={c} className="cite" onClick={() => onSeek(c)}>↪ {fmt(c)}</button>)}</div>
-          )}
+          {answer.cites.length > 0 && <div className="cites">{answer.cites.map((c) => <button key={c} className="cite" onClick={() => onSeek(c)}>↪ {fmt(c)}</button>)}</div>}
         </div>
       )}
       <div className="events">
