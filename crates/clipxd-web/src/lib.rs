@@ -407,9 +407,30 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
     ))
 }
 
-async fn share_page(State(s): State<AppState>, Path(id): Path<String>) -> Result<Html<String>, WebErr> {
+async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Html<String>, WebErr> {
     let idx = load_index(&s, &id)?;
-    Ok(Html(share_html(&id, &idx)))
+    // Absolute URL of THIS page, for the "scan to open on your phone" QR: prefer the public
+    // tunnel origin if one is configured, else reconstruct from the request Host.
+    let base = s.public_base.as_ref().map(|b| b.to_string()).unwrap_or_else(|| {
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
+        format!("http://{host}")
+    });
+    let url = format!("{base}/clip/{id}");
+    Ok(Html(share_html(&id, &idx, &url)))
+}
+
+/// Inline SVG QR for `data` (no external requests — works offline on the viewer's phone).
+fn qr_svg(data: &str) -> String {
+    match qrcode::QrCode::new(data.as_bytes()) {
+        Ok(code) => code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(150, 150)
+            .quiet_zone(true)
+            .dark_color(qrcode::render::svg::Color("#0a0d12"))
+            .light_color(qrcode::render::svg::Color("#ffffff"))
+            .build(),
+        Err(_) => String::new(),
+    }
 }
 
 /// `/net` — tell the editor which base URL the Share button should hand out: the public tunnel
@@ -457,16 +478,26 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// A minimal but real share page: the video + the agent ask box behind the same URL.
-fn share_html(id: &str, idx: &Index) -> String {
+/// A minimal but real share page: the video + the agent ask box + a scan-to-open QR, all
+/// behind the same URL.
+fn share_html(id: &str, idx: &Index, url: &str) -> String {
     let title = html_escape(&idx.metadata.title);
+    let qr = qr_svg(url);
     format!(
         r##"<!doctype html><meta charset=utf-8><title>{title} — clipxd</title>
 <body style="font:15px system-ui;background:#0a0d12;color:#e6edf3;margin:0;padding:32px;max-width:920px;margin:auto">
-  <h2>{title}</h2>
-  <video src="/clip/{id}/video" controls style="width:100%;border-radius:10px;background:#000"></video>
-  <p style="color:#8b97a7">{n_ev} events · {n_ost} on-screen text · agent-queryable ·
-     <a href="/clip/{id}/index.json" style="color:#58a6ff">index.json</a></p>
+  <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+    <div style="flex:1;min-width:300px">
+      <h2>{title}</h2>
+      <video src="/clip/{id}/video" controls style="width:100%;border-radius:10px;background:#000"></video>
+      <p style="color:#8b97a7">{n_ev} events · {n_ost} on-screen text · agent-queryable ·
+         <a href="/clip/{id}/index.json" style="color:#58a6ff">index.json</a></p>
+    </div>
+    <div style="text-align:center;background:#fff;border-radius:12px;padding:12px 12px 8px;width:174px">
+      <div style="width:150px;height:150px">{qr}</div>
+      <div style="color:#0a0d12;font-size:12px;margin-top:4px">Scan to open on your phone</div>
+    </div>
+  </div>
   <div style="display:flex;gap:8px;margin:14px 0">
     <input id=q value="what error showed up and what was the user doing right before it"
       style="flex:1;background:#161c27;border:1px solid #232b38;color:#e6edf3;padding:10px;border-radius:8px">

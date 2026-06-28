@@ -23,3 +23,4 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
