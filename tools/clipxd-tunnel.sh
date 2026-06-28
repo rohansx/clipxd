@@ -49,7 +49,15 @@ if echo "$FUNNEL_OUT" | grep -q 'f/funnel'; then
   echo "    3) Re-run: tools/clipxd-tunnel.sh"
   exit 2
 fi
-if ! tailscale funnel status 2>/dev/null | grep -qiE 'https|proxy|:'; then
+# `funnel status` is authoritative but can lag a beat behind --bg; give it a few tries.
+# (capture-then-match, not `| grep -q`: grep -q exits early → SIGPIPE upstream → pipefail false-fail)
+ok=""
+for _ in 1 2 3 4 5; do
+  st="$(tailscale funnel status 2>/dev/null || true)"
+  case "$st" in *"$HOST"*) ok=1; break;; esac
+  sleep 1
+done
+if [ -z "$ok" ]; then
   echo "✗ Funnel did not come up. Tailscale said:"; echo "$FUNNEL_OUT" | sed 's/^/    /'
   exit 1
 fi
