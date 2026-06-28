@@ -39,6 +39,8 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     // same salience gate + enrichment as import…
     let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), &title, CodecConfig::default())?;
     let enricher = Enricher::with_local_defaults();
+    let (tb, ob, cb) = enricher.backends();
+    eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
     let enrichment = enricher.enrich(&EnrichInput {
         deltas: &gated.deltas,
         frames: &gated.salient_frames,

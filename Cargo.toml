@@ -40,6 +40,7 @@ rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros"] }
 schemars = "1"
 axum = "0.7"
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
-# The engine + the meaning layer, consumed from crates.io (ship independently).
-veyo-core = "0.1"
-veyo-enrich = "0.1"
+# The engine + the meaning layer. Path deps during active enrich development (PaddleOCR /
+# captioner work); flip back to crates.io versions once veyo is re-published.
+veyo-core = { path = "../veyo/crates/veyo-core" }
+veyo-enrich = { path = "../veyo/crates/veyo-enrich" }

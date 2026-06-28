@@ -1499,8 +1499,6 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "veyo-core"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2f42db6c583a16c0face6e6ff64a23b69c94961fdb50f62d66b55ce054a6276"
 dependencies = [
  "serde",
 ]
@@ -1508,8 +1506,6 @@ dependencies = [
 [[package]]
 name = "veyo-enrich"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19243c6d2aa0553c7dd561700b6653a8c45bb5fc5388ac4dff505f6c76294703"
 dependencies = [
  "anyhow",
  "serde",
