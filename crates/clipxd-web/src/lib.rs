@@ -38,6 +38,7 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/clips", get(list_clips_json))
+        .route("/net", get(get_net))
         .route("/clip/:id/render", post(render_clip))
         .route("/clip/:id/cursor", post(set_cursor))
         .route("/ingest", post(ingest))
@@ -394,6 +395,33 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>) -> Result
     Ok(Html(share_html(&id, &idx)))
 }
 
+/// `/net` — tell the editor the **LAN** base URL so its "Share" button can copy a link that
+/// works for others on the network, not the `127.0.0.1` the operator opened the editor with.
+async fn get_net(headers: HeaderMap) -> Json<serde_json::Value> {
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
+    let ip = lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    Json(serde_json::json!({ "share_base": share_base(host, &ip), "lan_ip": ip }))
+}
+
+/// Build `http://<lan-ip>:<port>` — port taken from the request's Host header (the port the
+/// client actually reached us on), defaulting to 8787.
+fn share_base(host: Option<&str>, lan_ip: &str) -> String {
+    let port = host
+        .and_then(|h| h.rsplit(':').next())
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8787);
+    format!("http://{lan_ip}:{port}")
+}
+
+/// Best-effort primary LAN IPv4: "connect" a UDP socket toward a public address (no packets are
+/// actually sent) and read which local interface the OS would route through.
+fn lan_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback()).then(|| ip.to_string())
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -428,4 +456,19 @@ fn share_html(id: &str, idx: &Index) -> String {
         n_ev = idx.event_track.len(),
         n_ost = idx.on_screen_text.len(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_base;
+
+    #[test]
+    fn share_base_uses_host_port_and_lan_ip() {
+        // port comes from the Host header; the host/ip part is replaced by the detected LAN ip
+        assert_eq!(share_base(Some("192.168.1.42:8787"), "192.168.1.42"), "http://192.168.1.42:8787");
+        assert_eq!(share_base(Some("localhost:9000"), "10.0.0.5"), "http://10.0.0.5:9000");
+        // no port / unparseable → default 8787
+        assert_eq!(share_base(None, "10.0.0.5"), "http://10.0.0.5:8787");
+        assert_eq!(share_base(Some("box.local"), "10.0.0.5"), "http://10.0.0.5:8787");
+    }
 }

@@ -74,6 +74,22 @@ export function videoUrl(c: Conn): string {
   return `${c.api}/clip/${c.id}/video`;
 }
 
+/// A shareable link to this clip's watch+ask page. Asks the server for its LAN base (so the
+/// link works for others on the network, not the 127.0.0.1 the editor was opened with);
+/// falls back to the api base if the server can't report one.
+export async function shareLink(c: Conn): Promise<string> {
+  try {
+    const r = await fetch(`${c.api}/net`);
+    if (r.ok) {
+      const j = await r.json();
+      if (typeof j.share_base === "string" && j.share_base) return `${j.share_base}/clip/${c.id}`;
+    }
+  } catch {
+    // fall through to the api base
+  }
+  return `${c.api}/clip/${c.id}`;
+}
+
 export async function askClip(c: Conn, q: string): Promise<{ a: string; cites: number[] }> {
   const r = await fetch(`${c.api}/clip/${c.id}/query?q=${encodeURIComponent(q)}`);
   const j = await r.json();

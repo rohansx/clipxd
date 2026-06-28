@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clip as sampleClip, fmt, type Clip, type ClipQA } from "./sample";
-import { askClip, fetchClip, fetchZoom, getConn, videoUrl, type Conn, type ZoomKeyframe } from "./api";
+import { askClip, fetchClip, fetchZoom, getConn, shareLink, videoUrl, type Conn, type ZoomKeyframe } from "./api";
 import { download, editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
 import { RegionTrack } from "./RegionTrack";
 import { useScreenRecorder } from "./useScreenRecorder";
@@ -82,6 +82,20 @@ export default function App() {
   const [bg, setBg] = useState("aurora");
   const { state: rec, start: startRec, stop: stopRec } = useScreenRecorder(apiBase);
 
+  // ── Share: copy a LAN link to this recording's watch+ask page ──
+  const [copied, setCopied] = useState(false);
+  const onShare = async () => {
+    if (!conn) return;
+    const url = await shareLink(conn);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      window.prompt("Copy this share link:", url); // clipboard API can be blocked on plain http
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+
   // camera preview: when the toggle is on, show the face bubble immediately (before/while
   // recording), and feed that same stream into the recording composite.
   const [camPreview, setCamPreview] = useState<MediaStream | null>(null);
@@ -130,6 +144,11 @@ export default function App() {
         </div>
         <span className={"conn " + (live ? "on" : "")}>{live ? (hasVideo ? "● live + auto-zoom" : "● live") : "○ sample"}</span>
         <button className="toggle" onClick={() => setShowLib(true)} title="Library — all your recordings">▦</button>
+        {conn && (
+          <button className="toggle" onClick={onShare} title="Copy a LAN share link — anyone on your network can open it to watch this recording and ask it questions">
+            {copied ? "✓ Link copied" : "🔗 Share"}
+          </button>
+        )}
         <button className={"toggle" + (camera ? " on" : "")} onClick={() => setCamera((c) => !c)} title="Show your camera (a face bubble) in the recording">📷 Camera</button>
         <button className={"toggle" + (showPrompter ? " on" : "")} onClick={() => setShowPrompter((s) => !s)} title="Teleprompter — read a script while you record">📜 Prompter</button>
         <button
