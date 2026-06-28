@@ -74,15 +74,19 @@ export function videoUrl(c: Conn): string {
   return `${c.api}/clip/${c.id}/video`;
 }
 
-/// A shareable link to this clip's watch+ask page. Asks the server for its LAN base (so the
-/// link works for others on the network, not the 127.0.0.1 the editor was opened with);
-/// falls back to the api base if the server can't report one.
+/// A shareable link to this clip's watch+ask page. Asks the server which base to use: the public
+/// tunnel origin (CLIPXD_PUBLIC_BASE, e.g. a Tailscale-Funnel https URL) if one is active, else
+/// the LAN base (so it at least works for others on the network, not the 127.0.0.1 the editor was
+/// opened with). Falls back to the api base if the server can't report one.
 export async function shareLink(c: Conn): Promise<string> {
   try {
     const r = await fetch(`${c.api}/net`);
     if (r.ok) {
       const j = await r.json();
-      if (typeof j.share_base === "string" && j.share_base) return `${j.share_base}/clip/${c.id}`;
+      const base = (typeof j.public_base === "string" && j.public_base)
+        ? j.public_base
+        : (typeof j.share_base === "string" && j.share_base ? j.share_base : null);
+      if (base) return `${base}/clip/${c.id}`;
     }
   } catch {
     // fall through to the api base

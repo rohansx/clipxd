@@ -22,13 +22,22 @@ use tower_http::cors::CorsLayer;
 #[derive(Clone)]
 pub struct AppState {
     pub clips_dir: Arc<PathBuf>,
+    /// Read-only public mode: drops ingest/render/cursor + clip enumeration so the server is
+    /// safe to expose over a tunnel — a viewer can watch/ask one (unguessable) clip and nothing more.
+    pub public: bool,
+    /// Public base URL (e.g. a Tailscale-Funnel `https://…ts.net` origin) the editor's Share
+    /// button should hand out instead of the LAN address.
+    pub public_base: Option<Arc<String>>,
 }
 
-/// Build the router serving clips out of `clips_dir`.
-pub fn app(clips_dir: PathBuf) -> Router {
-    let state = AppState { clips_dir: Arc::new(clips_dir) };
-    Router::new()
-        .route("/", get(list_clips))
+/// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
+/// listing routes are omitted entirely (404), leaving only the read-only watch/ask surface —
+/// the safe set to put behind a public tunnel.
+pub fn app(clips_dir: PathBuf, public: bool) -> Router {
+    let public_base = std::env::var("CLIPXD_PUBLIC_BASE").ok().filter(|s| !s.is_empty()).map(Arc::new);
+    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base };
+    // read-only surface — always present, safe to expose publicly
+    let router = Router::new()
         .route("/clip/:id", get(share_page))
         .route("/clip/:id/index.json", get(get_index))
         .route("/clip/:id/zoom.json", get(get_zoom))
@@ -37,11 +46,19 @@ pub fn app(clips_dir: PathBuf) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
-        .route("/clips", get(list_clips_json))
-        .route("/net", get(get_net))
-        .route("/clip/:id/render", post(render_clip))
-        .route("/clip/:id/cursor", post(set_cursor))
-        .route("/ingest", post(ingest))
+        .route("/net", get(get_net));
+    let router = if public {
+        router.route("/", get(public_root))
+    } else {
+        // local/full surface — enumeration + mutation, only when NOT internet-facing
+        router
+            .route("/", get(list_clips))
+            .route("/clips", get(list_clips_json))
+            .route("/clip/:id/render", post(render_clip))
+            .route("/clip/:id/cursor", post(set_cursor))
+            .route("/ingest", post(ingest))
+    };
+    router
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -395,12 +412,26 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>) -> Result
     Ok(Html(share_html(&id, &idx)))
 }
 
-/// `/net` — tell the editor the **LAN** base URL so its "Share" button can copy a link that
-/// works for others on the network, not the `127.0.0.1` the operator opened the editor with.
-async fn get_net(headers: HeaderMap) -> Json<serde_json::Value> {
+/// `/net` — tell the editor which base URL the Share button should hand out: the public tunnel
+/// origin if one is configured (`CLIPXD_PUBLIC_BASE`), otherwise the **LAN** address (so the
+/// link still works for others on the network, not the `127.0.0.1` the operator opened with).
+async fn get_net(State(s): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
     let ip = lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-    Json(serde_json::json!({ "share_base": share_base(host, &ip), "lan_ip": ip }))
+    Json(serde_json::json!({
+        "lan_ip": ip,
+        "share_base": share_base(host, &ip),
+        "public_base": s.public_base.as_ref().map(|b| b.as_str()),
+    }))
+}
+
+/// Public-mode landing: no clip enumeration — a viewer must arrive with a specific clip link.
+async fn public_root() -> Html<String> {
+    Html(r#"<!doctype html><meta charset=utf-8><title>clipxd</title>
+<body style="font:15px system-ui;background:#0a0d12;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0">
+  <div style="text-align:center"><h2>clip<span style="color:#1f6feb">xd</span></h2>
+  <p style="color:#8b97a7">Open a specific recording link to watch it &amp; ask it questions.</p></div>
+</body>"#.to_string())
 }
 
 /// Build `http://<lan-ip>:<port>` — port taken from the request's Host header (the port the

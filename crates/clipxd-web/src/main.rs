@@ -14,6 +14,10 @@ struct Args {
     clips_dir: PathBuf,
     #[arg(long, default_value_t = 8787)]
     port: u16,
+    /// Read-only public mode (safe behind a tunnel): no ingest/render/cursor, no clip listing.
+    /// Also enabled by `CLIPXD_PUBLIC=1`.
+    #[arg(long)]
+    public: bool,
 }
 
 #[tokio::main]
@@ -27,10 +31,13 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     anyhow::ensure!(args.clips_dir.is_dir(), "clips dir not found: {}", args.clips_dir.display());
 
-    let app = clipxd_web::app(args.clips_dir.clone());
+    let public = args.public
+        || std::env::var("CLIPXD_PUBLIC").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+    let app = clipxd_web::app(args.clips_dir.clone(), public);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("binding {addr}"))?;
-    tracing::info!("clipxd-web serving {} on http://{addr}", args.clips_dir.display());
+    let mode = if public { "READ-ONLY public" } else { "full" };
+    tracing::info!("clipxd-web serving {} ({mode}) on http://{addr}", args.clips_dir.display());
     axum::serve(listener, app).await?;
     Ok(())
 }
