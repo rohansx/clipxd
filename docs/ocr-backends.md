@@ -58,8 +58,37 @@ output to one stable JSON contract — `[{"text": str, "conf": 0..1, "bbox": [x,
 `parse_paddle_json` turns into `OcrSpan`s (confidence normalized to `0..100`). Adding another
 engine = implement `Ocr` and slot it into `with_local_defaults`.
 
-## Next: semantic captions
+## Semantic captions — Moondream2 VLM (local)
 
-Even perfect OCR only yields *text*. The `Captioner` trait (currently the heuristic
-"summary + on-screen text") is the slot for a **local VLM** that describes the *scene/action*
-per salient frame — the upgrade that turns the index from *searchable* into *understood*.
+OCR only yields *text*; the **captioner** describes the *scene/action* of each salient frame —
+the difference between *searchable* and *understood*. The `Captioner` trait selects, locally:
+
+1. **Moondream2** (`MoondreamCaptioner`) — a ~1.8B vision-language model. Captions like
+   *"A build dashboard with a red 'deploy failed (exit 1)' error banner"* instead of
+   *"56 regions changed."* Loads the model **once** and captions all salient frames in one
+   batch (the `Captioner::caption_batch` path) via a bundled Python sidecar.
+2. **heuristic** — the templated summary + on-screen text (fallback; also used per-frame when
+   the VLM returns nothing).
+
+The ingest log shows it: `enrich backends: … caption=moondream2`.
+
+### Enable Moondream2
+
+Runs on-device. Either the lightweight package, or transformers + the HF weights:
+
+```bash
+# Lightweight client (auto-enables clipxd's VLM captioner when importable):
+pip install moondream Pillow
+#   optionally point at a downloaded model file: export MOONDREAM_MODEL=/path/to/moondream-2b-int8.mf
+
+# Or via transformers (opt-in, to avoid a surprise multi-GB download on a random ingest):
+pip install transformers torch Pillow
+export CLIPXD_MOONDREAM=1
+```
+
+`Pillow` is required (the sidecar opens frames). Detection is conservative: enabled when
+`moondream` imports, or when `CLIPXD_MOONDREAM` is set and `transformers` imports — otherwise
+it stays on the heuristic captioner. Captioning runs only on veyo's **salient** frames, so a
+1.8B model is affordable per clip.
+
+> Same rule as OCR: run the model **locally**. Don't route frames to a hosted VLM endpoint.
