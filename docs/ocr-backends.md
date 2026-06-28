@@ -72,24 +72,25 @@ the difference between *searchable* and *understood*. The `Captioner` trait sele
 
 The ingest log shows it: `enrich backends: … caption=moondream2`.
 
-### Enable Moondream2
+### Enable Moondream2 (transformers + your GPU)
 
-Runs on-device. Either the lightweight package, or transformers + the HF weights:
+Runs on-device via transformers. **Pin transformers <5** — 5.x's model-loading refactor breaks
+moondream2's `trust_remote_code` (`all_tied_weights_keys` error):
 
 ```bash
-# Lightweight client (auto-enables clipxd's VLM captioner when importable):
-pip install moondream Pillow
-#   optionally point at a downloaded model file: export MOONDREAM_MODEL=/path/to/moondream-2b-int8.mf
-
-# Or via transformers (opt-in, to avoid a surprise multi-GB download on a random ingest):
-pip install transformers torch Pillow
-export CLIPXD_MOONDREAM=1
+pip install torch "transformers==4.46.3" pillow einops
+# weights (~3.7GB) download once to ~/.cache/huggingface:
+python -c "from huggingface_hub import snapshot_download; snapshot_download('vikhyatk/moondream2')"
 ```
 
-`Pillow` is required (the sidecar opens frames). Detection is conservative: enabled when
-`moondream` imports, or when `CLIPXD_MOONDREAM` is set and `transformers` imports — otherwise
-it stays on the heuristic captioner. Captioning runs only on veyo's **salient** frames, so a
-1.8B model is affordable per clip.
+**Auto-detection:** once the model is cached, clipxd enables the local captioner automatically
+— no env needed (the next ingest logs `caption=moondream2`). `CLIPXD_MOONDREAM=1` forces it on
+before caching. The sidecar loads **fp16 on CUDA**, fp32 on CPU; `Pillow` opens the frames.
+Captioning runs only on veyo's **salient** frames, so a 1.8B model is affordable per clip.
+
+**Measured on an RTX 4050 Laptop (6 GB VRAM):** ~4.7 GB peak VRAM, ~3 s load (once per ingest),
+~2 s/frame inference. CPU-only also works (fp32, ~8 GB RAM, ~10–30 s/frame). Run the server with
+the venv on `PATH` so the sidecars' `python3` is the one with torch/transformers/paddleocr.
 
 ### Caption backend priority
 
