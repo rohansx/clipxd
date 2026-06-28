@@ -91,4 +91,22 @@ export CLIPXD_MOONDREAM=1
 it stays on the heuristic captioner. Captioning runs only on veyo's **salient** frames, so a
 1.8B model is affordable per clip.
 
-> Same rule as OCR: run the model **locally**. Don't route frames to a hosted VLM endpoint.
+### Caption backend priority
+
+`with_local_defaults()` picks the first available, in this order:
+
+1. **Remote** — a self-hosted caption server at `CLIPXD_CAPTION_URL` (+ optional `CLIPXD_TOKEN`).
+   Run `tools/moondream-server/server.py` on a box with RAM/GPU, or deploy
+   `tools/moondream-server/modal_app.py` to **Modal** (serverless T4 GPU — best for weak local
+   internet / no local GPU; the 3.7 GB download + compute live on Modal, scales to zero).
+2. **OpenRouter** — set `OPENROUTER_API_KEY` (+ optional `OPENROUTER_VLM_MODEL`, default
+   `openai/gpt-4o-mini`). The fastest way to **test** the feature: no download, no GPU, real
+   VLM captions in minutes. Frames go to a third party — testing/opt-in only.
+3. **Moondream2 local** — on-device (above).
+4. **heuristic** — templated fallback.
+
+The ingest log names the winner: `caption=remote | openrouter | moondream2 | heuristic`.
+
+Privacy: remote/OpenRouter are **opt-in**; the private default is local. Pick the tier that
+fits — **OpenRouter to test, local Moondream for privacy, Modal/VPS for scale** — all behind
+the same `Captioner` trait, so switching is just an env var.
