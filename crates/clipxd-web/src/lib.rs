@@ -58,6 +58,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
+        .route("/u/:username/clip/:id", get(share_page_for_user))
         .route("/net", get(get_net));
     router = if public {
         router.route("/", get(public_root))
@@ -78,6 +79,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/auth/login", post(auth_login))
             .route("/auth/logout", post(auth_logout))
             .route("/auth/me", get(auth_me))
+            .route("/auth/username", post(auth_set_username))
             .route("/auth/github", get(github_start))
             .route("/auth/github/callback", get(github_callback));
     }
@@ -126,7 +128,13 @@ fn auth_of(s: &AppState) -> Result<&AuthState, WebErr> {
 }
 
 fn user_json(u: &auth::User) -> serde_json::Value {
-    serde_json::json!({ "id": u.id, "email": u.email, "name": u.name, "github": u.github_id.is_some() })
+    serde_json::json!({
+        "id": u.id,
+        "email": u.email,
+        "name": u.name,
+        "username": u.username,
+        "github": u.github_id.is_some(),
+    })
 }
 
 /// JSON response that sets the session cookie AND returns the JWT in the body — the cookie is
@@ -148,6 +156,9 @@ struct SignupReq {
     email: String,
     password: String,
     name: Option<String>,
+    /// Chosen URL slug for share links. Optional — if missing, the user is created without one
+    /// and can claim one later via `POST /auth/username`.
+    username: Option<String>,
 }
 
 async fn auth_signup(State(s): State<AppState>, Json(req): Json<SignupReq>) -> Result<Response, WebErr> {
@@ -163,7 +174,21 @@ async fn auth_signup(State(s): State<AppState>, Json(req): Json<SignupReq>) -> R
         return Err((StatusCode::CONFLICT, "that email is already registered".into()));
     }
     let hash = auth::hash_password(&req.password).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let user = a.db.create_password_user(&email, &hash, req.name.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Validate the username up front so we return a clean 400 with a helpful message instead
+    // of a generic "username taken" / 500 from the DB layer.
+    let username = match req.username.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => None,
+        Some(raw) => Some(
+            auth::validate_username(raw)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
+        ),
+    };
+    let user = a.db
+        .create_password_user(&email, &hash, req.name.as_deref(), username.as_deref())
+        .map_err(|e| match e.to_string().as_str() {
+            "username taken" => (StatusCode::CONFLICT, "username taken".into()),
+            other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
     let jwt = auth::issue_jwt(&a.jwt_secret, &user).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(json_with_session(&jwt, a, user_json(&user)))
 }
@@ -190,6 +215,30 @@ async fn auth_me(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<s
     let a = auth_of(&s)?;
     let principal = auth::authenticate(&a.jwt_secret, &headers).ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
     let user = a.db.find_by_id(principal.id).ok().flatten().ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    Ok(Json(user_json(&user)))
+}
+
+#[derive(Deserialize)]
+struct SetUsernameReq { username: String }
+
+async fn auth_set_username(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SetUsernameReq>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    let a = auth_of(&s)?;
+    let principal = auth::authenticate(&a.jwt_secret, &headers)
+        .ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    let raw = req.username.trim();
+    let username = auth::validate_username(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    a.db.set_username(principal.id, &username)
+        .map_err(|e| match e.to_string().as_str() {
+            "username taken" => (StatusCode::CONFLICT, "username taken".into()),
+            other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+    let user = a.db.find_by_id(principal.id).ok().flatten()
+        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "user vanished".into()))?;
     Ok(Json(user_json(&user)))
 }
 
@@ -695,14 +744,79 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
 
 async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Html<String>, WebErr> {
     let idx = load_index(&s, &id)?;
+    // If the owner has a username, redirect to the canonical /u/<username>/clip/<id> form so
+    // share-link brand carries through. Pre-username clips (owner has no slug yet) pass through.
+    if let Some(a) = &s.auth {
+        if let Some(owner_id) = a.db.clip_owner(&id).ok().flatten() {
+            if let Ok(Some(u)) = a.db.find_by_id(owner_id) {
+                if let Some(slug) = u.username.as_deref() {
+                    let target = format!("/u/{}/clip/{}", slug, id);
+                    return Ok(redirect_to(&headers, &target));
+                }
+            }
+        }
+    }
+    share_page_body(&s, &id, &idx, &headers)
+}
+
+/// Resolve /u/:username/clip/:id: ensure the clip is owned by that username, then render.
+async fn share_page_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Html<String>, WebErr> {
+    let idx = load_index(&s, &id)?;
+    let a = auth_of(&s)?;
+    let user = a.db
+        .find_by_username(&username)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "user not found".into()))?;
+    let owner = a.db
+        .clip_owner(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "clip not found".into()))?;
+    if owner != user.id {
+        return Err((StatusCode::NOT_FOUND, "clip not found".into()));
+    }
+    share_page_body(&s, &id, &idx, &headers)
+}
+
+fn share_page_body(
+    s: &AppState,
+    id: &str,
+    idx: &Index,
+    headers: &HeaderMap,
+) -> Result<Html<String>, WebErr> {
     // Absolute URL of THIS page, for the "scan to open on your phone" QR: prefer the public
     // tunnel origin if one is configured, else reconstruct from the request Host.
     let base = s.public_base.as_ref().map(|b| b.to_string()).unwrap_or_else(|| {
         let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
-        format!("http://{host}")
+        let scheme = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("https");
+        format!("{scheme}://{host}")
     });
     let url = format!("{base}/clip/{id}");
     Ok(Html(share_html(&id, &idx, &url)))
+}
+
+fn redirect_to(headers: &HeaderMap, target: &str) -> Html<String> {
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
+    // Trust X-Forwarded-Proto when we're behind Caddy/reverse-proxy, otherwise default to https
+    // (production) or http (localhost).
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+    let abs = format!("{scheme}://{host}{target}");
+    Html(format!(
+        r##"<!doctype html><meta charset=utf-8><meta http-equiv=refresh content="0;url={abs}">
+<link rel=canonical href="{abs}"><title>Redirecting…</title>
+<body style="font:14px system-ui;background:#0a0d12;color:#e6edf3;padding:32px">
+<a href="{abs}" style="color:#58a6ff">{abs}</a>
+</body>"##
+    ))
 }
 
 /// Inline SVG QR for `data` (no external requests — works offline on the viewer's phone).
@@ -725,11 +839,25 @@ fn qr_svg(data: &str) -> String {
 async fn get_net(State(s): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
     let ip = lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-    Json(serde_json::json!({
+    let mut body = serde_json::json!({
         "lan_ip": ip,
         "share_base": share_base(host, &ip),
         "public_base": s.public_base.as_ref().map(|b| b.as_str()),
-    }))
+    });
+    // If the caller is authenticated, also include their canonical `/u/{username}/clip/…` base.
+    if let Some(a) = &s.auth {
+        if let Some(principal) = auth::authenticate(&a.jwt_secret, &headers) {
+            if let Ok(Some(u)) = a.db.find_by_id(principal.id) {
+                if let Some(slug) = u.username.as_deref() {
+                    let ubase = s.public_base.as_ref().map(|b| b.as_str()).unwrap_or("https://clipxd.local");
+                    let body_mut = body.as_object_mut().unwrap();
+                    body_mut.insert("username".into(), serde_json::Value::String(slug.to_string()));
+                    body_mut.insert("user_share_base".into(), serde_json::Value::String(format!("{ubase}/u/{slug}/clip")));
+                }
+            }
+        }
+    }
+    Json(body)
 }
 
 /// Public-mode landing: no clip enumeration — a viewer must arrive with a specific clip link.

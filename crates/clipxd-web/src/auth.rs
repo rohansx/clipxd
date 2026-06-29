@@ -2,6 +2,12 @@
 //! OAuth, with JWT sessions (HS256) carried in an httpOnly cookie. A small SQLite store holds
 //! users and per-clip ownership so each account sees only its own library — while the public,
 //! unguessable share links stay open (that's a separate, intentional surface).
+//!
+//! ## Username routing
+//!
+//! Each user picks a unique `username` at signup (3-30 chars, [a-z0-9_-]). The share-link
+//! canonical URL is `https://HOST/u/:username/clip/:id`. The bare `/clip/:id` redirects to
+//! that form once we know the owner.
 
 use anyhow::{Context, Result};
 use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -17,11 +23,36 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const COOKIE: &str = "clipxd_session";
 const SESSION_DAYS: u64 = 30;
 
+/// Validate a username (called both at signup and at route-binding time).
+/// Rules: 3-30 chars, [a-z0-9_-], no leading/trailing dash, no reserved words.
+pub fn validate_username(s: &str) -> Result<String> {
+    if s.is_empty() || s.len() > 30 {
+        anyhow::bail!("username must be 1-30 characters");
+    }
+    let trimmed = s.trim_matches(|c: char| c == '-' || c == '_');
+    if trimmed.len() < 3 {
+        anyhow::bail!("username must be at least 3 characters (after stripping dashes/underscores)");
+    }
+    let mut all_ok = true;
+    for c in s.chars() {
+        let ok = c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
+        if !ok { all_ok = false; break; }
+    }
+    if !all_ok {
+        anyhow::bail!("username may only contain lowercase letters, digits, '-' and '_'");
+    }
+    if matches!(s, "u" | "auth" | "clip" | "clips" | "api" | "admin" | "login" | "logout" | "settings" | "library" | "mcp" | "ingest" | "import" | "net" | "share" | "user" | "users") {
+        anyhow::bail!("username is reserved");
+    }
+    Ok(s.to_string())
+}
+
 /// A user record. `pw_hash` is null for GitHub-only accounts; `github_id` is null for password-only.
 #[derive(Debug, Clone)]
 pub struct User {
     pub id: i64,
     pub email: String,
+    pub username: Option<String>,
     pub pw_hash: Option<String>,
     pub github_id: Option<i64>,
     pub name: Option<String>,
@@ -43,6 +74,8 @@ pub struct Db {
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("open db {}", path.display()))?;
+        // Schema. CREATE TABLE IF NOT EXISTS for first-run, then idempotent ALTER for upgrades.
+        // The `username` column arrived later — backfill-safe (nullable on read).
         conn.execute_batch(
             r#"
             PRAGMA journal_mode=WAL;
@@ -52,6 +85,7 @@ impl Db {
                 pw_hash    TEXT,
                 github_id  INTEGER UNIQUE,
                 name       TEXT,
+                username   TEXT,
                 created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS clips (
@@ -62,6 +96,11 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_clips_owner ON clips(owner_id);
             "#,
         )?;
+        // Idempotent column add (returns harmless "duplicate column" error, swallowed).
+        let _ = conn.execute("ALTER TABLE users ADD COLUMN username TEXT", []);
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL;",
+        )?;
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -69,42 +108,78 @@ impl Db {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn create_password_user(&self, email: &str, pw_hash: &str, name: Option<&str>) -> Result<User> {
+    /// Insert a password user with an already-validated username.
+    /// Returns Err("username taken") if the index collides.
+    pub fn create_password_user(&self, email: &str, pw_hash: &str, name: Option<&str>, username: Option<&str>) -> Result<User> {
+        let username = username.map(validate_username).transpose()?;
         let c = self.lock();
         c.execute(
-            "INSERT INTO users (email, pw_hash, name, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![email, pw_hash, name, now()],
-        )?;
+            "INSERT INTO users (email, pw_hash, name, username, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![email, pw_hash, name, username, now()],
+        ).map_err(|e| {
+            if let rusqlite::Error::SqliteFailure(ref sf, _) = e {
+                if sf.code == rusqlite::ErrorCode::ConstraintViolation {
+                    return anyhow::anyhow!("username taken");
+                }
+            }
+            anyhow::anyhow!(e)
+        })?;
         let id = c.last_insert_rowid();
-        Ok(User { id, email: email.to_string(), pw_hash: Some(pw_hash.to_string()), github_id: None, name: name.map(String::from) })
+        Ok(User { id, email: email.to_string(), username, pw_hash: Some(pw_hash.to_string()), github_id: None, name: name.map(String::from) })
     }
 
     pub fn find_by_email(&self, email: &str) -> Result<Option<User>> {
         Ok(self
             .lock()
-            .query_row("SELECT id, email, pw_hash, github_id, name FROM users WHERE email = ?1", [email], row_to_user)
+            .query_row("SELECT id, email, username, pw_hash, github_id, name FROM users WHERE email = ?1", [email], row_to_user)
             .optional()?)
     }
 
     pub fn find_by_id(&self, id: i64) -> Result<Option<User>> {
         Ok(self
             .lock()
-            .query_row("SELECT id, email, pw_hash, github_id, name FROM users WHERE id = ?1", [id], row_to_user)
+            .query_row("SELECT id, email, username, pw_hash, github_id, name FROM users WHERE id = ?1", [id], row_to_user)
             .optional()?)
+    }
+
+    pub fn find_by_username(&self, username: &str) -> Result<Option<User>> {
+        Ok(self
+            .lock()
+            .query_row("SELECT id, email, username, pw_hash, github_id, name FROM users WHERE username = ?1", [username], row_to_user)
+            .optional()?)
+    }
+
+    /// Set username on an existing user (after they've picked one) — for the OAuth backfill path
+    /// where the user signs in via GitHub before picking a slug.
+    pub fn set_username(&self, user_id: i64, username: &str) -> Result<()> {
+        let username = validate_username(username)?;
+        let c = self.lock();
+        c.execute(
+            "UPDATE users SET username = ?1 WHERE id = ?2",
+            rusqlite::params![username, user_id],
+        ).map_err(|e| {
+            if let rusqlite::Error::SqliteFailure(ref sf, _) = e {
+                if sf.code == rusqlite::ErrorCode::ConstraintViolation {
+                    return anyhow::anyhow!("username taken");
+                }
+            }
+            anyhow::anyhow!(e)
+        })?;
+        Ok(())
     }
 
     /// Find or create the user for a GitHub identity. Links to an existing account by email.
     pub fn upsert_github(&self, github_id: i64, email: &str, name: Option<&str>) -> Result<User> {
         let c = self.lock();
         if let Some(u) = c
-            .query_row("SELECT id, email, pw_hash, github_id, name FROM users WHERE github_id = ?1", [github_id], row_to_user)
+            .query_row("SELECT id, email, username, pw_hash, github_id, name FROM users WHERE github_id = ?1", [github_id], row_to_user)
             .optional()?
         {
             return Ok(u);
         }
         // link by email if a password account already exists, else create a fresh GitHub account
         if let Some(existing) = c
-            .query_row("SELECT id, email, pw_hash, github_id, name FROM users WHERE email = ?1", [email], row_to_user)
+            .query_row("SELECT id, email, username, pw_hash, github_id, name FROM users WHERE email = ?1", [email], row_to_user)
             .optional()?
         {
             c.execute("UPDATE users SET github_id = ?1, name = COALESCE(name, ?2) WHERE id = ?3", rusqlite::params![github_id, name, existing.id])?;
@@ -115,7 +190,7 @@ impl Db {
             rusqlite::params![email, github_id, name, now()],
         )?;
         let id = c.last_insert_rowid();
-        Ok(User { id, email: email.to_string(), pw_hash: None, github_id: Some(github_id), name: name.map(String::from) })
+        Ok(User { id, email: email.to_string(), username: None, pw_hash: None, github_id: Some(github_id), name: name.map(String::from) })
     }
 
     pub fn set_clip_owner(&self, clip_id: &str, owner_id: i64) -> Result<()> {
@@ -142,9 +217,10 @@ fn row_to_user(r: &rusqlite::Row) -> rusqlite::Result<User> {
     Ok(User {
         id: r.get(0)?,
         email: r.get(1)?,
-        pw_hash: r.get(2)?,
-        github_id: r.get(3)?,
-        name: r.get(4)?,
+        username: r.get(2)?,
+        pw_hash: r.get(3)?,
+        github_id: r.get(4)?,
+        name: r.get(5)?,
     })
 }
 
