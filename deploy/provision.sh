@@ -25,12 +25,23 @@ mkdir -p /opt/clipxd /var/www/clipxd /var/lib/clipxd/clips /etc/clipxd
 chown -R clipxd:clipxd /opt/clipxd /var/lib/clipxd
 
 echo "==> PaddleOCR venv (CPU OCR sidecar)"
-if [ ! -x /opt/clipxd/venv/bin/python ]; then
-  python3 -m venv /opt/clipxd/venv
+# paddlepaddle's PyPI wheels max at cp313 — Ubuntu 26.04 ships python3.14 by default,
+# so we pin the venv to python3.12 (apt) instead of the system python.
+if ! command -v python3.12 >/dev/null; then
+  apt-get install -y python3.12 python3.12-venv 2>/dev/null || \
+    { echo "no python3.12 available, falling back to $(python3 --version | awk '{print $2}')" ;
+      PYVER="" ; }
+else
+  PYVER=python3.12
 fi
-/opt/clipxd/venv/bin/pip install --upgrade pip >/dev/null
+PYVER="${PYVER:-python3}"
+if [ ! -x /opt/clipxd/venv/bin/python ]; then
+  "$PYVER" -m venv /opt/clipxd/venv
+fi
+/opt/clipxd/venv/bin/python -m pip install --upgrade pip wheel setuptools >/dev/null
 # paddlepaddle (CPU) + paddleocr; this is the heavy install (~1GB) — the swapfile covers it.
-/opt/clipxd/venv/bin/pip install paddlepaddle paddleocr
+# NB: paddlepaddle wheels max at cp313, so this venv must be ≤ Python 3.13.
+/opt/clipxd/venv/bin/python -m pip install "paddlepaddle<3.3" paddleocr
 chown -R clipxd:clipxd /opt/clipxd/venv
 
 echo "==> Caddy (auto-TLS reverse proxy)"
