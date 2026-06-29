@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { ingest, postCursor } from "./api";
 
 export type RecState = "idle" | "recording" | "processing";
 
@@ -16,7 +17,7 @@ function recorderOpts(): MediaRecorderOptions {
 // Screen recording in the browser. A supplied camera stream is composited as a circular
 // bubble onto a canvas and recorded (face baked in). High-bitrate VP9 + 1080p when available.
 // The webm is POSTed to /ingest, the captured cursor to /cursor (zoom follows it), then reload.
-export function useScreenRecorder(apiBase: string) {
+export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) => void) {
   const [state, setState] = useState<RecState>("idle");
   const ref = useRef<{ mr: MediaRecorder } | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -97,19 +98,19 @@ export function useScreenRecorder(apiBase: string) {
         setState("processing");
         const blob = new Blob(chunks.current, { type: "video/webm" });
         try {
-          const r = await fetch(`${apiBase}/ingest`, { method: "POST", headers: { "content-type": "video/webm" }, body: blob });
-          const j = await r.json();
-          if (j.id) {
+          const id = await ingest(blob, apiBase);
+          if (id) {
             if (cursors.length || clicks.length) {
               try {
-                await fetch(`${apiBase}/clip/${j.id}/cursor`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ cursors, clicks, keys: [] }),
-                });
+                await postCursor(id, { cursors, clicks, keys: [] }, apiBase);
               } catch (e) { console.warn("cursor post failed:", e); }
             }
-            window.location.href = `${location.pathname}?clip=${j.id}&api=${encodeURIComponent(apiBase)}`;
+            if (onClipReady) {
+              setState("idle");
+              onClipReady(id); // SPA navigation — no reload
+            } else {
+              window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
+            }
             return;
           }
         } catch (e) { console.warn("ingest failed:", e); }
