@@ -23,7 +23,7 @@ pub use autofocus::focus_track_from_deltas;
 pub use capture::{FramesDirCapture, LiveCapture};
 pub use index_map::to_index_events;
 pub use transcribe::transcribe;
-pub use pipeline::{record_from_capture, record_from_video, RecordOutput};
+pub use pipeline::{enrich_clip, record_from_capture, record_from_video, stub_clip, RecordOutput};
 pub use redact::{apply_redaction, blur_at, redaction_for, BlurRegion};
 pub use source::{CaptureSource, InMemorySource};
 pub use types::{Click, CursorSample, EventTrack, KeyPress, SourceInfo};

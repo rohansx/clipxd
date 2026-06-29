@@ -11,7 +11,7 @@ use crate::{cinematic_track, to_index_events, EventTrack};
 use anyhow::{ensure, Result};
 use clipxd_cinematic::ZoomConfig;
 use clipxd_import::{gate, map, media};
-use clipxd_index::{Index, Source};
+use clipxd_index::{Index, Metadata, Source, Status};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use veyo_core::CodecConfig;
@@ -30,14 +30,58 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     let clip_dir = out_dir.join(&id);
     std::fs::create_dir_all(&clip_dir)?;
     let title = title_of(video);
+    let _ = std::fs::copy(video, clip_dir.join("video.mp4"));
+    let index = enrich_clip(video, &clip_dir, &id, &title, events, sample_fps)?;
+    let zoom_keyframes = std::fs::read_to_string(clip_dir.join("zoom.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    Ok(RecordOutput { clip_dir, index, zoom_keyframes })
+}
 
+/// **Phase 1 of an async ingest (Loom-style):** copy the video in and write a minimal index
+/// with `status: enriching` so the clip is *immediately* watchable, listable, and shareable —
+/// before any (slow) OCR/captioning runs. Fast: just a probe + a file copy. Returns the clip dir.
+pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str) -> Result<PathBuf> {
+    ensure!(video.exists(), "no such video: {}", video.display());
+    let clip_dir = out_dir.join(id);
+    std::fs::create_dir_all(&clip_dir)?;
+    let info = media::probe(video)?;
+    let ext = video.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
+    let _ = std::fs::copy(video, clip_dir.join(format!("video.{ext}")));
+    let mut index = Index::new(
+        id,
+        Source::Screen,
+        Metadata {
+            duration: info.duration_s,
+            resolution: [info.width, info.height],
+            fps: info.fps,
+            created_at: unix_secs(),
+            title: title.to_string(),
+            app_focus: Vec::new(),
+            url_context: None,
+            has_video: true,
+        },
+    );
+    index.status = Status::Enriching; // honest signal: streams are still filling in
+    index.summary.tldr = "Indexing… the transcript, on-screen text, and captions are being built.".into();
+    std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
+    Ok(clip_dir)
+}
+
+/// **Phase 2:** the heavy part — frames → veyo gate → enrich (OCR/caption) → index, written
+/// into an existing `clip_dir` (overwriting any stub). Used by both `record_from_video` and the
+/// async ingest's background task. If `events` is empty, a sibling `events.json` (e.g. from a
+/// browser cursor POST) is honored so the camera still follows the cursor.
+pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events: &EventTrack, sample_fps: f32) -> Result<Index> {
+    ensure!(video.exists(), "no such video: {}", video.display());
     let info = media::probe(video)?;
     let frames = media::extract_frames(video, &clip_dir.join("frames"), sample_fps)?;
     ensure!(!frames.is_empty(), "no frames extracted from {}", video.display());
     let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
 
-    // same salience gate + enrichment as import…
-    let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), &title, CodecConfig::default())?;
+    let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
     let enricher = Enricher::with_local_defaults();
     let (tb, ob, cb) = enricher.backends();
     eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
@@ -47,12 +91,16 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
         audio: audio.as_deref(),
     })?;
 
-    // …but it's a recording: source = screen, and the interaction track is part of the index.
-    let mut index = map::to_index(&id, Source::Screen, &info, &title, &unix_secs(), &enrichment);
-    index.event_track = to_index_events(events);
+    let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &enrichment);
 
-    // real speech-to-text if a whisper backend is installed (audio stays on the box); the
-    // recording's narration becomes queryable alongside its on-screen text.
+    // Interaction track: the param, else a cursor track saved alongside (async cursor POST).
+    let track = if !events.is_empty() {
+        events.clone()
+    } else {
+        std::fs::read_to_string(clip_dir.join("events.json")).ok().and_then(|s| EventTrack::from_json(&s).ok()).unwrap_or_default()
+    };
+    index.event_track = to_index_events(&track);
+
     if let Some(a) = audio.as_deref() {
         let tx = crate::transcribe::transcribe(a);
         if !tx.is_empty() {
@@ -60,21 +108,16 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
         }
     }
 
-    // beautify: cursor path → cinematic zoom track. With no input track (e.g. a browser
-    // screen recording) we derive the focus from veyo's salient deltas — content-aware
-    // auto-zoom — so the recording still pushes in on the action.
-    let focus = if events.is_empty() {
+    let focus = if track.is_empty() {
         crate::autofocus::focus_track_from_deltas(&gated.deltas, info.width, info.height)
     } else {
-        events.clone()
+        track
     };
     let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() });
 
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
-    let _ = std::fs::copy(video, clip_dir.join("video.mp4"));
-
-    Ok(RecordOutput { clip_dir, index, zoom_keyframes: zoom.len() })
+    Ok(index)
 }
 
 /// Record a clip from a [`LiveCapture`] backend (frames already on disk — no ffmpeg
