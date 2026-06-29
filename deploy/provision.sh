@@ -11,7 +11,8 @@ set -euo pipefail
 echo "==> apt deps"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ffmpeg python3-venv python3-pip curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https rsync
+apt-get install -y ffmpeg python3-venv python3-pip curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https rsync \
+  libgl1 libglib2.0-0
 
 echo "==> swapfile (2G) — paddle + builds need headroom on 4GB"
 if [ ! -f /swapfile ]; then
