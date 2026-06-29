@@ -12,12 +12,15 @@ use axum::{
     Router,
 };
 use clipxd_index::{query, Index};
-use clipxd_recorder::{record_from_video, EventTrack};
+use clipxd_recorder::EventTrack;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
+
+pub mod auth;
+use auth::{AuthState, AuthUser};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,6 +31,8 @@ pub struct AppState {
     /// Public base URL (e.g. a Tailscale-Funnel `https://…ts.net` origin) the editor's Share
     /// button should hand out instead of the LAN address.
     pub public_base: Option<Arc<String>>,
+    /// Multi-tenant auth (accounts + per-user clip ownership). `None` = local/LAN mode (no auth).
+    pub auth: Option<AuthState>,
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -35,9 +40,16 @@ pub struct AppState {
 /// the safe set to put behind a public tunnel.
 pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     let public_base = std::env::var("CLIPXD_PUBLIC_BASE").ok().filter(|s| !s.is_empty()).map(Arc::new);
-    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base };
-    // read-only surface — always present, safe to expose publicly
-    let router = Router::new()
+    // Multi-tenant auth when CLIPXD_AUTH=1 (the hosted deploy). Misconfig is a fatal boot error.
+    let auth = if std::env::var("CLIPXD_AUTH").map(|v| v == "1" || v == "true").unwrap_or(false) {
+        Some(AuthState::from_env(&clips_dir).expect("auth init (CLIPXD_AUTH=1) failed"))
+    } else {
+        None
+    };
+    let has_auth = auth.is_some();
+    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base, auth };
+    // read-only surface — always present, safe to expose publicly (unguessable share links)
+    let mut router = Router::new()
         .route("/clip/:id", get(share_page))
         .route("/clip/:id/index.json", get(get_index))
         .route("/clip/:id/zoom.json", get(get_zoom))
@@ -47,21 +59,194 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/net", get(get_net));
-    let router = if public {
+    router = if public {
         router.route("/", get(public_root))
     } else {
-        // local/full surface — enumeration + mutation, only when NOT internet-facing
+        // local/full surface — enumeration + mutation. With auth on, these self-check the JWT
+        // and scope to the owner; without auth (LAN mode) they're open as before.
         router
             .route("/", get(list_clips))
             .route("/clips", get(list_clips_json))
             .route("/clip/:id/render", post(render_clip))
             .route("/clip/:id/cursor", post(set_cursor))
             .route("/ingest", post(ingest))
+            .route("/import", post(import_url))
     };
+    if has_auth {
+        router = router
+            .route("/auth/signup", post(auth_signup))
+            .route("/auth/login", post(auth_login))
+            .route("/auth/logout", post(auth_logout))
+            .route("/auth/me", get(auth_me))
+            .route("/auth/github", get(github_start))
+            .route("/auth/github/callback", get(github_callback));
+    }
     router
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+// ---- auth helpers shared by the editor handlers ----
+
+/// In auth mode, require a valid session and return the user; in local mode, return `None` (open).
+fn require_user(s: &AppState, headers: &HeaderMap) -> Result<Option<AuthUser>, WebErr> {
+    match &s.auth {
+        None => Ok(None),
+        Some(a) => auth::authenticate(&a.jwt_secret, headers)
+            .map(Some)
+            .ok_or((StatusCode::UNAUTHORIZED, "login required".into())),
+    }
+}
+
+/// In auth mode, require that the caller owns `id` (unowned legacy clips are allowed through);
+/// in local mode, always allow.
+fn require_clip_access(s: &AppState, headers: &HeaderMap, id: &str) -> Result<(), WebErr> {
+    let Some(a) = &s.auth else { return Ok(()) };
+    let user = auth::authenticate(&a.jwt_secret, headers).ok_or((StatusCode::UNAUTHORIZED, "login required".into()))?;
+    match a.db.clip_owner(id).ok().flatten() {
+        Some(owner) if owner == user.id => Ok(()),
+        None => Ok(()), // pre-auth clip with no recorded owner — allow
+        Some(_) => Err((StatusCode::FORBIDDEN, "not your clip".into())),
+    }
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .filter_map(|kv| kv.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.to_string())
+}
+
+fn auth_of(s: &AppState) -> Result<&AuthState, WebErr> {
+    s.auth.as_ref().ok_or((StatusCode::NOT_FOUND, "auth disabled".into()))
+}
+
+fn user_json(u: &auth::User) -> serde_json::Value {
+    serde_json::json!({ "id": u.id, "email": u.email, "name": u.name, "github": u.github_id.is_some() })
+}
+
+/// JSON response that sets the session cookie AND returns the JWT in the body — the cookie is
+/// the secure path for same-origin production; the body token lets the SPA use a Bearer header
+/// when it talks to the API cross-origin (local dev), where the cookie wouldn't be sent.
+fn json_with_session(jwt: &str, a: &AuthState, mut body: serde_json::Value) -> Response {
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("token".into(), serde_json::Value::String(jwt.to_string()));
+    }
+    let mut resp = Json(body).into_response();
+    if let Ok(c) = auth::session_cookie(jwt, a.cookie_secure).parse() {
+        resp.headers_mut().insert(header::SET_COOKIE, c);
+    }
+    resp
+}
+
+#[derive(Deserialize)]
+struct SignupReq {
+    email: String,
+    password: String,
+    name: Option<String>,
+}
+
+async fn auth_signup(State(s): State<AppState>, Json(req): Json<SignupReq>) -> Result<Response, WebErr> {
+    let a = auth_of(&s)?;
+    let email = req.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() < 3 {
+        return Err((StatusCode::BAD_REQUEST, "a valid email is required".into()));
+    }
+    if req.password.len() < 8 {
+        return Err((StatusCode::BAD_REQUEST, "password must be at least 8 characters".into()));
+    }
+    if a.db.find_by_email(&email).ok().flatten().is_some() {
+        return Err((StatusCode::CONFLICT, "that email is already registered".into()));
+    }
+    let hash = auth::hash_password(&req.password).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let user = a.db.create_password_user(&email, &hash, req.name.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let jwt = auth::issue_jwt(&a.jwt_secret, &user).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(json_with_session(&jwt, a, user_json(&user)))
+}
+
+#[derive(Deserialize)]
+struct LoginReq {
+    email: String,
+    password: String,
+}
+
+async fn auth_login(State(s): State<AppState>, Json(req): Json<LoginReq>) -> Result<Response, WebErr> {
+    let a = auth_of(&s)?;
+    let email = req.email.trim().to_lowercase();
+    let user = a.db.find_by_email(&email).ok().flatten().ok_or((StatusCode::UNAUTHORIZED, "invalid email or password".into()))?;
+    let ok = user.pw_hash.as_deref().map(|h| auth::verify_password(&req.password, h)).unwrap_or(false);
+    if !ok {
+        return Err((StatusCode::UNAUTHORIZED, "invalid email or password".into()));
+    }
+    let jwt = auth::issue_jwt(&a.jwt_secret, &user).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(json_with_session(&jwt, a, user_json(&user)))
+}
+
+async fn auth_me(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
+    let a = auth_of(&s)?;
+    let principal = auth::authenticate(&a.jwt_secret, &headers).ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    let user = a.db.find_by_id(principal.id).ok().flatten().ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    Ok(Json(user_json(&user)))
+}
+
+async fn auth_logout(State(s): State<AppState>) -> Result<Response, WebErr> {
+    let a = auth_of(&s)?;
+    let mut resp = Json(serde_json::json!({ "ok": true })).into_response();
+    if let Ok(c) = auth::clear_cookie(a.cookie_secure).parse() {
+        resp.headers_mut().insert(header::SET_COOKIE, c);
+    }
+    Ok(resp)
+}
+
+async fn github_start(State(s): State<AppState>) -> Result<Response, WebErr> {
+    let a = auth_of(&s)?;
+    let gh = a.github.as_ref().ok_or((StatusCode::NOT_IMPLEMENTED, "GitHub OAuth not configured".into()))?;
+    let st = auth::random_token();
+    let redirect = format!("{}/auth/github/callback", a.app_base);
+    let url = gh.authorize_url(&redirect, &st);
+    let state_cookie = format!(
+        "clipxd_oauth_state={st}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600{}",
+        if a.cookie_secure { "; Secure" } else { "" }
+    );
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, url)
+        .header(header::SET_COOKIE, state_cookie)
+        .body(Body::empty())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+#[derive(Deserialize)]
+struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+}
+
+async fn github_callback(State(s): State<AppState>, Query(q): Query<CallbackQuery>, headers: HeaderMap) -> Result<Response, WebErr> {
+    let a = auth_of(&s)?;
+    let gh = a.github.as_ref().ok_or((StatusCode::NOT_IMPLEMENTED, "GitHub OAuth not configured".into()))?;
+    let code = q.code.ok_or((StatusCode::BAD_REQUEST, "missing code".into()))?;
+    // CSRF: the returned state must match the cookie we set in github_start.
+    let want = cookie_value(&headers, "clipxd_oauth_state");
+    if q.state.is_none() || q.state != want {
+        return Err((StatusCode::BAD_REQUEST, "invalid oauth state".into()));
+    }
+    let redirect = format!("{}/auth/github/callback", a.app_base);
+    let ident = auth::exchange_github_code(gh, &code, &redirect).await.map_err(|e| (StatusCode::BAD_GATEWAY, format!("github: {e}")))?;
+    let user = a.db.upsert_github(ident.github_id, &ident.email, ident.name.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let jwt = auth::issue_jwt(&a.jwt_secret, &user).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Set the session, clear the state cookie, and bounce back to the app.
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, a.app_base.as_str())
+        .header(header::SET_COOKIE, auth::session_cookie(&jwt, a.cookie_secure))
+        .header(header::SET_COOKIE, format!("clipxd_oauth_state=; HttpOnly; Path=/; Max-Age=0{}", if a.cookie_secure { "; Secure" } else { "" }))
+        .body(Body::empty())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 type WebErr = (StatusCode, String);
@@ -181,56 +366,60 @@ async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, St
     Ok(([(header::CONTENT_TYPE, ct)], bytes))
 }
 
-/// `POST /ingest` — accept a screen-recording (webm bytes from the browser's MediaRecorder),
-/// run it through the same veyo→enrich→index pipeline as the CLI recorder, transcode a clean
-/// mp4 for playback, and return the new clip id. This is what makes the Record button real on
-/// machines where native screen-grab (scap/PipeWire) can't run — the browser captures, the
-/// server indexes. Blocking work (ffmpeg + OCR) runs off the async runtime.
-async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+/// `POST /ingest` — accept a screen-recording (webm bytes from the browser's MediaRecorder).
+/// **Loom-style, two-phase:** Phase 1 (fast) saves the video + a minimal `status: enriching`
+/// index and returns the clip id *immediately* — so the clip is instantly watchable, listable,
+/// and shareable. Phase 2 (the slow OCR/captioning) runs in a background task and rewrites the
+/// index to `complete` when done. A recording is therefore never lost to slow/failed enrichment.
+async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+    let user = require_user(&s, &headers)?;
     if body.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "empty body".into()));
     }
     let dir = s.clips_dir.clone();
-    let join = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-        std::fs::create_dir_all(dir.as_path())?;
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        let tmp = std::env::temp_dir().join(format!("clipxd-ingest-{stamp}.webm"));
-        std::fs::write(&tmp, &body)?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let id = format!("clp_{:08x}", stamp as u32);
 
-        let out = record_from_video(&tmp, &EventTrack::default(), dir.as_path(), 4.0)?;
+    // Phase 1 — persist the video + a stub index, fast. Returns the clip dir + saved video path.
+    let (id, video) = {
+        let (dir, id) = (dir.clone(), id.clone());
+        tokio::task::spawn_blocking(move || -> anyhow::Result<(String, std::path::PathBuf)> {
+            std::fs::create_dir_all(dir.as_path())?;
+            let tmp = std::env::temp_dir().join(format!("clipxd-ingest-{id}.webm"));
+            std::fs::write(&tmp, &body)?;
+            let clip_dir = clipxd_recorder::stub_clip(&tmp, dir.as_path(), &id, "Screen recording")?;
+            let _ = std::fs::remove_file(&tmp);
+            Ok((id, clip_dir.join("video.webm")))
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?
+    };
 
-        // give it a real title instead of the temp filename
-        {
-            let mut idx = out.index.clone();
-            idx.metadata.title = "Screen recording".into();
-            let _ = std::fs::write(out.clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
-        }
+    // Record ownership so this clip shows up only in its creator's library (auth mode).
+    if let (Some(a), Some(u)) = (&s.auth, &user) {
+        let _ = a.db.set_clip_owner(&id, u.id);
+    }
 
-        // record_from_video copies the source to video.mp4 verbatim; for a webm upload that's
-        // mislabeled, so transcode a real H.264 mp4 the browser can play.
-        let mp4 = out.clip_dir.join("video.mp4");
-        let _ = std::fs::remove_file(&mp4);
-        let ok = std::process::Command::new("ffmpeg")
-            .args(["-y", "-i"])
-            .arg(&tmp)
-            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
-            .arg(&mp4)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|st| st.success())
-            .unwrap_or(false);
-        if !ok {
-            // fall back to serving the original container
-            let _ = std::fs::copy(&tmp, out.clip_dir.join("video.webm"));
-        }
-        let _ = std::fs::remove_file(&tmp);
-        Ok(out.clip_dir.file_name().and_then(|n| n.to_str()).unwrap_or("clip").to_string())
-    })
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Phase 2 — enrich in the background; the clip is already usable. On failure, mark the index
+    // `partial` (still watchable) rather than leaving it stuck on `enriching`.
+    let clip_dir = dir.join(&id);
+    let bg_id = id.clone();
+    tokio::spawn(async move {
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Err(e) = clipxd_recorder::enrich_clip(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0) {
+                eprintln!("background enrich failed for {bg_id}: {e:#}");
+                if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
+                    if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+                        idx.status = clipxd_index::Status::Partial;
+                        let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+                    }
+                }
+            }
+        })
+        .await;
+    });
 
-    let id = join.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
@@ -238,10 +427,11 @@ async fn ingest(State(s): State<AppState>, body: Bytes) -> Result<Json<serde_jso
 /// clicks, screen-normalized). Save it and **recompute the zoom so the camera follows the
 /// cursor** (Screen-Studio style) instead of the veyo content-centroid fallback. The clicks
 /// also become queryable `event_track` entries.
-async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
+    require_clip_access(&s, &headers, &id)?;
     let events: EventTrack = serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("bad events: {e}")))?;
     if events.is_empty() {
         return Ok(Json(serde_json::json!({ "ok": true, "keyframes": 0, "note": "no cursor data" })));
@@ -256,6 +446,93 @@ async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, body: Byt
     std::fs::write(dir.join("index.json"), serde_json::to_string_pretty(&index).unwrap_or_default())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true, "keyframes": zoom.len(), "events": index.event_track.len() })))
+}
+
+/// Resolve the `clipxd` CLI: a sibling release build (fast), then the debug sibling, then PATH.
+fn clipxd_bin() -> PathBuf {
+    let exe = std::env::current_exe().ok();
+    let dir = exe.as_ref().and_then(|p| p.parent());
+    let release = dir.and_then(|d| d.parent()).map(|t| t.join("release").join("clipxd"));
+    let debug = dir.map(|d| d.join("clipxd"));
+    release
+        .filter(|p| p.exists())
+        .or_else(|| debug.filter(|p| p.exists()))
+        .unwrap_or_else(|| PathBuf::from("clipxd"))
+}
+
+/// Snapshot the set of clip-dir names currently in `dir` (so we can spot a freshly imported one).
+fn clip_dir_names(dir: &std::path::Path) -> std::collections::HashSet<String> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct ImportReq {
+    url: String,
+}
+
+/// `POST /import` — import a video URL (yt-dlp) or local path into a new clip via the `clipxd`
+/// CLI, inheriting this server's env (caption/OCR backends, PATH). Returns the new clip id.
+/// Local-only (dropped in public mode) since it spawns a process and writes a clip.
+async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Json<ImportReq>) -> Result<Json<serde_json::Value>, WebErr> {
+    let user = require_user(&s, &headers)?;
+    let url = req.url.trim().to_string();
+    if url.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "empty url".into()));
+    }
+    let dir = s.clips_dir.clone();
+    let id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        std::fs::create_dir_all(dir.as_path())?;
+        let before = clip_dir_names(dir.as_path());
+        // Capture output: stdout carries the `✓ imported → <path>` line (deterministic, even
+        // under concurrent imports); stderr carries failure detail to surface to the caller.
+        let out = std::process::Command::new(clipxd_bin())
+            .arg("import")
+            .arg(&url)
+            .arg("--out")
+            .arg(dir.as_path())
+            .output()?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("; ");
+            anyhow::bail!("clipxd import failed ({}): {}", out.status, tail);
+        }
+        // Primary: parse the clip dir the CLI reported (`… → <clips_dir>/clp_xxxx`).
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if let Some(id) = stdout
+            .lines()
+            .rev()
+            .find_map(|l| l.rsplit_once("→ ").map(|(_, p)| p.trim()))
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| safe(n))
+        {
+            return Ok(id.to_string());
+        }
+        // Fallback: the dir that appeared, else newest by mtime.
+        let after = clip_dir_names(dir.as_path());
+        if let Some(fresh) = after.difference(&before).next() {
+            return Ok(fresh.clone());
+        }
+        let newest = std::fs::read_dir(dir.as_path())?
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .and_then(|e| e.file_name().into_string().ok());
+        newest.ok_or_else(|| anyhow::anyhow!("no clip produced"))
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("import failed: {e:#}")))?;
+    if let (Some(a), Some(u)) = (&s.auth, &user) {
+        let _ = a.db.set_clip_owner(&id, u.id);
+    }
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 #[derive(Deserialize)]
@@ -277,10 +554,11 @@ fn safe_bg(s: Option<&str>) -> String {
 /// `POST /clip/:id/render` — produce the final beautified video (browser mockup + the clip's
 /// content-aware auto-zoom from its `zoom.json`) by invoking the `clipxd beautify` renderer,
 /// and stream it back as a download. This closes the editor→output loop.
-async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<RenderQ>, body: Bytes) -> Result<Response, WebErr> {
+async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<RenderQ>, headers: HeaderMap, body: Bytes) -> Result<Response, WebErr> {
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
+    require_clip_access(&s, &headers, &id)?;
     // the POST body, if present, is the editor's .clipxd project (zoom/trim/speed) → bake it in
     let project_file = if body.is_empty() {
         None
@@ -289,10 +567,13 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         std::fs::write(&pf, &body).ok().map(|_| pf)
     };
     let dir = s.clips_dir.join(&id);
-    let video = dir.join("video.mp4");
-    if !video.exists() {
-        return Err((StatusCode::NOT_FOUND, "no video".into()));
-    }
+    // Imported clips ship a `video.webm`; recorded/ingested ones a transcoded `video.mp4`.
+    // `beautify` accepts either, so render whichever exists (mirrors `get_video`'s lookup).
+    let video = ["video.mp4", "video.webm", "source.mp4"]
+        .iter()
+        .map(|f| dir.join(f))
+        .find(|p| p.exists())
+        .ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
     let zoom = dir.join("zoom.json");
     let events = dir.join("events.json");
     let bg = safe_bg(p.bg.as_deref());
@@ -303,16 +584,7 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
     };
     let mockup = p.mockup.unwrap_or(true);
     let out = std::env::temp_dir().join(format!("clipxd-render-{id}.{fmt}"));
-    // prefer a release `clipxd` (much faster render), then the sibling debug build, then PATH
-    let exe = std::env::current_exe().ok();
-    let dir = exe.as_ref().and_then(|p| p.parent());
-    let release = dir.and_then(|d| d.parent()).map(|t| t.join("release").join("clipxd"));
-    let debug = dir.map(|d| d.join("clipxd"));
-    let bin = release
-        .filter(|p| p.exists())
-        .or_else(|| debug.filter(|p| p.exists()))
-        .unwrap_or_else(|| PathBuf::from("clipxd"));
-
+    let bin = clipxd_bin(); // release → debug → PATH
     let (out2, fmt2, proj, bg2, ev2) = (out.clone(), fmt.to_string(), project_file.clone(), bg, events);
     let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let mut c = std::process::Command::new(&bin);
@@ -357,11 +629,24 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
 }
 
 /// `GET /clips` — JSON list of every clip in the dir (newest first) for the library view.
-async fn list_clips_json(State(s): State<AppState>) -> Json<serde_json::Value> {
+async fn list_clips_json(State(s): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+    // In auth mode, only the caller's own clips (by recorded ownership).
+    let owned: Option<std::collections::HashSet<String>> = match &s.auth {
+        Some(a) => match auth::authenticate(&a.jwt_secret, &headers) {
+            Some(u) => Some(a.db.clips_for_owner(u.id).unwrap_or_default()),
+            None => return Json(serde_json::json!({ "clips": [] })), // not logged in → nothing
+        },
+        None => None,
+    };
     let mut clips: Vec<(std::time::SystemTime, serde_json::Value)> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(s.clips_dir.as_path()) {
         for e in entries.flatten() {
             let id = e.file_name().to_string_lossy().to_string();
+            if let Some(owned) = &owned {
+                if !owned.contains(&id) {
+                    continue;
+                }
+            }
             let Ok(idx) = load_index(&s, &id) else { continue };
             let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
             clips.push((
@@ -370,6 +655,7 @@ async fn list_clips_json(State(s): State<AppState>) -> Json<serde_json::Value> {
                     "id": id,
                     "metadata": idx.metadata,
                     "source": idx.source,
+                    "status": idx.status,
                     "counts": {
                         "events": idx.event_track.len(),
                         "on_screen_text": idx.on_screen_text.len(),

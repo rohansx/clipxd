@@ -24,3 +24,10 @@ clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+# auth: local accounts (email/pw) + GitHub OAuth, JWT sessions, SQLite user/clip-ownership store
+rusqlite = { version = "0.32", features = ["bundled"] }
+argon2 = "0.5"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand = "0.8"
+urlencoding = "2"
