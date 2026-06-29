@@ -27,6 +27,17 @@ fi
 # rusqlite (bundled sqlite, C) cross-compiles with musl-gcc; rustls (no openssl) is musl-clean.
 export CC_x86_64_unknown_linux_musl="${CC_x86_64_unknown_linux_musl:-musl-gcc}"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER:-musl-gcc}"
+# Truly-static link flags. Plain 'cargo build --target x86_64-unknown-linux-musl'
+# produces a PIE binary that points at /lib/ld-musl-x86_64.so.1 — which Ubuntu
+# doesn't ship (the musl loader is only in Alpine). On the deploy box, execve
+# returns ENOENT, the systemd unit goes into a restart loop, and Caddy falls
+# back to serving the SPA for every route.
+#  -C target-feature=+crt-static  : link libc/libpthread/libc++ statically
+#  -C link-self-contained=yes     : bundle crt0/crti into the binary
+#  -C relocation-model=static     : no relocation table; no PT_INTERP
+#  -C link-arg=-static           : belt-and-braces for musl-gcc
+#  -C link-arg=-no-pie            : suppress PT_INTERP and the dynamic loader
+export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-self-contained=yes -C relocation-model=static -C link-arg=-static -C link-arg=-no-pie"
 ( cd "$ROOT" && cargo build --release --target "$TARGET" -p clipxd-web -p clipxd-cli )
 BIN_DIR="$ROOT/target/$TARGET/release"
 
