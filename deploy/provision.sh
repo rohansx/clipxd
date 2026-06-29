@@ -25,18 +25,19 @@ mkdir -p /opt/clipxd /var/www/clipxd /var/lib/clipxd/clips /etc/clipxd
 chown -R clipxd:clipxd /opt/clipxd /var/lib/clipxd
 
 echo "==> PaddleOCR venv (CPU OCR sidecar)"
-# paddlepaddle's PyPI wheels max at cp313 — Ubuntu 26.04 ships python3.14 by default,
-# so we pin the venv to python3.12 (apt) instead of the system python.
-if ! command -v python3.12 >/dev/null; then
-  apt-get install -y python3.12 python3.12-venv 2>/dev/null || \
-    { echo "no python3.12 available, falling back to $(python3 --version | awk '{print $2}')" ;
-      PYVER="" ; }
-else
-  PYVER=python3.12
+# paddlepaddle's PyPI wheels max at cp313 — Ubuntu 26.04 ships python3.14 by default.
+# Install uv (https://github.com/astral-sh/uv, single binary) and have it provision a
+# Python 3.13 venv for us. uv installs Python itself on first use, no apt juggling.
+if ! command -v uv >/dev/null; then
+  curl -fsSL https://astral.sh/uv/install.sh | sh
+  # uv installs to ~/.local/bin by default, but we're root → ~/.cargo/bin? check.
+  UV_BIN=$(command -v uv || echo "/root/.local/bin/uv")
+  [ -x "$UV_BIN" ] || UV_BIN="/root/.cargo/bin/uv"
 fi
-PYVER="${PYVER:-python3}"
+UV_BIN=$(command -v uv || echo "/root/.local/bin/uv")
+
 if [ ! -x /opt/clipxd/venv/bin/python ]; then
-  "$PYVER" -m venv /opt/clipxd/venv
+  "$UV_BIN" venv --python 3.13 /opt/clipxd/venv
 fi
 /opt/clipxd/venv/bin/python -m pip install --upgrade pip wheel setuptools >/dev/null
 # paddlepaddle (CPU) + paddleocr; this is the heavy install (~1GB) — the swapfile covers it.
