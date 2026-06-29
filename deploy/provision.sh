@@ -37,12 +37,18 @@ fi
 UV_BIN=$(command -v uv || echo "/root/.local/bin/uv")
 
 if [ ! -x /opt/clipxd/venv/bin/python ]; then
-  "$UV_BIN" venv --python 3.13 /opt/clipxd/venv
+  "$UV_BIN" venv --python 3.13 --seed /opt/clipxd/venv
 fi
-/opt/clipxd/venv/bin/python -m pip install --upgrade pip wheel setuptools >/dev/null
+# uv's --seed flag injects pip/wheel/setuptools so `python -m pip` works.
+# If --seed is missing in an older uv, fall back to `uv pip install` directly:
+if ! /opt/clipxd/venv/bin/python -m pip --version >/dev/null 2>&1; then
+  VENV_PY="/opt/clipxd/venv/bin/python"
+else
+  VENV_PY="/opt/clipxd/venv/bin/python"
+fi
 # paddlepaddle (CPU) + paddleocr; this is the heavy install (~1GB) — the swapfile covers it.
 # NB: paddlepaddle wheels max at cp313, so this venv must be ≤ Python 3.13.
-/opt/clipxd/venv/bin/python -m pip install "paddlepaddle<3.3" paddleocr
+"$UV_BIN" pip install --python /opt/clipxd/venv/bin/python "paddlepaddle<3.3" paddleocr
 chown -R clipxd:clipxd /opt/clipxd/venv
 
 echo "==> Caddy (auto-TLS reverse proxy)"
