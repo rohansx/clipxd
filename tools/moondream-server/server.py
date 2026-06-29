@@ -35,6 +35,21 @@ WANT_DTYPE = os.environ.get("MOONDREAM_DTYPE", "float16" if DEVICE == "cpu" else
 tok = None
 
 
+def caption_image_with(m, img, prompt):
+    if hasattr(m, "caption"):
+        try:
+            return m.caption(img, length="short")["caption"]
+        except Exception:
+            pass
+    if hasattr(m, "query"):
+        try:
+            return m.query(img, prompt)["answer"]
+        except Exception:
+            pass
+    enc = m.encode_image(img)
+    return m.answer_question(enc, prompt, tok)
+
+
 def _load(dtype_name):
     global tok
     dt = getattr(torch, dtype_name)
@@ -68,21 +83,6 @@ if model is None:
     raise SystemExit("[clipxd] could not load Moondream2 in any dtype")
 
 app = Flask(__name__)
-
-
-def caption_image_with(m, img, prompt):
-    if hasattr(m, "caption"):
-        try:
-            return m.caption(img, length="short")["caption"]
-        except Exception:
-            pass
-    if hasattr(m, "query"):
-        try:
-            return m.query(img, prompt)["answer"]
-        except Exception:
-            pass
-    enc = m.encode_image(img)
-    return m.answer_question(enc, prompt, tok)
 
 
 def authed():
