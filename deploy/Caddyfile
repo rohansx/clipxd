@@ -1,0 +1,29 @@
+# clipxd reverse proxy + static SPA, with automatic HTTPS (Let's Encrypt).
+# {$CLIPXD_DOMAIN} is supplied via Caddy's environment (set in deploy.sh / systemd).
+#
+# Routing: the backend owns the clip/api/auth surface; everything else is the React SPA.
+#   /clip/*  → public share pages + per-clip JSON/video/query  (backend)
+#   /clips, /ingest, /import, /net, /auth/*                     (backend, auth-gated)
+#   /  and  /assets/*                                            (static SPA)
+
+{$CLIPXD_DOMAIN} {
+	encode zstd gzip
+
+	# Backend surface
+	@backend path /clip/* /clips /ingest /import /net /auth/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	# Static single-page app (Vite build output)
+	handle {
+		root * /var/www/clipxd
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Large uploads (screen recordings) go through /ingest
+	request_body {
+		max_size 512MB
+	}
+}
