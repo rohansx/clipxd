@@ -92,6 +92,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/clips", get(list_clips_json))
             .route("/clip/:id/render", post(render_clip))
             .route("/clip/:id/cursor", post(set_cursor))
+            .route("/clip/:id/claim", post(clip_claim))
+            .route("/clip/:id/re-enrich", post(clip_re_enrich))
             .route("/ingest", post(ingest))
             .route("/import", post(import_url))
     };
@@ -534,6 +536,83 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
 /// clicks, screen-normalized). Save it and **recompute the zoom so the camera follows the
 /// cursor** (Screen-Studio style) instead of the veyo content-centroid fallback. The clicks
 /// also become queryable `event_track` entries.
+/// `POST /clip/:id/claim` — bind an orphaned clip to the calling user. Used when the
+/// browser uploads to /ingest but loses its session cookie (tab change mid-upload) so
+/// `set_clip_owner` never ran. The user can re-bind by hitting this from the same browser
+/// session. The first claimant wins.
+async fn clip_claim(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let user = require_user(&s, &headers)?;
+    let a = auth_of(&s)?;
+    let Some(u) = user else {
+        return Err((StatusCode::UNAUTHORIZED, "login required".into()));
+    };
+    if a.db.clip_owner(&id).ok().flatten().is_some() {
+        return Err((StatusCode::CONFLICT, "already owned".into()));
+    }
+    // Sanity: the clip must exist on disk.
+    let p = s.clips_dir.join(&id).join("index.json");
+    if !p.exists() {
+        return Err((StatusCode::NOT_FOUND, "no such clip".into()));
+    }
+    a.db.set_clip_owner(&id, u.id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true, "owner": u.id })))
+}
+
+/// `POST /clip/:id/re-enrich` — re-run Phase 2 (captioning/OCR/transcription) on an
+/// already-Phase-1-complete clip. Useful when the captioner was offline at the time of
+/// recording (e.g. Moondream server on the home box was down). Requires the original video
+/// + events.json to be present.
+async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    require_clip_access(&s, &headers, &id)?;
+    let clip_dir = s.clips_dir.join(&id);
+    let video = ["video.mp4", "video.webm", "source.mp4"]
+        .iter()
+        .map(|n| clip_dir.join(n))
+        .find(|p| p.exists())
+        .ok_or((StatusCode::NOT_FOUND, "no video file on disk".into()))?;
+    let events_path = clip_dir.join("events.json");
+    let events = if events_path.exists() {
+        std::fs::read(&events_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<EventTrack>(&b).ok())
+            .unwrap_or_default()
+    } else {
+        EventTrack::default()
+    };
+    let title = std::fs::read_to_string(clip_dir.join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Index>(&s).ok())
+        .map(|i| i.metadata.title)
+        .unwrap_or_else(|| "Screen recording".to_string());
+    // Re-stub so the SPA sees status=enriching while we work.
+    if let Ok(idx_str) = std::fs::read_to_string(clip_dir.join("index.json")) {
+        if let Ok(mut idx) = serde_json::from_str::<Index>(&idx_str) {
+            idx.status = clipxd_index::Status::Enriching;
+            let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+        }
+    }
+    let bg_id = id.clone();
+    let bg_dir = clip_dir.clone();
+    tokio::spawn(async move {
+        if let Err(e) = clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0) {
+            eprintln!("background re-enrich failed for {bg_id}: {e:#}");
+            if let Ok(s) = std::fs::read_to_string(bg_dir.join("index.json")) {
+                if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+                    idx.status = clipxd_index::Status::Partial;
+                    let _ = std::fs::write(bg_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+                }
+            }
+        }
+    });
+    Ok(Json(serde_json::json!({ "ok": true, "re_enriching": id })))
+}
+
 async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
@@ -784,12 +863,14 @@ fn yt_tunnel_callback() -> String {
 /// and return the resulting clip id.
 async fn tunnel_fetch_and_post_back(tunnel_base: &str, url: &str) -> anyhow::Result<String> {
     // The shared secret = trailing path segment of CLIPXD_YT_TUNNEL_URL. The forwarder echoes
-    // it on its POST back so /ingest/tunneled can verify without needing a second secret.
+    // it on its callback POST as ?token=… and verified server-side.
     let token = tunnel_base.rsplit_once('/').map(|(_, t)| t).unwrap_or("");
+    // Strip the trailing /<token> before POSTing — the forwarder's own URL is at the origin.
+    let origin = tunnel_base.rsplit_once('/').map(|(o, _)| o).unwrap_or(tunnel_base);
     let callback = format!("{}/ingest/tunneled?token={token}", yt_tunnel_callback());
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
     let resp = client
-        .post(format!("{tunnel_base}/fetch"))
+        .post(format!("{origin}/fetch"))
         .json(&serde_json::json!({ "url": url, "callback": callback }))
         .send()
         .await?;
