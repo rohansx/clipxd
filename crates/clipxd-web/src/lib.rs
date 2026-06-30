@@ -105,6 +105,12 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/auth/github", get(github_start))
             .route("/auth/github/callback", get(github_callback));
     }
+    // Tunneled ingest: only meaningful when `CLIPXD_YT_TUNNEL_URL` is set. The forwarder
+    // (your home box) calls this with the video bytes it pulled via yt-dlp.
+    // We expose it even when auth is off (so a single-user LAN setup can use the tunnel too);
+    // auth is the `?token=<shared-secret>` query param matching CLIPXD_YT_TUNNEL_URL.
+    router = router
+        .route("/ingest/tunneled", post(ingest_tunneled));
     router
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -577,9 +583,111 @@ struct ImportReq {
     url: String,
 }
 
-/// `POST /import` — import a video URL (yt-dlp) or local path into a new clip via the `clipxd`
-/// CLI, inheriting this server's env (caption/OCR backends, PATH). Returns the new clip id.
-/// Local-only (dropped in public mode) since it spawns a process and writes a clip.
+/// `POST /import` — import a video URL (Loom/YouTube/Cap/anything yt-dlp understands) into
+/// a new clip. Two paths, picked at request time:
+///
+///   1. **Local forwarder** (preferred): when `CLIPXD_YT_TUNNEL_URL` is set, we POST `{url,
+///      callback}` to the user's home box (Tailscale-tunneled) which runs `yt-dlp` there and
+///      POSTs the bytes back to our `/ingest/tunneled`. This gets around Loom/YouTube's
+///      datacenter-IP blocklist that bites us on the Hetzner side.
+///
+///   2. **Box-side yt-dlp fallback**: spawns the local `clipxd import` CLI (which calls yt-dlp
+///      itself). Useful for sources that don't gate on datacenter IPs (Cap, plain MP4 URLs).
+///
+/// Local-only (dropped in public mode) since it spawns / writes.
+/// `POST /ingest/tunneled` — called by the local yt-dlp forwarder. Body is the raw video bytes.
+/// Auth is the `?token=<shared-secret>` query param matching `CLIPXD_YT_TUNNEL_URL`'s trailing
+/// path segment. The forwarder is on the user's Tailnet; we don't accept this from the public
+/// internet (Caddy doesn't proxy it).
+async fn ingest_tunneled(
+    State(s): State<AppState>,
+    Query(q): Query<TunneledQ>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    // Verify shared token.
+    let want = yt_tunnel_url().and_then(|u| u.rsplit_once('/').map(|(_, t)| t.to_string())).unwrap_or_default();
+    if want.is_empty() || q.token.as_deref() != Some(&want) {
+        return Err((StatusCode::UNAUTHORIZED, "bad tunnel token".into()));
+    }
+    if body.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "empty body".into()));
+    }
+
+    // Trust the forwarder's `X-Clipxd-Filename` for the extension, default to `.mp4`.
+    let ext = headers
+        .get("x-clipxd-filename")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| std::path::Path::new(s).extension().and_then(|e| e.to_str()))
+        .unwrap_or("mp4")
+        .to_string();
+
+    let dir = s.clips_dir.clone();
+    let id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        std::fs::create_dir_all(dir.as_path())?;
+        let before = clip_dir_names(dir.as_path());
+        // Drop the bytes in a tmp file (clipxd import expects a path it can probe).
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!("clipxd-tunnel-{stamp}.{ext}"));
+        std::fs::write(&tmp, &body)?;
+        let out = std::process::Command::new(clipxd_bin())
+            .arg("import")
+            .arg(&tmp)
+            .arg("--out")
+            .arg(dir.as_path())
+            .output();
+        let _ = std::fs::remove_file(&tmp);
+        let out = out?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("; ");
+            anyhow::bail!("clipxd import failed ({}): {}", out.status, tail);
+        }
+        // Same trick as the local path: parse `… → <path>` from stdout, else diff dir, else newest.
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if let Some(id) = stdout
+            .lines()
+            .rev()
+            .find_map(|l| l.rsplit_once("→ ").map(|(_, p)| p.trim()))
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| safe(n))
+        {
+            return Ok(id.to_string());
+        }
+        let after = clip_dir_names(dir.as_path());
+        if let Some(fresh) = after.difference(&before).next() {
+            return Ok(fresh.clone());
+        }
+        let newest = std::fs::read_dir(dir.as_path())?
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .and_then(|e| e.file_name().into_string().ok());
+        newest.ok_or_else(|| anyhow::anyhow!("no clip produced"))
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("tunneled ingest failed: {e:#}")))?;
+
+    // Ownership: when called via the tunnel, we don't know which user wanted the clip. The
+    // forwarder should send `X-Clipxd-Owner-Email` for us to resolve. Until that's wired,
+    // the clip is unowned (visible to anyone via the share link, just not in any user's library).
+    if let (Some(a), Some(owner_email)) = (&s.auth, headers.get("x-clipxd-owner-email").and_then(|v| v.to_str().ok()))
+    {
+        if let Ok(Some(u)) = a.db.find_by_email(owner_email) {
+            let _ = a.db.set_clip_owner(&id, u.id);
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+#[derive(Deserialize)]
+struct TunneledQ {
+    token: Option<String>,
+}
+
 async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Json<ImportReq>) -> Result<Json<serde_json::Value>, WebErr> {
     let user = require_user(&s, &headers)?;
     let url = req.url.trim().to_string();
@@ -587,6 +695,29 @@ async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Js
         return Err((StatusCode::BAD_REQUEST, "empty url".into()));
     }
     let dir = s.clips_dir.clone();
+
+    // Path 1: tunnel to the local forwarder (your home box running `tools/yt_forwarder.py`).
+    if let Some(tunnel) = yt_tunnel_url() {
+        match tunnel_fetch_and_post_back(&tunnel, &url).await {
+            Ok(id) => {
+                if let (Some(a), Some(u)) = (&s.auth, &user) {
+                    let _ = a.db.set_clip_owner(&id, u.id);
+                }
+                return Ok(Json(serde_json::json!({ "id": id })));
+            }
+            Err(e) => {
+                // Forwarder is unreachable / refused: surface that to the caller. We don't
+                // silently fall back to box-side yt-dlp because that fails for Loom/YouTube
+                // every time and produces a worse error message.
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("forwarder offline or refused the URL: {e}"),
+                ));
+            }
+        }
+    }
+
+    // Path 2: local yt-dlp fallback.
     let id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
         std::fs::create_dir_all(dir.as_path())?;
         let before = clip_dir_names(dir.as_path());
@@ -634,6 +765,42 @@ async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Js
         let _ = a.db.set_clip_owner(&id, u.id);
     }
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// Read CLIPXD_YT_TUNNEL_URL (e.g. `http://100.94.163.62:8911/<shared-token>`).
+fn yt_tunnel_url() -> Option<String> {
+    std::env::var("CLIPXD_YT_TUNNEL_URL").ok().filter(|s| !s.is_empty())
+}
+
+/// Where the local forwarder should POST the bytes back to us. Defaults to MagicDNS
+/// `clipxd-web:8787` on the Tailnet; override with `CLIPXD_YT_TUNNEL_CALLBACK` if your
+/// forwarder can't resolve that (e.g. it's not on the Tailnet).
+fn yt_tunnel_callback() -> String {
+    std::env::var("CLIPXD_YT_TUNNEL_CALLBACK").ok().filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://clipxd-web:8787".to_string())
+}
+
+/// POST `{url, callback}` to the forwarder, wait for it to call back our `/ingest/tunneled`,
+/// and return the resulting clip id.
+async fn tunnel_fetch_and_post_back(tunnel_base: &str, url: &str) -> anyhow::Result<String> {
+    // The shared secret = trailing path segment of CLIPXD_YT_TUNNEL_URL. The forwarder echoes
+    // it on its POST back so /ingest/tunneled can verify without needing a second secret.
+    let token = tunnel_base.rsplit_once('/').map(|(_, t)| t).unwrap_or("");
+    let callback = format!("{}/ingest/tunneled?token={token}", yt_tunnel_callback());
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
+    let resp = client
+        .post(format!("{tunnel_base}/fetch"))
+        .json(&serde_json::json!({ "url": url, "callback": callback }))
+        .send()
+        .await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("forwarder refused (HTTP {}): {}", status, body.chars().take(200).collect::<String>());
+    }
+    let v: serde_json::Value = resp.json().await?;
+    let id = v.get("id").and_then(|s| s.as_str()).ok_or_else(|| anyhow::anyhow!("forwarder response missing 'id'"))?;
+    Ok(id.to_string())
 }
 
 #[derive(Deserialize)]

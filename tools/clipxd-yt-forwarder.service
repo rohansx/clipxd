@@ -1,0 +1,17 @@
+[Unit]
+Description=clipxd yt-dlp forwarder (Tailscale tunnel for clipxd-web)
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=%i
+# Token + port live in /etc/clipxd-yt-forwarder.env (mode 0600).
+EnvironmentFile=/etc/clipxd-yt-forwarder.env
+ExecStart=/usr/bin/python3 -u /home/%i/.local/share/clipxd/tools/clipxd-yt-forwarder.py
+Restart=always
+RestartSec=2
+# Local-only listener; bind explicitly in the env file (CLIPXD_FORWARDER_BIND).
+
+[Install]
+WantedBy=multi-user.target
