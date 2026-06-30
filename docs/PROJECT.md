@@ -136,12 +136,15 @@ The script:
 - [x] **PROJECT.md** on the box at `/home/clipxd/PROJECT.md` (and in `docs/PROJECT.md` in the repo)
 - [x] **github-login.sh** — store a GitHub PAT on the box for push-back
 - [x] **Hetzner Object Storage bucket** — `clipxd-prod-1` in fsn1 region, IPv6 endpoint `https://fsn1.your-objectstorage.com`. Credentials tested from the box (PUT/GET round-trip OK).
+- [x] **Storage abstraction (read side)** — `crates/clipxd-web/src/storage.rs` with `Storage` trait + `LocalStorage` + `S3Storage` impls. Read paths (`get_index`, `get_zoom`, `get_video`, `get_frame`, `load_index`) all route through `state.storage.read_object(...)`. Write paths still use local disk; the next commit stages them through `state.storage.write_object(...)`.
 - [x] **SPA wired for re-enrich + visibilitychange** — ClipPage shows a "captions empty — re-enrich" pill when status==complete but no captions; useClips/useClip refresh on `document.visibilitychange` so a backgrounded tab doesn't leave a stale "indexing…" pill.
+- [x] **yt-dlp tunnel forwarder on the home box** — `tools/clipxd-yt-forwarder.py` is set up as a systemd user service (`~/.config/systemd/user/clipxd-yt-forwarder.service`) bound to `0.0.0.0:8911` on the laptop. End-to-end verified: pasting a public YouTube URL into https://clipxd.com/import → box POSTs to forwarder → forwarder runs yt-dlp on the home network → POSTs bytes back to box `/ingest/tunneled` → clip gets 14 Moondream-cloud captions.
 
 ## What's half-done ⚠️
 
-- [ ] **S3 storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. The refactor is mechanical (~150-200 LoC across ~20 handler sites): replace `state.clips_dir.join(x).read_y()` with `state.storage.read_object(x).await`, replace writes with `write_object`. Each handler needs to be `async`. The refactor is straightforward but spans many lines, so it deserves a focused commit. **The Hetzner bucket + creds are already verified working from the box**; this is just plumbing.
-- [ ] **YouTube ingest via residential proxy** — currently fails on the box's datacenter IP. Either use a residential proxy service, or use the home box's egress via the yt-dlp tunnel-forwarder.
+- [ ] **S3 storage WRITE paths** — read paths now go through `state.storage.read_object(...)`. The **write** paths (`/ingest`, `/ingest/tunneled`, `set_cursor`, `clip_re_enrich`) still use local disk. Wiring them: write raw bytes to S3, download to a local tmp, run the clipxd CLI which now needs to ingest from S3 OR be replaced with a Rust-only equivalent. The clipxd CLI itself uses local paths. Two paths: (a) extend clipxd CLI to take a `s3://...` source URL, or (b) replace the CLI invocation with direct Rust calls. (b) is cleaner but bigger. The Hetzner bucket + creds are verified.
+- [ ] **`/ingest/tunneled` is slow for big videos** — the handler does the FULL import (stub + enrich + caption) inside a single `spawn_blocking` call. Forwarder has 120s timeout; a 60s YouTube video with captioning can exceed that. Fix: return 202 Accepted immediately with the clip_id, run enrich in the background. The forwarder should also be idempotent (same URL → same id).
+- [ ] **YouTube ingest via residential proxy or home tunnel** — DONE. The home tunnel works (verified end-to-end with a 19s public YouTube video). Just need to keep the forwarder running on the laptop (systemd user service does this).
 
 ## What's not started 📋
 
