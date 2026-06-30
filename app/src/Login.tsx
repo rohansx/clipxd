@@ -4,14 +4,22 @@ import { githubLoginUrl } from "./api";
 
 interface LoginProps {
   onLogin: (email: string, password: string) => Promise<void>;
-  onSignup: (email: string, password: string, name?: string) => Promise<void>;
+  onSignup: (
+    email: string,
+    password: string,
+    name?: string,
+    username?: string
+  ) => Promise<void>;
 }
+
+const SLUG_RE = /^[a-z0-9_-]{3,30}$/;
 
 export function Login({ onLogin, onSignup }: LoginProps) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -21,15 +29,22 @@ export function Login({ onLogin, onSignup }: LoginProps) {
     if (password.length < 8) return setErr("Password must be at least 8 characters.");
     setBusy(true);
     try {
-      if (mode === "signup") await onSignup(email.trim(), password, name.trim() || undefined);
-      else await onLogin(email.trim(), password);
+      if (mode === "signup") {
+        const trimmedUser = username.trim();
+        if (trimmedUser && !SLUG_RE.test(trimmedUser)) {
+          setBusy(false);
+          return setErr("Username must be 3-30 chars (lowercase letters, digits, '-' or '_').");
+        }
+        await onSignup(email.trim(), password, name.trim() || undefined, trimmedUser || undefined);
+      } else {
+        await onLogin(email.trim(), password);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }
   };
-
   return (
     <div className="auth-screen">
       <div className="auth-card">
@@ -48,7 +63,17 @@ export function Login({ onLogin, onSignup }: LoginProps) {
         <div className="auth-or"><span>or</span></div>
 
         {mode === "signup" && (
-          <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+          <>
+            <input className="input" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              className="input"
+              placeholder="username (your share-link slug, optional)"
+              value={username}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
+            />
+          </>
         )}
         <input
           className="input"
@@ -96,3 +121,4 @@ export function Login({ onLogin, onSignup }: LoginProps) {
     </div>
   );
 }
+

@@ -13,7 +13,7 @@ import { useClips } from "./useClipData";
 import { useAuth } from "./useAuth";
 import { initialClipId } from "./api";
 
-export type View = "landing" | "cloud";
+export type View = "landing" | "auth" | "cloud";
 export type CloudView = "library" | "recording" | "import" | "chat" | "clip";
 export type Theme = "light" | "dark";
 
@@ -54,9 +54,17 @@ export default function App() {
     setFilter("");
   };
   const goCloud = (v: CloudView = "library") => {
+    // When unauthed, route to the explicit auth view (don't flash through Landing → Login).
+    if (auth.authEnabled && !auth.user) {
+      setView("auth");
+      return;
+    }
     setView("cloud");
     setCloudView(v);
   };
+
+  const goAuth = () => setView("auth");
+  const goLanding = () => setView("landing");
   const afterCreate = (id: string) => {
     reload();
     openClip(id);
@@ -90,8 +98,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.id]);
 
-  // Auth gate (hosted mode): a deep-linked clip is still publicly watchable, so don't force
-  // login for it — only gate the editor/library.
+  // Loading / auth gate.
+  // - auth.loading → spinner.
+  // - explicit auth view → Login screen (always reachable, with back-to-landing).
+  // - deep link (someone shared a /u/me/clip/abc URL) → still publicly watchable.
+  // - otherwise → Landing (which has its own Login button for discoverability).
   if (auth.loading) {
     return (
       <div data-theme={theme} className="auth-screen">
@@ -99,10 +110,22 @@ export default function App() {
       </div>
     );
   }
-  if (auth.authEnabled && !auth.user && !deepLink) {
+  if (view === "auth") {
     return (
       <div data-theme={theme}>
-        <Login onLogin={auth.login} onSignup={auth.signup} />
+        <div className="auth-screen">
+          <div className="auth-card" style={{ position: "relative" }}>
+            <button
+              className="auth-back"
+              onClick={goLanding}
+              title="Back to landing"
+              aria-label="Back to landing"
+            >
+              ← landing
+            </button>
+            <Login onLogin={auth.login} onSignup={auth.signup} />
+          </div>
+        </div>
       </div>
     );
   }
@@ -110,7 +133,12 @@ export default function App() {
   return (
     <div data-theme={theme}>
       {view === "landing" ? (
-        <Landing theme={theme} toggleTheme={toggleTheme} onOpenApp={() => goCloud("library")} />
+        <Landing
+          theme={theme}
+          toggleTheme={toggleTheme}
+          onOpenApp={() => goCloud("library")}
+          onLogin={goAuth}
+        />
       ) : (
         <div className="cloud">
           <Sidebar

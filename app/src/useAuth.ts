@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchAuthStatus, login as apiLogin, logout as apiLogout, signup as apiSignup, type AuthUser } from "./api";
+import {
+  fetchAuthStatus,
+  login as apiLogin,
+  logout as apiLogout,
+  signup as apiSignup,
+  setUsername as apiSetUsername,
+  type AuthUser,
+} from "./api";
 
 export interface Auth {
   loading: boolean;
@@ -7,8 +14,10 @@ export interface Auth {
   authEnabled: boolean;
   user: AuthUser | null;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name?: string) => Promise<void>;
+  signup: (email: string, password: string, name?: string, username?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Claim/update the user's URL slug (e.g. after first GitHub login). */
+  setUsername: (username: string) => Promise<AuthUser>;
   refresh: () => void;
 }
 
@@ -36,15 +45,20 @@ export function useAuth(): Auth {
     setUser(await apiLogin(email, password));
     setAuthEnabled(true);
   }, []);
-  const signup = useCallback(async (email: string, password: string, name?: string) => {
-    setUser(await apiSignup(email, password, name));
+  const signup = useCallback(async (email: string, password: string, name?: string, username?: string) => {
+    setUser(await apiSignup(email, password, name, username));
     setAuthEnabled(true);
   }, []);
   const logout = useCallback(async () => {
     await apiLogout();
     setUser(null);
   }, []);
+  const setUsername = useCallback(async (username: string) => {
+    const u = await apiSetUsername(username);
+    setUser(u);
+    return u;
+  }, []);
   const refresh = useCallback(() => setN((x) => x + 1), []);
 
-  return { loading, authEnabled, user, login, signup, logout, refresh };
+  return { loading, authEnabled, user, login, signup, logout, setUsername, refresh };
 }

@@ -1,20 +1,19 @@
-// The clipxd-web client. One backend origin (default http://localhost:8787, override with
-// `?api=`). All requests carry the session cookie (same-origin prod) AND a Bearer token
-// (cross-origin dev) so auth works in both. Shapes come from ./types (the Rust index schema).
+// The clipxd-web client. In production the SPA and the backend share an origin (Caddy
+// reverse-proxies /api/* to clipxd-web on :8787 and serves the SPA at the same origin), so
+// `apiBase()` defaults to `location.origin` and the cookie goes back-and-forth automatically.
+// For local dev we keep the old default of `http://localhost:8787` so the SPA on :5173 can
+// still talk to a backend on :8787 — override with `?api=…` to point at a remote host.
 
-import type { ClipSummary, Index, QueryAnswer, TextHit, ZoomKeyframe } from "./types";
+import type { Index, ZoomKeyframe, ClipSummary, QueryAnswer, TextHit } from "./types";
 
-const DEFAULT_API = "http://localhost:8787";
-const TOKEN_KEY = "clipxd_token";
-
-let TOKEN: string | null = (() => {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-})();
-
+// One Bearer token kept in module-local storage (lives in memory; cleared on reload).
+let TOKEN: string | null = null;
+const TOKEN_KEY = "clipxd.token";
+try {
+  TOKEN = localStorage.getItem(TOKEN_KEY);
+} catch {
+  /* storage may be unavailable (private mode etc.) */
+}
 export function setToken(t: string | null): void {
   TOKEN = t;
   try {
@@ -24,6 +23,8 @@ export function setToken(t: string | null): void {
     /* storage may be unavailable */
   }
 }
+
+const LOCAL_DEFAULT_API = "http://localhost:8787";
 
 /**
  * fetch with auth attached. Same-origin (production behind Caddy) sends the httpOnly session
@@ -37,21 +38,43 @@ function af(url: string, opts: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...opts, headers });
 }
 
-/** The backend origin. Honors `?api=` for cross-host testing; otherwise localhost:8787. */
+/**
+ * The backend origin.
+ *   - Production (clipxd.com served by Caddy): same-origin, cookie auth.
+ *   - Local dev (npm run dev on :5173): defaults to localhost:8787 (cross-origin, Bearer).
+ *   - Override: `?api=https://staging.example.com` to point at a remote backend.
+ */
 export function apiBase(): string {
   const u = new URL(location.href);
-  return u.searchParams.get("api") || DEFAULT_API;
+  const override = u.searchParams.get("api");
+  if (override) return override;
+  // Same-origin (port 80/443, or hostname-only) — production behind Caddy.
+  if (u.port === "" || u.port === "80" || u.port === "443") return u.origin;
+  // Local dev (vite, rsbuild, etc. on a non-standard port) — assume :8787 backend.
+  return LOCAL_DEFAULT_API;
 }
 
 /** A clip id deep-linked via `?clip=<id>` (used to open straight onto a clip on load). */
 export function initialClipId(): string | null {
-  return new URL(location.href).searchParams.get("clip");
+  const u = new URL(location.href);
+  // 1) ?clip=<id> still wins (back-compat with earlier share links)
+  const fromQuery = u.searchParams.get("clip");
+  if (fromQuery) return fromQuery;
+  // 2) /u/<username>/clip/<id> form: server-rendered page, SPA is served too (catch-all
+  //    fallback), so when we land on the share URL the SPA should auto-open the clip.
+  const m = u.pathname.match(/^\/u\/[^/]+\/clip\/([A-Za-z0-9_-]+)\/?$/);
+  if (m) return m[1];
+  return null;
 }
 
 export interface NetInfo {
   lan_ip: string;
   share_base: string;
   public_base: string | null;
+  /** Authed: caller's chosen URL slug. null when unauthed or no slug picked. */
+  username?: string | null;
+  /** Authed: `https://HOST/u/<username>/clip/`. undefined when no slug. */
+  user_share_base?: string;
 }
 
 async function jsonOrThrow<T>(r: Response, what: string): Promise<T> {
@@ -65,6 +88,8 @@ export interface AuthUser {
   id: number;
   email: string;
   name: string | null;
+  /** Optional URL slug for share links. Picked at signup or claimed later via /auth/username. */
+  username: string | null;
   github: boolean;
 }
 
@@ -99,11 +124,20 @@ async function authPost(path: string, body: unknown, base = apiBase()): Promise<
   }
   const j = (await r.json()) as AuthUser & { token?: string };
   if (j.token) setToken(j.token);
-  return { id: j.id, email: j.email, name: j.name, github: j.github };
+  return { id: j.id, email: j.email, name: j.name, username: j.username ?? null, github: j.github };
 }
 
-export const signup = (email: string, password: string, name?: string, base = apiBase()) =>
-  authPost("/auth/signup", { email, password, name }, base);
+export const signup = (
+  email: string,
+  password: string,
+  name?: string,
+  username?: string,
+  base = apiBase()
+) => authPost("/auth/signup", { email, password, name, username }, base);
+
+/** POST /auth/username — claim a slug for the currently-authenticated user (e.g. a GitHub-only account). */
+export const setUsername = (username: string, base = apiBase()) =>
+  authPost("/auth/username", { username }, base);
 
 export const login = (email: string, password: string, base = apiBase()) =>
   authPost("/auth/login", { email, password }, base);
@@ -179,6 +213,8 @@ export async function fetchNet(base = apiBase()): Promise<NetInfo | null> {
 
 export async function shareLink(id: string, base = apiBase()): Promise<string> {
   const net = await fetchNet(base);
+  // Prefer the owner's username-canonical form so the link carries their brand.
+  if (net?.user_share_base) return `${net.user_share_base}/${id}`;
   const origin = (net?.public_base && net.public_base) || (net?.share_base && net.share_base) || base;
   return `${origin}/clip/${id}`;
 }

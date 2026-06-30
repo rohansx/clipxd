@@ -77,16 +77,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "missing callback"})
             return
 
-        # Fire the download on a worker thread so the HTTP handler returns immediately with
-        # an in-flight receipt. The actual clip id is sent back over the callback POST instead.
-        threading.Thread(
-            target=self._download_and_post_back,
-            args=(url, callback),
-            daemon=True,
-        ).start()
-        self._json(202, {"queued": True, "url": url})
+        # Block in the handler — clipxd-web's SPA already shows an "importing…" UI, so
+        # waiting up to ~5 min for yt-dlp is fine, and we can return {id} synchronously
+        # which makes error reporting much cleaner than a fire-and-forget callback model.
+        result = self._download_and_post_back(url, callback)
+        if result is None:
+            self._json(502, {"error": "yt-dlp or callback failed; see forwarder logs"})
+            return
+        self._json(200, {"id": result})
 
-    def _download_and_post_back(self, url: str, callback: str) -> None:
+    def _download_and_post_back(self, url: str, callback: str) -> str | None:
         log(f"yt-dlp: {url}")
         tmpdir = tempfile.mkdtemp(prefix="clipxd-yt-")
         out_tpl = pathlib.Path(tmpdir) / "%(id)s.%(ext)s"
@@ -102,22 +102,22 @@ class Handler(BaseHTTPRequestHandler):
             url,
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
             log(f"yt-dlp timed out for {url}")
             shutil.rmtree(tmpdir, ignore_errors=True)
-            return
+            return None
         if proc.returncode != 0:
             tail = (proc.stderr or "").strip().splitlines()[-3:]
             log(f"yt-dlp failed for {url}: {'; '.join(tail)}")
             shutil.rmtree(tmpdir, ignore_errors=True)
-            return
+            return None
         # The final --print writes the post-move path. With it, that's the last non-empty line.
         out_path = next((line for line in reversed(proc.stdout.splitlines()) if line.strip()), None)
         if not out_path or not pathlib.Path(out_path).exists():
             log(f"yt-dlp produced no file for {url}")
             shutil.rmtree(tmpdir, ignore_errors=True)
-            return
+            return None
         try:
             import urllib.request
             filename = pathlib.Path(out_path).name
@@ -133,10 +133,18 @@ class Handler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=120) as r:
                 body = r.read().decode("utf-8", errors="replace")
                 log(f"callback {r.status}: {body[:200]}")
+                # Try to parse the returned {id} so we can hand it back to clipxd-web in one round-trip.
+                try:
+                    j = json.loads(body)
+                    if isinstance(j, dict) and "id" in j:
+                        return j["id"]
+                except Exception:
+                    pass
         except Exception as e:
             log(f"callback POST failed for {url}: {e}")
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+        return None
 
 
 def main() -> int:

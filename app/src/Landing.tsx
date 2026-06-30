@@ -6,6 +6,7 @@ interface LandingProps {
   theme: Theme;
   toggleTheme: () => void;
   onOpenApp: () => void;
+  onLogin?: () => void;
 }
 
 const PIPELINE = [
@@ -32,7 +33,7 @@ const INDEX_PARTS = [
   { tag: "sum", title: "Summary + metadata", desc: "Chapters, duration, app focus, redaction manifest. Derived, not source.", sample: "chapters: 4 · pii: 2 redacted\nfocus: shop.acme.test", span: "span 2" },
 ];
 
-export function Landing({ theme, toggleTheme, onOpenApp }: LandingProps) {
+export function Landing({ theme, toggleTheme, onOpenApp, onLogin }: LandingProps) {
   const [wipe, setWipe] = useState(50);
   const [autoSweep, setAutoSweep] = useState(true);
   const dirRef = useRef(1);
@@ -100,6 +101,11 @@ export function Landing({ theme, toggleTheme, onOpenApp }: LandingProps) {
             <span style={{ background: !dark ? "var(--sodium)" : "transparent", color: !dark ? "var(--on-accent)" : "var(--text-3)" }}>[+]</span>
             <span style={{ background: dark ? "var(--signal)" : "transparent", color: dark ? "var(--on-accent)" : "var(--text-3)" }}>[-]</span>
           </button>
+          {onLogin && (
+            <button className="btn-ghost" onClick={onLogin} style={{ borderRadius: 0 }} title="Sign in to your account">
+              Login
+            </button>
+          )}
           <button className="btn-signal" onClick={onOpenApp} style={{ borderRadius: 0 }}>
             Open app →
           </button>
