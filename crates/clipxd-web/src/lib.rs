@@ -33,6 +33,18 @@ pub struct AppState {
     pub public_base: Option<Arc<String>>,
     /// Multi-tenant auth (accounts + per-user clip ownership). `None` = local/LAN mode (no auth).
     pub auth: Option<AuthState>,
+    /// Storage backend. Today this is `Local` only; the `CLIPXD_STORAGE=s3://...` knob is
+    /// parsed at boot so the env-file contract is stable. When set, we log a WARN and fall
+    /// through to local reads so misconfiguration is loud but doesn't break anything.
+    pub storage_kind: StorageKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageKind {
+    Local,
+    /// URL like `s3://bucket/prefix?endpoint=https://…&region=auto`. Captured for future
+    /// implementation; the actual S3 read/write path is not yet wired.
+    S3Configured { bucket: String, prefix: String },
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -47,7 +59,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         None
     };
     let has_auth = auth.is_some();
-    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base, auth };
+    let storage_kind = parse_storage_kind();
+    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base, auth, storage_kind };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
         .route("/clip/:id", get(share_page))
@@ -135,6 +148,36 @@ fn user_json(u: &auth::User) -> serde_json::Value {
         "username": u.username,
         "github": u.github_id.is_some(),
     })
+}
+
+/// Parse the `CLIPXD_STORAGE` env var. Today only the `local` form is implemented; setting an
+/// `s3://...` URL will parse the bucket+prefix+endpoint and log a warning, then fall through to
+/// local reads. When the S3 read/write path lands, only this function changes.
+fn parse_storage_kind() -> StorageKind {
+    let raw = match std::env::var("CLIPXD_STORAGE") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return StorageKind::Local,
+    };
+    if raw == "local" || raw.starts_with("file://") {
+        return StorageKind::Local;
+    }
+    if let Some(rest) = raw.strip_prefix("s3://") {
+        // s3://bucket[/prefix]?endpoint=...&region=...
+        let (path, _query) = rest.split_once('?').unwrap_or((rest, ""));
+        let mut parts = path.splitn(2, '/');
+        let bucket = parts.next().unwrap_or("").to_string();
+        let prefix = parts.next().unwrap_or("").trim_end_matches('/').to_string();
+        if !bucket.is_empty() {
+            eprintln!(
+                "WARN CLIPXD_STORAGE=s3 is set (bucket={bucket}, prefix={prefix}) but the S3 read/write path is not yet implemented; falling back to local disk."
+            );
+            return StorageKind::S3Configured { bucket, prefix };
+        }
+    }
+    eprintln!(
+        "WARN CLIPXD_STORAGE={raw:?} is not a recognised scheme; expected 'local' or 's3://bucket[/prefix]?endpoint=...&region=...'. Falling back to local."
+    );
+    StorageKind::Local
 }
 
 /// JSON response that sets the session cookie AND returns the JWT in the body — the cookie is
