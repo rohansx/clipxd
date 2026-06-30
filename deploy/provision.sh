@@ -14,6 +14,14 @@ apt-get update -y
 apt-get install -y ffmpeg python3-venv python3-pip curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https rsync \
   libgl1 libglib2.0-0
 
+# yt-dlp is the URL downloader for Loom/Cap/YouTube/etc imports. Apt's package is usually
+# months behind and Loom breaks every few months; install from the official GitHub release.
+if ! command -v yt-dlp >/dev/null; then
+  curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+  chmod +x /usr/local/bin/yt-dlp
+  yt-dlp --version
+fi
+
 echo "==> swapfile (2G) — paddle + builds need headroom on 4GB"
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
