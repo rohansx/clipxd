@@ -99,8 +99,13 @@ sed "s/{\\\$CLIPXD_DOMAIN}/$DOMAIN/g" "$ROOT/deploy/Caddyfile" | run_remote 'cat
 # ── 4. restart ───────────────────────────────────────────────────────────────
 echo "==> 4/4 set perms + (re)start services"
 run_remote '
-  # Stop the service first — overwriting a running binary hits ETXTBSY on Linux.
+  # Synchronous stop so the binary is fully released before we overwrite it (ETXTBSY otherwise).
   systemctl stop clipxd-web 2>/dev/null || true
+  # Belt and braces: wait for the process to actually exit.
+  for i in 1 2 3 4 5; do
+    if ! pgrep -x clipxd-web >/dev/null; then break; fi
+    sleep 0.3
+  done
   # chown: --from=root for the binary files (chown -R doesn'\''t take wildcards in sudoers)
   sudo -n chown clipxd:clipxd /opt/clipxd/clipxd-web /opt/clipxd/clipxd 2>/dev/null || true
   sudo -n chmod +x /opt/clipxd/clipxd-web /opt/clipxd/clipxd
