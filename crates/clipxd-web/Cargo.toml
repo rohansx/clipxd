@@ -31,3 +31,8 @@ jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rand = "0.8"
 urlencoding = "2"
+# S3-compatible object storage for video files (Hetzner Object Storage, S3, R2, MinIO, Garage).
+# Default features disabled; we want rustls (no openssl) and the Tokio runtime so it stays musl-clean.
+aws-sdk-s3 = { version = "1.99", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+aws-config = { version = "1.7", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+async-trait = "0.1"

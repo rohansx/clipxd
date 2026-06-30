@@ -20,10 +20,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 
 pub mod auth;
+pub mod storage;
 use auth::{AuthState, AuthUser};
 
 #[derive(Clone)]
 pub struct AppState {
+    /// Object storage backend. On local mode reads/writes from `<clips_dir>/`; on S3 mode
+    /// reads/writes from `s3://<bucket>/<prefix>/<key>` via the configured endpoint + creds.
+    /// Wrapped in Arc so the same `Storage` impl is shared cheaply across requests.
+    pub storage: Arc<storage::StorageKind>,
+    /// The original `clips_dir` argument kept as a string for paths that the storage layer
+    /// doesn't touch (e.g. SQLite DB location: `<clips_dir>/clipxd.db`).
     pub clips_dir: Arc<PathBuf>,
     /// Read-only public mode: drops ingest/render/cursor + clip enumeration so the server is
     /// safe to expose over a tunnel — a viewer can watch/ask one (unguessable) clip and nothing more.
@@ -33,19 +40,6 @@ pub struct AppState {
     pub public_base: Option<Arc<String>>,
     /// Multi-tenant auth (accounts + per-user clip ownership). `None` = local/LAN mode (no auth).
     pub auth: Option<AuthState>,
-    /// Object storage configuration. When `CLIPXD_STORAGE=s3://...` is set this is `S3Configured`
-    /// (a parse-only stub today) and the read/write path falls through to local disk; when the S3
-    /// read/write path lands, this becomes a `storage::Storage` instance and the handlers are
-    /// converted to use `state.storage.read_object(...)` etc.
-    pub storage_kind: StorageKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StorageKind {
-    Local,
-    /// URL like `s3://bucket/prefix?endpoint=https://…&region=auto`. Captured for future
-    /// implementation; the actual S3 read/write path is not yet wired.
-    S3Configured { bucket: String, prefix: String },
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -60,8 +54,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         None
     };
     let has_auth = auth.is_some();
-    let storage_kind = parse_storage_kind();
-    let state = AppState { clips_dir: Arc::new(clips_dir), public, public_base, auth, storage_kind };
+    let storage = Arc::new(storage::StorageKind::from_env(&clips_dir));
+    let state = AppState { storage, clips_dir: Arc::new(clips_dir), public, public_base, auth };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
         .route("/clip/:id", get(share_page))
@@ -166,36 +160,6 @@ fn user_json(u: &auth::User) -> serde_json::Value {
         "username": u.username,
         "github": u.github_id.is_some(),
     })
-}
-
-/// Parse the `CLIPXD_STORAGE` env var. Today only the `local` form is implemented; setting an
-/// `s3://...` URL will parse the bucket+prefix+endpoint and log a warning, then fall through to
-/// local reads. When the S3 read/write path lands, only this function changes.
-fn parse_storage_kind() -> StorageKind {
-    let raw = match std::env::var("CLIPXD_STORAGE") {
-        Ok(s) if !s.is_empty() => s,
-        _ => return StorageKind::Local,
-    };
-    if raw == "local" || raw.starts_with("file://") {
-        return StorageKind::Local;
-    }
-    if let Some(rest) = raw.strip_prefix("s3://") {
-        // s3://bucket[/prefix]?endpoint=...&region=...
-        let (path, _query) = rest.split_once('?').unwrap_or((rest, ""));
-        let mut parts = path.splitn(2, '/');
-        let bucket = parts.next().unwrap_or("").to_string();
-        let prefix = parts.next().unwrap_or("").trim_end_matches('/').to_string();
-        if !bucket.is_empty() {
-            eprintln!(
-                "WARN CLIPXD_STORAGE=s3 is set (bucket={bucket}, prefix={prefix}) but the S3 read/write path is not yet implemented; falling back to local disk."
-            );
-            return StorageKind::S3Configured { bucket, prefix };
-        }
-    }
-    eprintln!(
-        "WARN CLIPXD_STORAGE={raw:?} is not a recognised scheme; expected 'local' or 's3://bucket[/prefix]?endpoint=...&region=...'. Falling back to local."
-    );
-    StorageKind::Local
 }
 
 /// JSON response that sets the session cookie AND returns the JWT in the body — the cookie is
@@ -366,17 +330,29 @@ fn safe(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) && !s.contains("..")
 }
 
-fn load_index(state: &AppState, id: &str) -> Result<Index, WebErr> {
+/// Read `<id>/index.json` from the configured storage. The path is `id + /index.json`; the
+/// storage impl adds its own prefix on S3.
+async fn load_index(state: &AppState, id: &str) -> Result<Index, WebErr> {
     if !safe(id) {
         return Err((StatusCode::BAD_REQUEST, "bad clip id".into()));
     }
-    let p = state.clips_dir.join(id).join("index.json");
-    let txt = std::fs::read_to_string(&p).map_err(|_| (StatusCode::NOT_FOUND, format!("no clip {id}")))?;
-    serde_json::from_str(&txt).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bad index: {e}")))
+    let key = format!("{id}/index.json");
+    let storage = state_storage(state).await?;
+    let bytes = storage.read_object(&key).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read {key}: {e}")))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no clip {id}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bad index: {e}")))
+}
+
+/// Build a `Box<dyn Storage>` for an AppState. Wraps the boilerplate of error mapping.
+async fn state_storage(state: &AppState) -> Result<Box<dyn storage::Storage>, WebErr> {
+    state.storage.make_storage().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))
 }
 
 async fn get_index(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Index>, WebErr> {
-    Ok(Json(load_index(&s, &id)?))
+    Ok(Json(load_index(&s, &id).await?))
 }
 
 #[derive(Deserialize)]
@@ -385,13 +361,13 @@ struct Qs {
 }
 
 async fn get_query(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<Qs>) -> Result<Json<serde_json::Value>, WebErr> {
-    let idx = load_index(&s, &id)?;
+    let idx = load_index(&s, &id).await?;
     let a = query::query_clip(&idx, p.q.as_deref().unwrap_or(""));
     Ok(Json(serde_json::json!({ "text": a.text, "citations": a.citations })))
 }
 
 async fn get_search(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<Qs>) -> Result<Json<serde_json::Value>, WebErr> {
-    let idx = load_index(&s, &id)?;
+    let idx = load_index(&s, &id).await?;
     let hits = query::search_text(&idx, p.q.as_deref().unwrap_or(""));
     Ok(Json(serde_json::to_value(hits).unwrap_or_default()))
 }
@@ -403,7 +379,7 @@ struct Range {
 }
 
 async fn get_events(State(s): State<AppState>, Path(id): Path<String>, Query(r): Query<Range>) -> Result<Json<serde_json::Value>, WebErr> {
-    let idx = load_index(&s, &id)?;
+    let idx = load_index(&s, &id).await?;
     let (lo, hi) = (r.from.unwrap_or(0.0), r.to.unwrap_or(f64::INFINITY));
     let slice: Vec<_> = idx.event_track.iter().filter(|e| e.t >= lo && e.t <= hi).collect();
     Ok(Json(serde_json::to_value(slice).unwrap_or_default()))
@@ -413,8 +389,7 @@ async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<i
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
-    let p = s.clips_dir.join(&id).join("zoom.json");
-    let bytes = std::fs::read(&p).map_err(|_| (StatusCode::NOT_FOUND, "no zoom track".into()))?;
+    let bytes = state_storage(&s).await?.read_object(&format!("{id}/zoom.json")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no zoom track".into()))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
 }
 
@@ -422,14 +397,21 @@ async fn get_video(State(s): State<AppState>, Path(id): Path<String>, headers: H
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
-    let dir = s.clips_dir.join(&id);
-    let file = ["video.mp4", "video.webm", "source.mp4"]
-        .iter()
-        .map(|n| dir.join(n))
-        .find(|p| p.exists())
-        .ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
-    let ct = if file.extension().and_then(|e| e.to_str()) == Some("webm") { "video/webm" } else { "video/mp4" };
-    let bytes = std::fs::read(&file).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let storage = state_storage(&s).await?;
+    let mut video_key: Option<String> = None;
+    for n in ["video.mp4", "video.webm", "source.mp4"] {
+        if storage.read_object(&format!("{id}/{n}")).await
+            .map(|o| o.is_some())
+            .unwrap_or(false) {
+            video_key = Some(n.to_string());
+            break;
+        }
+    }
+    let video_key = video_key.ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
+    let ct = if video_key.ends_with(".webm") { "video/webm" } else { "video/mp4" };
+    let bytes: Vec<u8> = storage.read_object(&format!("{id}/{video_key}")).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read video: {e}")))?
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "read video: missing".to_string()))?;
     let len = bytes.len() as u64;
 
     // Honor a Range request so the editor can seek/scrub (browsers won't seek a <video>
@@ -470,8 +452,7 @@ async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, St
     if !safe(&id) || !safe(&name) {
         return Err((StatusCode::BAD_REQUEST, "bad path".into()));
     }
-    let p = s.clips_dir.join(&id).join("frames").join(&name);
-    let bytes = std::fs::read(&p).map_err(|_| (StatusCode::NOT_FOUND, "no frame".into()))?;
+    let bytes = state_storage(&s).await?.read_object(&format!("{id}/frames/{name}")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no frame".into()))?;
     let ct = if name.ends_with(".jpg") || name.ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
     Ok(([(header::CONTENT_TYPE, ct)], bytes))
 }
@@ -624,7 +605,7 @@ async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, headers: 
         return Ok(Json(serde_json::json!({ "ok": true, "keyframes": 0, "note": "no cursor data" })));
     }
     let dir = s.clips_dir.join(&id);
-    let mut index = load_index(&s, &id)?;
+    let mut index = load_index(&s, &id).await?;
     let zoom = clipxd_recorder::zoom_track(&events, index.metadata.duration, index.metadata.fps.max(1.0) as f64);
     index.event_track = clipxd_recorder::to_index_events(&events);
     let _ = std::fs::write(dir.join("events.json"), &body);
@@ -997,7 +978,7 @@ async fn list_clips_json(State(s): State<AppState>, headers: HeaderMap) -> Json<
                     continue;
                 }
             }
-            let Ok(idx) = load_index(&s, &id) else { continue };
+            let Ok(idx) = load_index(&s, &id).await else { continue };
             let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
             clips.push((
                 mtime,
@@ -1026,7 +1007,7 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
         for e in entries.flatten() {
             let id = e.file_name().to_string_lossy().to_string();
             if e.path().join("index.json").exists() {
-                let title = load_index(&s, &id).map(|i| i.metadata.title).unwrap_or_default();
+                let title = load_index(&s, &id).await.map(|i| i.metadata.title).unwrap_or_default();
                 rows.push_str(&format!(
                     "<li><a href=\"/clip/{id}\">{id}</a> — {}</li>",
                     html_escape(&title)
@@ -1044,7 +1025,7 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
 }
 
 async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Html<String>, WebErr> {
-    let idx = load_index(&s, &id)?;
+    let idx = load_index(&s, &id).await?;
     // If the owner has a username, redirect to the canonical /u/<username>/clip/<id> form so
     // share-link brand carries through. Pre-username clips (owner has no slug yet) pass through.
     if let Some(a) = &s.auth {
@@ -1067,7 +1048,7 @@ async fn share_page_for_user(
     headers: HeaderMap,
 ) -> Result<Html<String>, WebErr> {
     let _ = check_owner(&s, &username, &id)?;
-    let idx = load_index(&s, &id)?;
+    let idx = load_index(&s, &id).await?;
     share_page_body(&s, &id, &idx, &headers)
 }
 
