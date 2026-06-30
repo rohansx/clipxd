@@ -55,6 +55,10 @@ rsync_to() {
 
 # ── 1. SPA ─────────────────────────────────────────────────────────────────
 echo "==> 1/4 build the SPA"
+if [ ! -d "$ROOT/app/node_modules" ]; then
+  echo "    app/node_modules missing — running npm ci (this is a fresh clone?)"
+  ( cd "$ROOT/app" && npm ci --no-audit --no-fund --prefer-offline )
+fi
 ( cd "$ROOT/app" && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build )
 
 # ── 2. static binaries ─────────────────────────────────────────────────────
