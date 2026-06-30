@@ -44,10 +44,11 @@ run_remote() {
   fi
 }
 rsync_to() {
-  # rsync a local path to $SERVER:$2. For localhost, sudo cp -a.
+  # rsync a local path to $SERVER:$2. For localhost, sudo rsync.
   local src="$1"; local dst="$2"
   if [ "$SERVER" = "localhost" ]; then
-    sudo -n bash -c "mkdir -p '$dst' && rsync -a --delete '$src/' '$dst/'"
+    sudo -n mkdir -p "$dst"
+    sudo -n rsync -a --delete "$src/" "$dst/"
   else
     rsync -az -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" "$src" "$SERVER:$dst"
   fi
@@ -77,7 +78,8 @@ BIN_DIR="$ROOT/target/$TARGET/release"
 echo "==> 3/4 ship to $SERVER"
 run_remote 'mkdir -p /opt/clipxd /var/www/clipxd'
 if [ "$SERVER" = "localhost" ]; then
-  sudo -n bash -c "rsync -a --delete '$BIN_DIR/clipxd-web' '$BIN_DIR/clipxd' /opt/clipxd/"
+  sudo -n cp -a "$BIN_DIR/clipxd-web" /opt/clipxd/
+  sudo -n cp -a "$BIN_DIR/clipxd" /opt/clipxd/
 else
   rsync -az -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" "$BIN_DIR/clipxd-web" "$BIN_DIR/clipxd" "$SERVER:/opt/clipxd/"
 fi
@@ -88,9 +90,10 @@ sed "s/{\\\$CLIPXD_DOMAIN}/$DOMAIN/g" "$ROOT/deploy/Caddyfile" | run_remote 'cat
 # ── 4. restart ───────────────────────────────────────────────────────────────
 echo "==> 4/4 set perms + (re)start services"
 run_remote '
-  chown clipxd:clipxd /opt/clipxd/clipxd-web /opt/clipxd/clipxd 2>/dev/null || true
-  chmod +x /opt/clipxd/clipxd-web /opt/clipxd/clipxd
-  chown -R clipxd:clipxd /var/www/clipxd
+  # chown: --from=root for the binary files (chown -R doesn'\''t take wildcards in sudoers)
+  sudo -n chown clipxd:clipxd /opt/clipxd/clipxd-web /opt/clipxd/clipxd 2>/dev/null || true
+  sudo -n chmod +x /opt/clipxd/clipxd-web /opt/clipxd/clipxd
+  sudo -n chown -R clipxd /var/www/clipxd 2>/dev/null || true
   systemctl enable --now clipxd-web 2>/dev/null || true
   systemctl restart clipxd-web
   systemctl reload caddy 2>/dev/null || systemctl restart caddy
