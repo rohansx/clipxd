@@ -83,9 +83,17 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-self-cont
 ( cd "$ROOT" && cargo build --release --target "$TARGET" -p clipxd-web -p clipxd-cli )
 BIN_DIR="$ROOT/target/$TARGET/release"
 
-# ── 3. ship ─────────────────────────────────────────────────────────────────
-echo "==> 3/4 ship to $SERVER"
-run_remote 'mkdir -p /opt/clipxd /var/www/clipxd'
+# ── 3. stop the service first (so we can overwrite its binary without ETXTBSY) ─
+echo "==> 3/4 stop the service, then ship to $SERVER"
+run_remote '
+  systemctl stop clipxd-web 2>/dev/null || true
+  # Synchronous wait so we don'\''t race the cp.
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! pgrep -x clipxd-web >/dev/null; then break; fi
+    sleep 0.3
+  done
+  mkdir -p /opt/clipxd /var/www/clipxd
+'
 if [ "$SERVER" = "localhost" ]; then
   sudo -n cp -a "$BIN_DIR/clipxd-web" /opt/clipxd/
   sudo -n cp -a "$BIN_DIR/clipxd" /opt/clipxd/
@@ -99,14 +107,6 @@ sed "s/{\\\$CLIPXD_DOMAIN}/$DOMAIN/g" "$ROOT/deploy/Caddyfile" | run_remote 'cat
 # ── 4. restart ───────────────────────────────────────────────────────────────
 echo "==> 4/4 set perms + (re)start services"
 run_remote '
-  # Synchronous stop so the binary is fully released before we overwrite it (ETXTBSY otherwise).
-  systemctl stop clipxd-web 2>/dev/null || true
-  # Belt and braces: wait for the process to actually exit.
-  for i in 1 2 3 4 5; do
-    if ! pgrep -x clipxd-web >/dev/null; then break; fi
-    sleep 0.3
-  done
-  # chown: --from=root for the binary files (chown -R doesn'\''t take wildcards in sudoers)
   sudo -n chown clipxd:clipxd /opt/clipxd/clipxd-web /opt/clipxd/clipxd 2>/dev/null || true
   sudo -n chmod +x /opt/clipxd/clipxd-web /opt/clipxd/clipxd
   sudo -n chown -R clipxd /var/www/clipxd 2>/dev/null || true
