@@ -71,7 +71,16 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
+        // Username-canonical share-link form: /u/:username/clip/:id and all the same
+        // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
         .route("/u/:username/clip/:id", get(share_page_for_user))
+        .route("/u/:username/clip/:id/index.json", get(get_index_for_user))
+        .route("/u/:username/clip/:id/zoom.json", get(get_zoom_for_user))
+        .route("/u/:username/clip/:id/query", get(get_query_for_user))
+        .route("/u/:username/clip/:id/search", get(get_search_for_user))
+        .route("/u/:username/clip/:id/events", get(get_events_for_user))
+        .route("/u/:username/clip/:id/video", get(get_video_for_user))
+        .route("/u/:username/clip/:id/frames/:name", get(get_frame_for_user))
         .route("/net", get(get_net));
     router = if public {
         router.route("/", get(public_root))
@@ -808,20 +817,89 @@ async fn share_page_for_user(
     Path((username, id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Html<String>, WebErr> {
+    let _ = check_owner(&s, &username, &id)?;
     let idx = load_index(&s, &id)?;
-    let a = auth_of(&s)?;
-    let user = a.db
-        .find_by_username(&username)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "user not found".into()))?;
-    let owner = a.db
-        .clip_owner(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, "clip not found".into()))?;
-    if owner != user.id {
-        return Err((StatusCode::NOT_FOUND, "clip not found".into()));
-    }
     share_page_body(&s, &id, &idx, &headers)
+}
+
+/// Confirm `(username, clip_id)` is owned by `username`; 404 otherwise. Used by the
+/// /u/:username/clip/:id/* sub-resources to short-circuit any cross-username probing.
+fn check_owner(s: &AppState, username: &str, id: &str) -> Result<(), WebErr> {
+    let a = auth_of(s)?;
+    let user = a.db
+        .find_by_username(username)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
+    let owner = a.db
+        .clip_owner(id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
+    if owner != user.id {
+        return Err((StatusCode::NOT_FOUND, "not found".into()));
+    }
+    Ok(())
+}
+
+// Username-prefixed sub-resources: same handlers, ownership-checked first.
+
+async fn get_index_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<Json<Index>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_index(State(s), Path(id)).await
+}
+
+async fn get_query_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    Query(p): Query<Qs>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_query(State(s), Path(id), Query(p)).await
+}
+
+async fn get_search_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    Query(p): Query<Qs>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_search(State(s), Path(id), Query(p)).await
+}
+
+async fn get_events_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    Query(r): Query<Range>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_events(State(s), Path(id), Query(r)).await
+}
+
+async fn get_zoom_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_zoom(State(s), Path(id)).await
+}
+
+async fn get_video_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_video(State(s), Path(id), headers).await
+}
+
+async fn get_frame_for_user(
+    State(s): State<AppState>,
+    Path((username, id, name)): Path<(String, String, String)>,
+) -> Result<impl IntoResponse, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_frame(State(s), Path((id, name))).await
 }
 
 fn share_page_body(
