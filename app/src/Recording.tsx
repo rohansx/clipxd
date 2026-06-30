@@ -16,7 +16,6 @@ const MIC_BARS = Array.from({ length: 56 }, (_, i) => ({
 export function Recording({ onClipReady, showToast }: RecordingProps) {
   const base = apiBase();
   const { state, start, stop } = useScreenRecorder(base, (id) => {
-    showToast("Indexed — opening your clip");
     onClipReady(id);
   });
   const [camera, setCamera] = useState(false);
@@ -72,7 +71,7 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
         <div className="rec-status">
           <span className="rec-badge">
             <span className="led" />
-            {recording ? "REC" : processing ? "INDEXING" : "READY"}
+            {recording ? "REC" : processing ? "UPLOADING" : "READY"}
           </span>
           <span className="rec-clock">{recording ? clock : "00:00"}</span>
           <span className="rec-hint">screen · 1080p · auto-zoom on{camera ? " · camera" : ""}</span>
@@ -88,7 +87,7 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
             </div>
             <div style={{ padding: 28, color: "#222", background: "#fff", minHeight: 160 }}>
               <div style={{ fontWeight: 700, fontSize: 15 }}>
-                {recording ? "Recording your screen…" : processing ? "Building the index…" : "Press record — pick a screen or window."}
+                {recording ? "Recording your screen…" : processing ? "Uploading — link ready in a moment…" : "Press record — pick a screen or window."}
               </div>
               <div style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
                 The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too.

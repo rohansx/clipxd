@@ -44,7 +44,7 @@ export default function App() {
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 1800);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   }, []);
 
   const openClip = (id: string) => {
@@ -67,6 +67,12 @@ export default function App() {
   const goLanding = () => setView("landing");
   const afterCreate = (id: string) => {
     reload();
+    const username = auth.user?.username;
+    const url = username
+      ? `${location.origin}/u/${username}/clip/${id}`
+      : `${location.origin}/?clip=${id}`;
+    navigator.clipboard.writeText(url).catch(() => {});
+    showToast("Link copied to clipboard");
     openClip(id);
   };
 
