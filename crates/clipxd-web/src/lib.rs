@@ -572,8 +572,8 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
         })
         .await;
         // Re-mirror after Phase 2 so the captions/OST/zoom land in S3 too.
-        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage_arc.make_storage()) {
-            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &bg_id_for_post, &clip_dir_for_post)) {
+        if let Ok(st) = storage_arc.make_storage().await {
+            if let Err(e) = mirror_dir_to_storage(st.as_ref(), &bg_id_for_post, &clip_dir_for_post).await {
                 eprintln!("post-enrich mirror: {e} (continuing)");
             }
         }
