@@ -351,6 +351,56 @@ async fn state_storage(state: &AppState) -> Result<Box<dyn storage::Storage>, We
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))
 }
 
+/// Write a single key to S3, swallowing errors (best-effort). Use this for "I just
+/// updated a file locally; also keep S3 in sync" so a network blip doesn't 500 the request.
+async fn write_object_best_effort(state: &AppState, key: &str, body: Vec<u8>, content_type: &str) {
+    if let Ok(st) = state.storage.make_storage().await {
+        if let Err(e) = st.write_object(key, body, content_type).await {
+            eprintln!("best-effort S3 write {key}: {e}");
+        }
+    }
+}
+
+/// Mirror a local clip directory to S3. Walks `<local_dir>` recursively and writes each
+/// regular file to `<id>/<relative_path>` on the configured storage. No-op on local mode.
+///
+/// This is the bridge between the clipxd CLI (which only knows local paths) and S3: we run
+/// the CLI to a tmp staging dir, then `mirror_dir_to_storage` uploads the result.
+async fn mirror_dir_to_storage(
+    storage: &dyn storage::Storage,
+    id: &str,
+    local_dir: &std::path::Path,
+) -> Result<(), String> {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+    // walk_dir(root, here) returns paths relative to root. We pass local_dir as both so the
+    // rel paths are like "index.json", "video.webm", "frames/00001.png".
+    let keys = storage::walk_dir(local_dir, local_dir);
+    let mut futs = FuturesUnordered::new();
+    for rel in keys {
+        let key = format!("{id}/{rel}");
+        let abs = local_dir.join(&rel);
+        let body = std::fs::read(&abs).map_err(|e| format!("read {}: {e}", abs.display()))?;
+        // Guess a content-type from the extension; videos are common.
+        let ct = match abs.extension().and_then(|e| e.to_str()) {
+            Some("mp4") => "video/mp4",
+            Some("webm") => "video/webm",
+            Some("wav") => "audio/wav",
+            Some("png") => "image/png",
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("json") => "application/json",
+            _ => "application/octet-stream",
+        }.to_string();
+        futs.push(async move {
+            storage.write_object(&key, body, &ct).await
+                .map_err(|e| format!("write {key}: {e}"))
+        });
+    }
+    while let Some(res) = futs.next().await {
+        res?;
+    }
+    Ok(())
+}
+
 async fn get_index(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Index>, WebErr> {
     Ok(Json(load_index(&s, &id).await?))
 }
@@ -487,6 +537,15 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?
     };
 
+    // Mirror the stub to S3 (no-op on local mode) so the SPA can read the index.json
+    // immediately, before Phase 2 finishes.
+    if let Ok(st) = s.storage.make_storage().await {
+        let stub_dir = dir.join(&id);
+        if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &stub_dir).await {
+            eprintln!("ingest stub mirror: {e} (continuing)");
+        }
+    }
+
     // Record ownership so this clip shows up only in its creator's library (auth mode).
     if let (Some(a), Some(u)) = (&s.auth, &user) {
         let _ = a.db.set_clip_owner(&id, u.id);
@@ -496,6 +555,9 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
     // `partial` (still watchable) rather than leaving it stuck on `enriching`.
     let clip_dir = dir.join(&id);
     let bg_id = id.clone();
+    let bg_id_for_post = bg_id.clone();
+    let clip_dir_for_post = clip_dir.clone();
+    let storage_arc = s.storage.clone();
     tokio::spawn(async move {
         let _ = tokio::task::spawn_blocking(move || {
             if let Err(e) = clipxd_recorder::enrich_clip(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0) {
@@ -509,6 +571,12 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
             }
         })
         .await;
+        // Re-mirror after Phase 2 so the captions/OST/zoom land in S3 too.
+        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage_arc.make_storage()) {
+            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &bg_id_for_post, &clip_dir_for_post)) {
+                eprintln!("post-enrich mirror: {e} (continuing)");
+            }
+        }
     });
 
     Ok(Json(serde_json::json!({ "id": id })))
@@ -573,14 +641,22 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
         .map(|i| i.metadata.title)
         .unwrap_or_else(|| "Screen recording".to_string());
     // Re-stub so the SPA sees status=enriching while we work.
+    let mut new_index_json: Option<String> = None;
     if let Ok(idx_str) = std::fs::read_to_string(clip_dir.join("index.json")) {
         if let Ok(mut idx) = serde_json::from_str::<Index>(&idx_str) {
             idx.status = clipxd_index::Status::Enriching;
-            let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+            if let Ok(j) = serde_json::to_string_pretty(&idx) {
+                let _ = std::fs::write(clip_dir.join("index.json"), &j);
+                new_index_json = Some(j);
+            }
         }
+    }
+    if let Some(j) = new_index_json.as_ref() {
+        write_object_best_effort(&s, &format!("{id}/index.json"), j.as_bytes().to_vec(), "application/json").await;
     }
     let bg_id = id.clone();
     let bg_dir = clip_dir.clone();
+    let bg_storage = s.storage.clone();
     tokio::spawn(async move {
         if let Err(e) = clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0) {
             eprintln!("background re-enrich failed for {bg_id}: {e:#}");
@@ -589,6 +665,12 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
                     idx.status = clipxd_index::Status::Partial;
                     let _ = std::fs::write(bg_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
                 }
+            }
+        }
+        // Re-mirror to S3 so the new index/zoom/frames land.
+        if let Ok(st) = bg_storage.make_storage().await {
+            if let Err(e) = mirror_dir_to_storage(st.as_ref(), &bg_id, &bg_dir).await {
+                eprintln!("re-enrich post-mirror: {e}");
             }
         }
     });
@@ -611,8 +693,14 @@ async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, headers: 
     let _ = std::fs::write(dir.join("events.json"), &body);
     std::fs::write(dir.join("zoom.json"), serde_json::to_string(&zoom).unwrap_or_default())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    std::fs::write(dir.join("index.json"), serde_json::to_string_pretty(&index).unwrap_or_default())
+    let index_json = serde_json::to_string_pretty(&index).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(dir.join("index.json"), &index_json)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Best-effort S3 mirror: events.json, zoom.json, index.json
+    write_object_best_effort(&s, &format!("{id}/events.json"), body.to_vec(), "application/json").await;
+    let zoom_bytes = serde_json::to_string(&zoom).unwrap_or_default().into_bytes();
+    write_object_best_effort(&s, &format!("{id}/zoom.json"), zoom_bytes, "application/json").await;
+    write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
     Ok(Json(serde_json::json!({ "ok": true, "keyframes": zoom.len(), "events": index.event_track.len() })))
 }
 
@@ -660,12 +748,17 @@ struct ImportReq {
 /// Auth is the `?token=<shared-secret>` query param matching `CLIPXD_YT_TUNNEL_URL`'s trailing
 /// path segment. The forwarder is on the user's Tailnet; we don't accept this from the public
 /// internet (Caddy doesn't proxy it).
+///
+/// Returns 202 with `{id, status: "enriching"}` IMMEDIATELY (no blocking on captioning).
+/// Indexing + captioning run in a background task. The forwarder's `urllib.request.urlopen`
+/// has a 120s timeout, which is too tight for slow Loom/YouTube imports — by returning fast
+/// we avoid spurious 502s.
 async fn ingest_tunneled(
     State(s): State<AppState>,
     Query(q): Query<TunneledQ>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<serde_json::Value>, WebErr> {
+) -> Result<Response, WebErr> {
     // Verify shared token.
     let want = yt_tunnel_url().and_then(|u| u.rsplit_once('/').map(|(_, t)| t.to_string())).unwrap_or_default();
     if want.is_empty() || q.token.as_deref() != Some(&want) {
@@ -683,65 +776,97 @@ async fn ingest_tunneled(
         .unwrap_or("mp4")
         .to_string();
 
+    // Write the raw bytes to a temp file, then run stub_clip + clipxd import in a worker
+    // thread. The clip_id is computed deterministically (timestamp nanos) so the foreground
+    // can return it without waiting.
     let dir = s.clips_dir.clone();
-    let id = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-        std::fs::create_dir_all(dir.as_path())?;
-        let before = clip_dir_names(dir.as_path());
-        // Drop the bytes in a tmp file (clipxd import expects a path it can probe).
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        let tmp = std::env::temp_dir().join(format!("clipxd-tunnel-{stamp}.{ext}"));
-        std::fs::write(&tmp, &body)?;
-        let out = std::process::Command::new(clipxd_bin())
-            .arg("import")
-            .arg(&tmp)
-            .arg("--out")
-            .arg(dir.as_path())
-            .output();
-        let _ = std::fs::remove_file(&tmp);
-        let out = out?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("; ");
-            anyhow::bail!("clipxd import failed ({}): {}", out.status, tail);
-        }
-        // Same trick as the local path: parse `… → <path>` from stdout, else diff dir, else newest.
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        if let Some(id) = stdout
-            .lines()
-            .rev()
-            .find_map(|l| l.rsplit_once("→ ").map(|(_, p)| p.trim()))
-            .and_then(|p| std::path::Path::new(p).file_name())
-            .and_then(|n| n.to_str())
-            .filter(|n| safe(n))
-        {
-            return Ok(id.to_string());
-        }
-        let after = clip_dir_names(dir.as_path());
-        if let Some(fresh) = after.difference(&before).next() {
-            return Ok(fresh.clone());
-        }
-        let newest = std::fs::read_dir(dir.as_path())?
-            .flatten()
-            .filter(|e| e.path().is_dir())
-            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
-            .and_then(|e| e.file_name().into_string().ok());
-        newest.ok_or_else(|| anyhow::anyhow!("no clip produced"))
-    })
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("tunneled ingest failed: {e:#}")))?;
+    let body = body.clone();
+    let owner_email = s.auth.as_ref().and_then(|_| headers.get("x-clipxd-owner-email").and_then(|v| v.to_str().ok()).map(String::from));
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let id = format!("clp_{:08x}", stamp as u32);
+    let tmp = std::env::temp_dir().join(format!("clipxd-tunnel-{stamp}.{ext}"));
+    let tmp_clone = tmp.clone();
+    let body_for_thread = body.clone();
+    let dir_thread = dir.clone();
+    let id_thread = id.clone();
+    let storage = s.storage.clone();
 
-    // Ownership: when called via the tunnel, we don't know which user wanted the clip. The
-    // forwarder should send `X-Clipxd-Owner-Email` for us to resolve. Until that's wired,
-    // the clip is unowned (visible to anyone via the share link, just not in any user's library).
-    if let (Some(a), Some(owner_email)) = (&s.auth, headers.get("x-clipxd-owner-email").and_then(|v| v.to_str().ok()))
-    {
-        if let Ok(Some(u)) = a.db.find_by_email(owner_email) {
-            let _ = a.db.set_clip_owner(&id, u.id);
-        }
+    // Phase 1: write the body to a tmp file in this thread (sync — it's just a few MB).
+    // We do this in the foreground so the tmp path is ready for the background worker.
+    let write_result = {
+        let tmp = tmp.clone();
+        let body = body.clone();
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> { std::fs::write(&tmp, &body) })
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
+    if let Err(e) = write_result {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("tunneled ingest failed: {e}")));
     }
 
-    Ok(Json(serde_json::json!({ "id": id })))
+    // Persist the body and ownership BEFORE we respond, so the SPA can read the clip
+    // immediately. The full indexing + captioning run in a background task.
+    let db = s.auth.as_ref().map(|a| a.db.clone());
+
+    // Background worker: stub_clip + clipxd import + enrich + mirror-to-S3.
+    tokio::task::spawn_blocking(move || {
+        // -- stub_clip (fast, ~1s) --
+        if let Err(e) = clipxd_recorder::stub_clip(&tmp_clone, dir_thread.as_path(), &id_thread, "Imported via tunnel") {
+            eprintln!("tunneled stub_clip failed for {id_thread}: {e:#}");
+            return;
+        }
+        let clip_dir = dir_thread.join(&id_thread);
+
+        // -- mirror the stub to S3 immediately (no-op on local) --
+        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage.make_storage()) {
+            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &id_thread, &clip_dir)) {
+                eprintln!("tunneled stub mirror: {e}");
+            }
+        }
+
+        // -- bind ownership if we got an owner-email header --
+        if let (Some(db), Some(email)) = (db.as_ref(), owner_email.as_ref()) {
+            if let Ok(Some(u)) = db.find_by_email(email) {
+                let _ = db.set_clip_owner(&id_thread, u.id);
+            }
+        }
+
+        // -- the SLOW part: full clipxd import (captioning + OCR + enrichment) --
+        // This is the part that takes minutes for a long Loom/YouTube video.
+        // The forwarder already has the clip_id and isn't blocking on this.
+        if let Err(e) = clipxd_recorder::enrich_clip(
+            &clip_dir.join("video.webm"),
+            &clip_dir,
+            &id_thread,
+            "Imported via tunnel",
+            &EventTrack::default(),
+            4.0,
+        ) {
+            eprintln!("tunneled enrich failed for {id_thread}: {e:#}");
+            if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
+                if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+                    idx.status = clipxd_index::Status::Partial;
+                    let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+                }
+            }
+        }
+
+        // -- re-mirror to S3 so the captions/OST/zoom land --
+        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage.make_storage()) {
+            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &id_thread, &clip_dir)) {
+                eprintln!("tunneled post-enrich mirror: {e}");
+            }
+        }
+
+        // -- clean up the tmp file --
+        let _ = std::fs::remove_file(&tmp_clone);
+    });
+
+    Ok(Response::builder()
+        .status(StatusCode::ACCEPTED)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!(r#"{{"id":"{id}","status":"enriching"}}"#)))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?)
 }
 
 #[derive(Deserialize)]
@@ -755,6 +880,7 @@ async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Js
     if url.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "empty url".into()));
     }
+    let dir_for_post = s.clips_dir.clone();
     let dir = s.clips_dir.clone();
 
     // Path 1: tunnel to the local forwarder (your home box running `tools/yt_forwarder.py`).
@@ -824,6 +950,13 @@ async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Js
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("import failed: {e:#}")))?;
     if let (Some(a), Some(u)) = (&s.auth, &user) {
         let _ = a.db.set_clip_owner(&id, u.id);
+    }
+    // Mirror the freshly-imported clip to S3 (no-op on local mode).
+    let import_clip_dir = dir_for_post.join(&id);
+    if let Ok(st) = s.storage.make_storage().await {
+        if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &import_clip_dir).await {
+            eprintln!("import_url post-mirror: {e}");
+        }
     }
     Ok(Json(serde_json::json!({ "id": id })))
 }

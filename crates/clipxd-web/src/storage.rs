@@ -256,7 +256,7 @@ fn sanitize(s: &str) -> String {
         .join("/")
 }
 
-fn walk_dir(root: &Path, here: &Path) -> Vec<String> {
+pub(crate) fn walk_dir(root: &Path, here: &Path) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(here) {
         for entry in rd.flatten() {
