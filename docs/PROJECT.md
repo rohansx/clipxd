@@ -135,21 +135,20 @@ The script:
 - [x] **Box pulls + deploys from the box itself** — `cd /home/clipxd/clipxd && ./deploy/deploy.sh` (no env vars needed; auto-detects local vs remote; sudo-nopasswd for the few ops it needs)
 - [x] **PROJECT.md** on the box at `/home/clipxd/PROJECT.md` (and in `docs/PROJECT.md` in the repo)
 - [x] **github-login.sh** — store a GitHub PAT on the box for push-back
+- [x] **Hetzner Object Storage bucket** — `clipxd-prod-1` in fsn1 region, IPv6 endpoint `https://fsn1.your-objectstorage.com`. Credentials tested from the box (PUT/GET round-trip OK).
+- [x] **SPA wired for re-enrich + visibilitychange** — ClipPage shows a "captions empty — re-enrich" pill when status==complete but no captions; useClips/useClip refresh on `document.visibilitychange` so a backgrounded tab doesn't leave a stale "indexing…" pill.
 
 ## What's half-done ⚠️
 
-- [ ] **Hetzner Object Storage** — bucket not created yet (need you to do that in the console)
-- [ ] **S3 storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. Once bucket is up, this is ~150 LoC of real read/write plumbing.
-- [ ] **`/clip/:id/claim` and `/clip/:id/re-enrich`** — endpoints live; SPA wiring pending (a "captions empty — re-enrich" banner was started in ClipPage.tsx but not deployed)
-- [ ] **SPA "stale indexing pill" fix** — `visibilitychange` listener in `useClipData.ts` not deployed yet
-- [ ] **Mobile UX polish** — sidebar user-chip showing username
-- [ ] **YouTube ingest via residential proxy** — currently fails on the box's datacenter IP. Either use a residential proxy service, or use the home box's egress via the yt-dlp tunnel-forwarder
+- [ ] **S3 storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. The refactor is mechanical (~150-200 LoC across ~20 handler sites): replace `state.clips_dir.join(x).read_y()` with `state.storage.read_object(x).await`, replace writes with `write_object`. Each handler needs to be `async`. The refactor is straightforward but spans many lines, so it deserves a focused commit. **The Hetzner bucket + creds are already verified working from the box**; this is just plumbing.
+- [ ] **YouTube ingest via residential proxy** — currently fails on the box's datacenter IP. Either use a residential proxy service, or use the home box's egress via the yt-dlp tunnel-forwarder.
 
 ## What's not started 📋
 
 - [ ] **Real GitHub PAT for the box** — `bash /home/clipxd/clipxd/deploy/github-login.sh` once you create one at github.com/settings/personal-access-tokens/new (fine-grained, contents: read+write, 90 days)
 - [ ] **GitHub Actions CI** — runs `deploy/deploy.sh` on push to master, hits the box via SSH
-- [ ] **Mobile UX polish** — sidebar user-chip showing username, "captions empty — re-enrich" banner in the SPA
+- [ ] **Mobile UX polish** — sidebar user-chip showing username
+- [ ] **Rotate the Hetzner Object Storage secret** — was posted in chat for testing; should be rotated before production.
 
 ---
 
