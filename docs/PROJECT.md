@@ -204,8 +204,8 @@ The `clipxd` user has passwordless sudo for: `systemctl {restart,reload,status,d
 ```
 /etc/clipxd/clipxd.env             # env vars: JWT secret, OAuth creds, storage, captions
 /opt/clipxd/
-  clipxd-web                       # the backend binary
-  clipxd                           # the CLI binary
+  clipxd-web                       # the backend binary (deployed here)
+  clipxd                           # the CLI binary (deployed here)
   venv/                            # Python venv with paddlepaddle + paddleocr
 /var/lib/clipxd/clips/
   clipxd.db                        # SQLite (users, clips ownership)
@@ -213,12 +213,15 @@ The `clipxd` user has passwordless sudo for: `systemctl {restart,reload,status,d
 /var/www/clipxd/                   # SPA static files (Vite build output)
 /etc/caddy/Caddyfile               # reverse proxy config
 /etc/systemd/system/clipxd-web.service
-/home/clipxd/
+/home/clipxd/                      # <-- THIS is where the source lives
   .ssh/                            # SSH keys
   .github-token                    # (planned) PAT for pushing from box
-  clipxd/                          # git working tree (cloned from GitHub)
-  PROJECT.md                       # ← you are here
+  clipxd/                          # git working tree (cloned from github.com/rohansx/clipxd)
+  veyo/                            # git working tree (sibling path dep, also from GitHub)
+  PROJECT.md                       # (copy of docs/PROJECT.md) runbook
 ```
+
+The split: `/opt/clipxd` holds the **deployed** artifacts (binaries + python venv). `/home/clipxd/clipxd` holds the **source**. Deploys copy source → `/opt/clipxd` then restart the service. This separation is intentional so a git pull + deploy doesn't pollute runtime state.
 
 ---
 
