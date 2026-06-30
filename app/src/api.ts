@@ -273,6 +273,11 @@ export async function postCursor(
   });
 }
 
+/** Re-run Phase 2 (captioning/OCR/transcription) on an existing clip. Idempotent. */
+export async function reEnrichClip(id: string, base = apiBase()): Promise<void> {
+  await af(`${base}/clip/${id}/re-enrich`, { method: "POST" });
+}
+
 export function downloadBlob(name: string, blob: Blob): void {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

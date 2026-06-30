@@ -3,7 +3,9 @@ import { fetchClips, fetchIndex, fetchZoom } from "./api";
 import type { ClipSummary, Index, ZoomKeyframe } from "./types";
 
 /** The library list. `reload()` re-fetches (after a record/import). While any clip is still
- *  `enriching`, it polls every 3s so cards flip from "indexing…" to indexed on their own. */
+ *  `enriching`, it polls every 3s so cards flip from "indexing…" to indexed on their own.
+ *  On a tab-visibility flip back to visible, also re-fetch immediately so background-tab
+ *  timer-throttling can't leave stale "indexing…" pills for minutes. */
 export function useClips(): { clips: ClipSummary[] | null; reload: () => void } {
   const [clips, setClips] = useState<ClipSummary[] | null>(null);
   const [n, setN] = useState(0);
@@ -23,9 +25,14 @@ export function useClips(): { clips: ClipSummary[] | null; reload: () => void } 
       });
     };
     tick();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && live) tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       live = false;
       if (poll !== undefined) window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [n]);
   return { clips, reload: () => setN((x) => x + 1) };
@@ -41,7 +48,9 @@ export interface ClipData {
 /**
  * One clip's full index + zoom track, fetched whenever `id` changes. While the clip is still
  * `enriching` (async ingest — video saved, index filling in), it re-polls every 2.5s so the
- * transcript / OCR / captions appear live without a manual refresh.
+ * transcript / OCR / captions appear live without a manual refresh. Also forces a re-fetch
+ * when the tab becomes visible again — browsers throttle / suspend setInterval in
+ * background tabs, so the post-poll state can be stale by minutes.
  */
 export function useClip(id: string | null): ClipData {
   const [data, setData] = useState<ClipData>({ index: null, zoom: [], loading: !!id, error: null });
@@ -73,6 +82,22 @@ export function useClip(id: string | null): ClipData {
         });
     };
     load(true);
+
+    // On tab-visibility flips, refresh immediately so background-tab throttling can't
+    // leave the index stale (this is what made "indexing…" stick for minutes).
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && live) load(false);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      live = false;
+      if (poll !== undefined) window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [id]);
+  return data;
+}
 
     return () => {
       live = false;

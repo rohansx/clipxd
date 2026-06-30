@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useClip } from "./useClipData";
-import { queryClip, renderClip, downloadBlob, shareLink, apiBase } from "./api";
-import { fmt, type QueryAnswer } from "./types";
+import { queryClip, renderClip, downloadBlob, shareLink, apiBase, reEnrichClip } from "./api";
+import { fmt, type QueryAnswer, type Index } from "./types";
 import { editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
+
+/** The clip's phase-2 enrich produced no semantic annotations. The cap/OCR/transcriber
+ *  was offline at recording time — surface a re-enrich CTA instead of looking "done". */
+function emptyIndex(i: Index): boolean {
+  return (i.transcript?.length ?? 0) === 0
+      && (i.on_screen_text?.length ?? 0) === 0
+      && (i.visual_timeline?.length ?? 0) === 0;
+}
 import { WatchBody } from "./WatchBody";
 import { ReadBody } from "./ReadBody";
 import { ShareModal } from "./ShareModal";
@@ -165,6 +173,22 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
           <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="The video is ready and shareable now; transcript, on-screen text and captions are still being built and will appear automatically.">
             <span className="spin" style={{ width: 10, height: 10 }} /> indexing…
           </span>
+        )}
+        {index.status === "complete" && emptyIndex(index) && (
+          <button
+            className="pill pill-reenrich"
+            onClick={async () => {
+              try {
+                await reEnrichClip(id);
+                showToast("Re-enriching — transcript / OCR / captions will appear when ready");
+              } catch (e) {
+                showToast(e instanceof Error ? e.message : "re-enrich failed");
+              }
+            }}
+            title="Captions are empty (the captioner / OCR / transcriber were offline when this clip was processed). Click to run them again."
+          >
+            <span className="dot" style={{ background: "var(--text-3)" }} /> captions empty — re-enrich ↻
+          </button>
         )}
         <div className="seam-toggle">
           <button className={seam === "watch" ? "on-watch" : ""} onClick={() => setSeam("watch")}>

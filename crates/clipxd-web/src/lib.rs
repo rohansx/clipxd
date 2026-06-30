@@ -33,9 +33,10 @@ pub struct AppState {
     pub public_base: Option<Arc<String>>,
     /// Multi-tenant auth (accounts + per-user clip ownership). `None` = local/LAN mode (no auth).
     pub auth: Option<AuthState>,
-    /// Storage backend. Today this is `Local` only; the `CLIPXD_STORAGE=s3://...` knob is
-    /// parsed at boot so the env-file contract is stable. When set, we log a WARN and fall
-    /// through to local reads so misconfiguration is loud but doesn't break anything.
+    /// Object storage configuration. When `CLIPXD_STORAGE=s3://...` is set this is `S3Configured`
+    /// (a parse-only stub today) and the read/write path falls through to local disk; when the S3
+    /// read/write path lands, this becomes a `storage::Storage` instance and the handlers are
+    /// converted to use `state.storage.read_object(...)` etc.
     pub storage_kind: StorageKind,
 }
 
