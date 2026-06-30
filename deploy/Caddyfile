@@ -10,7 +10,7 @@
 	encode zstd gzip
 
 	# Backend surface
-	@backend path /clip/* /clips /ingest /import /net /auth/*
+	@backend path /clip/* /clips /ingest /import /net /auth/* /u/*
 	handle @backend {
 		reverse_proxy 127.0.0.1:8787
 	}
