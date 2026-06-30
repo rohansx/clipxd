@@ -97,12 +97,3 @@ export function useClip(id: string | null): ClipData {
     };
   }, [id]);
   return data;
-}
-
-    return () => {
-      live = false;
-      if (poll !== undefined) window.clearInterval(poll);
-    };
-  }, [id]);
-  return data;
-}
