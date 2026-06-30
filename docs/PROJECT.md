@@ -128,26 +128,28 @@ The script:
 - [x] **Hetzner Caddy reverse proxy** — auto-TLS, route /api/* to backend, serve SPA
 - [x] **`clipxd` CLI** (render, import)
 - [x] **Two-phase ingest** — stub_clip fast, enrich_clip in background
-- [x] **PaddleOCR venv** (CPU)
+- [x] **PaddleOCR venv** (CPU) — batched model-loads so the box's 4 GB RAM survives
+- [x] **Moondream cloud captions** — `https://api.moondream.ai/v1/caption` with `X-Moondream-Auth` header; verified end-to-end (captioned a red test frame as "A red background fills the frame, uniformly colored and without any visible patterns, textures, or objects.")
 - [x] **`yt-dlp` forwarder** (Python, on the home box or Tailscale-tunneled) — work-around for Loom/YouTube datacenter IP block
-- [x] **20+ git commits** on master, pushed to GitHub
+- [x] **GitHub is the source of truth** — laptop or box can `git push github master` / `git pull github master`
+- [x] **Box pulls + deploys from the box itself** — `cd /home/clipxd/clipxd && ./deploy/deploy.sh` (no env vars needed; auto-detects local vs remote; sudo-nopasswd for the few ops it needs)
+- [x] **PROJECT.md** on the box at `/home/clipxd/PROJECT.md` (and in `docs/PROJECT.md` in the repo)
+- [x] **github-login.sh** — store a GitHub PAT on the box for push-back
 
 ## What's half-done ⚠️
 
-- [ ] **Object storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. Hetzner Object Storage bucket to be created in console.
-- [ ] **Moondream cloud captions** — key from user pasted, code to wire it (replace `CLIPXD_CAPTION_URL` local fallback with cloud API call) is in progress
-- [ ] **`/clip/:id/claim` and `/clip/:id/re-enrich`** — endpoints live; SPA wiring pending
-- [ ] **SPA "stale indexing pill" fix** — `visibilitychange` listener added but not deployed yet
-- [ ] **PROJECT.md** on the box — that's THIS file; needs to be kept current
+- [ ] **Hetzner Object Storage** — bucket not created yet (need you to do that in the console)
+- [ ] **S3 storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. Once bucket is up, this is ~150 LoC of real read/write plumbing.
+- [ ] **`/clip/:id/claim` and `/clip/:id/re-enrich`** — endpoints live; SPA wiring pending (a "captions empty — re-enrich" banner was started in ClipPage.tsx but not deployed)
+- [ ] **SPA "stale indexing pill" fix** — `visibilitychange` listener in `useClipData.ts` not deployed yet
+- [ ] **Mobile UX polish** — sidebar user-chip showing username
+- [ ] **YouTube ingest via residential proxy** — currently fails on the box's datacenter IP. Either use a residential proxy service, or use the home box's egress via the yt-dlp tunnel-forwarder
 
 ## What's not started 📋
 
-- [ ] **Real GitHub PAT** for the box → push from box to GitHub (today: push only works from laptop)
-- [ ] **GitHub Actions CI** — runs `deploy/deploy.sh` on push to master
-- [ ] **Hetzner Object Storage bucket** + access keys
-- [ ] **Docker on box** — for MinIO if we ever need self-hosted S3 (probably not at this scale)
-- [ ] **Mobile UX polish** — sidebar user-chip showing username, "captions empty — re-enrich" banner
-- [ ] **Backup script** — `restic` to Hetzner Storage Box or rsync to laptop
+- [ ] **Real GitHub PAT for the box** — `bash /home/clipxd/clipxd/deploy/github-login.sh` once you create one at github.com/settings/personal-access-tokens/new (fine-grained, contents: read+write, 90 days)
+- [ ] **GitHub Actions CI** — runs `deploy/deploy.sh` on push to master, hits the box via SSH
+- [ ] **Mobile UX polish** — sidebar user-chip showing username, "captions empty — re-enrich" banner in the SPA
 
 ---
 
