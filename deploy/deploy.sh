@@ -35,10 +35,19 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/clipxd_deploy}"
 TARGET="${TARGET:-x86_64-unknown-linux-musl}"
 
 # ── helpers ───────────────────────────────────────────────────────────────
+# For localhost: sudo -n the perms. For remote: ssh.
+run_remote_mkdir_p() {
+  for d in "$@"; do
+    if [ "$SERVER" = "localhost" ]; then sudo -n mkdir -p "$d"; else ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "$SERVER" "mkdir -p '$d'"; fi
+  done
+}
 run_remote() {
-  # Run a shell snippet on $SERVER. For localhost, use bash directly.
+  # For the remote case, we trust the caller's script. For localhost, we need each
+  # command to be in /etc/sudoers.d/92-clipxd-deploy-paths. To keep the call sites
+  # clean, we shell out via `sudo -n sh -c` after widening sudoers to allow /usr/bin/sh.
   if [ "$SERVER" = "localhost" ]; then
-    sudo -n bash -c "$1"
+    # 'sh' is in the sudoers file; -c runs the inline script as root.
+    sudo -n sh -c "$1"
   else
     ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "$SERVER" "$1"
   fi
