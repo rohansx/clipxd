@@ -1,0 +1,245 @@
+# clipxd — Hetzner box runbook
+
+This is the live, current state of the `clipxd` project on the Hetzner CX23 at `178.104.122.118` (Tailscale: `100.98.137.90`).
+
+**If you're reading this from your phone after SSH'ing in, jump to the section you need.**
+
+---
+
+## Access
+
+| From | How |
+|---|---|
+| Phone (Termius / Termux / Blink Shell) | `ssh clipxd@100.98.137.90` (Tailscale IP — works whenever your phone is online) |
+| Laptop | `ssh clipxd@100.98.137.90` or `ssh rsx@178.104.122.118` |
+| Repo | https://github.com/rohansx/clipxd — the source of truth |
+
+The Tailscale SSH daemon is **not** enabled on either side (you'd need a UI session with `sudo tailscale up --ssh=true`). Instead we use a **bound-to-Tailscale** sshd on the laptop (`ListenAddress 100.94.163.62`) and `sshd` on the box — they both have the same `clipxd_deploy` key in `authorized_keys`. The Hetzner box's public IP (`178.104.122.118`) has sshd also bound to all interfaces so the laptop can ssh to it.
+
+**You're reading this because you ssh'd as `clipxd`. Welcome.**
+
+---
+
+## What's running
+
+```
+/opt/clipxd/
+  clipxd-web            # static musl binary (12 MB) — backend + share-layer HTTP
+  clipxd                # CLI for render/import (5 MB)
+  venv/                 # Python venv with paddlepaddle + paddleocr
+systemd unit:
+  clipxd-web.service    # reads /etc/clipxd/clipxd.env, serves :8787
+other:
+  Caddy                 # :443 → clipxd-web :8787 + serves SPA at /var/www/clipxd
+  Tailscale             # joins your tailnet; box is 100.98.137.90
+  PaddleOCR venv        # /opt/clipxd/venv/bin/python (CPU OCR sidecar)
+  Moondream captioning  # see CLoudCaption section below
+```
+
+URL: `https://clipxd.com` (Live ✓)
+
+---
+
+## Git workflow — **GitHub is the source of truth**
+
+```
+┌──────────────┐  push   ┌────────────┐  clone/pull  ┌──────────────┐
+│  laptop (you)│────────▶│   GitHub   │◀─────────────│ Hetzner box  │
+│  gh CLI      │         │ rohansx/   │              │ clipxd user  │
+└──────────────┘         │   clipxd   │              └──────────────┘
+                         └────────────┘
+```
+
+Rules:
+1. **Never** edit `/home/clipxd/clipxd/` directly on the box unless you want to lose those changes. The box is a build target, not the source.
+2. Push to GitHub from the laptop first. Then pull on the box.
+3. If you must edit on the box (e.g. emergency fix while away from the laptop), commit on the box, push back to GitHub as soon as you have laptop access.
+
+### Pull latest + redeploy (run on the box)
+
+```bash
+cd /home/clipxd/clipxd
+git pull github master       # fetch + merge latest from GitHub
+./deploy/deploy.sh            # builds SPA + binaries, rsyncs to /opt/clipxd, restarts
+sudo -n systemctl status clipxd-web
+journalctl -u clipxd-web -n 20 --no-pager    # tail logs
+```
+
+### Make a code change from the box (when you don't have the laptop)
+
+```bash
+cd /home/clipxd/clipxd
+# edit whatever file
+git add -p
+git commit -m "fix: ..."
+# Push back to GitHub so the laptop can stay in sync:
+git push github master
+```
+
+(Push from the box requires a GitHub PAT in `/home/clipxd/.github-token` — see setup.)
+
+---
+
+## Deploying
+
+### One-time setup
+
+1. **DNS** — A record for `clipxd.com` → `178.104.122.118` (set at Spaceship)
+2. **Tailscale** — `tailscale up --authkey=$TS_AUTHKEY` (already done; box is `100.98.137.90`)
+3. **GitHub OAuth App** — client ID + secret in `/etc/clipxd/clipxd.env`
+4. **Storage** — `/etc/clipxd/clipxd.env` has `CLIPXD_STORAGE=local` (or `s3://...`)
+5. **JWT secret** — `/etc/clipxd/clipxd.env` has `CLIPXD_JWT_SECRET=...` (64 hex chars)
+
+### Deploy a new build (run on the box, or from laptop against the box)
+
+```bash
+# From laptop:
+DOMAIN=clipxd.com SERVER=root@178.104.122.118 /home/rsx/Desktop/projx/clipxd/deploy/deploy.sh
+
+# From the box (after `git pull`):
+./deploy/deploy.sh
+```
+
+The script:
+1. Builds the SPA (`vite build`)
+2. Builds static musl binaries (`cargo build --target x86_64-unknown-linux-musl`)
+3. Rsyncs `app/dist/` + binaries to `/opt/clipxd/`
+4. Writes the Caddyfile with `$DOMAIN` baked in
+5. Reloads Caddy + restarts `clipxd-web`
+
+---
+
+## The cloud stack
+
+| Piece | Where | Why |
+|---|---|---|
+| **Hetzner CX23** | `178.104.122.118` | App server, only 4 GB RAM, runs clipxd-web + Caddy + PaddleOCR + (later) MinIO |
+| **Tailscale** | your tailnet | Private network between laptop ↔ phone ↔ box; no public SSH exposure |
+| **Hetzner Object Storage** | `nbg1` region | S3-compatible storage for video files (planned) |
+| **Moondream Cloud API** | `api.moondream.ai/v1` | Scene captions for clips — no GPU needed on the box |
+| **GitHub** | `rohansx/clipxd` | Source of truth for code |
+
+---
+
+## What's built ✅
+
+- [x] **`clipxd-web`** — multi-tenant backend (JWT auth, email/pw + GitHub OAuth, per-user clip ownership)
+- [x] **Username routing** — `https://clipxd.com/u/<slug>/clip/<id>` canonical share URLs
+- [x] **Hetzner Caddy reverse proxy** — auto-TLS, route /api/* to backend, serve SPA
+- [x] **`clipxd` CLI** (render, import)
+- [x] **Two-phase ingest** — stub_clip fast, enrich_clip in background
+- [x] **PaddleOCR venv** (CPU)
+- [x] **`yt-dlp` forwarder** (Python, on the home box or Tailscale-tunneled) — work-around for Loom/YouTube datacenter IP block
+- [x] **20+ git commits** on master, pushed to GitHub
+
+## What's half-done ⚠️
+
+- [ ] **Object storage wiring** — code parses `CLIPXD_STORAGE=s3://...` but doesn't actually use S3 yet. Hetzner Object Storage bucket to be created in console.
+- [ ] **Moondream cloud captions** — key from user pasted, code to wire it (replace `CLIPXD_CAPTION_URL` local fallback with cloud API call) is in progress
+- [ ] **`/clip/:id/claim` and `/clip/:id/re-enrich`** — endpoints live; SPA wiring pending
+- [ ] **SPA "stale indexing pill" fix** — `visibilitychange` listener added but not deployed yet
+- [ ] **PROJECT.md** on the box — that's THIS file; needs to be kept current
+
+## What's not started 📋
+
+- [ ] **Real GitHub PAT** for the box → push from box to GitHub (today: push only works from laptop)
+- [ ] **GitHub Actions CI** — runs `deploy/deploy.sh` on push to master
+- [ ] **Hetzner Object Storage bucket** + access keys
+- [ ] **Docker on box** — for MinIO if we ever need self-hosted S3 (probably not at this scale)
+- [ ] **Mobile UX polish** — sidebar user-chip showing username, "captions empty — re-enrich" banner
+- [ ] **Backup script** — `restic` to Hetzner Storage Box or rsync to laptop
+
+---
+
+## Common ops
+
+### Check service health
+
+```bash
+sudo -n systemctl status clipxd-web caddy tailscaled    # these work without password
+curl -i https://clipxd.com/auth/me                       # unauth: "not logged in"
+curl -i https://clipxd.com/u/smoke/clip/clp_bc5859a9    # example clip
+```
+
+### Tail logs
+
+```bash
+sudo -n journalctl -u clipxd-web -n 50 --no-pager
+sudo -n journalctl -u caddy -n 30 --no-pager
+```
+
+### Restart a service
+
+```bash
+sudo -n systemctl restart clipxd-web
+sudo -n systemctl restart caddy
+```
+
+### Edit env vars (auth/secrets)
+
+```bash
+sudo nano /etc/clipxd/clipxd.env
+sudo -n systemctl restart clipxd-web
+```
+
+### SSH into the laptop from the box (for bare-repo pulls)
+
+```bash
+ssh -i ~/.ssh/clipxd_deploy rsx@100.94.163.62
+```
+
+### SSH into the box from your phone
+
+```bash
+# In Termius / Termux / Blink Shell:
+ssh clipxd@100.98.137.90
+```
+
+The `clipxd` user has passwordless sudo for: `systemctl {restart,reload,status,daemon-reload} clipxd-web|caddy`, `journalctl -u clipxd-web|caddy`, `systemctl reboot|poweroff`. Anything else still requires the sudo password.
+
+---
+
+## File map (on the box)
+
+```
+/etc/clipxd/clipxd.env             # env vars: JWT secret, OAuth creds, storage, captions
+/opt/clipxd/
+  clipxd-web                       # the backend binary
+  clipxd                           # the CLI binary
+  venv/                            # Python venv with paddlepaddle + paddleocr
+/var/lib/clipxd/clips/
+  clipxd.db                        # SQLite (users, clips ownership)
+  clp_*/                           # per-clip dir (when storage=local)
+/var/www/clipxd/                   # SPA static files (Vite build output)
+/etc/caddy/Caddyfile               # reverse proxy config
+/etc/systemd/system/clipxd-web.service
+/home/clipxd/
+  .ssh/                            # SSH keys
+  .github-token                    # (planned) PAT for pushing from box
+  clipxd/                          # git working tree (cloned from GitHub)
+  PROJECT.md                       # ← you are here
+```
+
+---
+
+## Your home box (Arch laptop, `100.94.163.62`)
+
+The "Moondream captioner" service used to run on this box over Tailscale. As of [date], we're switching to **Moondream's cloud API** (you pasted the key) — no home server needed. If you want the home server anyway for other VLMs (LLaVA, etc.), the script is at `tools/moondream-server/server.py` and the systemd unit pattern is at `tools/moondream-server/clipxd-caption.service` (TODO).
+
+---
+
+## Quick TODO list (runnable as a script)
+
+```bash
+# Weekly:
+cd /home/clipxd/clipxd && git pull github master && ./deploy/deploy.sh
+journalctl -u clipxd-web -n 30 --no-pager
+# watch disk:
+df -h / /var/lib/clipxd 2>/dev/null
+# watch memory:
+free -h
+```
+
+---
+
+_Last updated by opencode during the 2026-06-30 session. Keep this file current whenever you ship._
