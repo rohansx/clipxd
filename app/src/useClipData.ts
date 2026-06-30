@@ -97,3 +97,4 @@ export function useClip(id: string | null): ClipData {
     };
   }, [id]);
   return data;
+}
