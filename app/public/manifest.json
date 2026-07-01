@@ -1,0 +1,40 @@
+{
+  "name": "clipxd",
+  "short_name": "clipxd",
+  "description": "Record once. Humans watch it. Agents read it. Local-first screen recorder with a structured, MCP-queryable index per clip.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#EFE9F0",
+  "theme_color": "#FF7A59",
+  "categories": ["productivity", "utilities", "developer"],
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Record a clip",
+      "short_name": "Record",
+      "description": "Open the recorder and start capturing",
+      "url": "/?action=record",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Import a Loom / Cap / YouTube URL",
+      "short_name": "Import",
+      "description": "Read an existing recording without recording yourself",
+      "url": "/?action=import",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Ask an agent",
+      "short_name": "Ask",
+      "description": "Query your library over MCP",
+      "url": "/?action=chat",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    }
+  ]
+}

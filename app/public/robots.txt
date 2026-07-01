@@ -1,0 +1,25 @@
+# clipxd robots.txt
+# ------------------
+# The app is a single-page React app.  Every route is served the same
+# `index.html` and the client router decides which view to mount, so we
+# broadly allow crawling — but the URL surface crawlers actually care about
+# is just the marketing surface (the landing page).
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /clip/
+Disallow: /u/
+
+# Modern crawlers honour explicit AI / LLM directives.
+User-agent: GPTBot
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+
+# Sitemap
+Sitemap: https://clipxd.com/sitemap.xml

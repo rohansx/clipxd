@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brand } from "./Brand";
 import { Landing } from "./Landing";
@@ -12,6 +13,8 @@ import { Login } from "./Login";
 import { useClips } from "./useClipData";
 import { useAuth } from "./useAuth";
 import { initialClipId } from "./api";
+import { vMount, usePrefersReducedMotion } from "./motion";
+import { Seo, SEO_VIEWS } from "./seo";
 
 export type View = "landing" | "auth" | "cloud";
 export type CloudView = "library" | "recording" | "import" | "chat" | "clip";
@@ -24,6 +27,7 @@ export interface SeekRequest {
 }
 
 export default function App() {
+  const reduced = usePrefersReducedMotion();
   const deepLink = useMemo(initialClipId, []);
   const [theme, setTheme] = useState<Theme>("light");
   const [view, setView] = useState<View>(deepLink ? "cloud" : "landing");
@@ -37,48 +41,61 @@ export default function App() {
   const auth = useAuth();
   const { clips, reload } = useClips();
 
-  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
-  // Timer handle in a ref so a rapid second toast actually cancels the first (a plain function
-  // property is lost on the re-render that setToast triggers).
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "light" ? "dark" : "light"));
+  }, []);
+
+  // Timer handle in a ref so a rapid second toast actually cancels the first
+  // (a plain function-property handle is lost on the re-render that setToast triggers).
   const toastTimer = useRef<number | undefined>(undefined);
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2400);
   }, []);
 
-  const openClip = (id: string) => {
+  const openClip = useCallback((id: string) => {
     setActiveClipId(id);
     setCloudView("clip");
     setView("cloud");
     setFilter("");
-  };
-  const goCloud = (v: CloudView = "library") => {
-    // When unauthed, route to the explicit auth view (don't flash through Landing → Login).
-    if (auth.authEnabled && !auth.user) {
-      setView("auth");
-      return;
-    }
-    setView("cloud");
-    setCloudView(v);
-  };
+  }, []);
 
-  const goAuth = () => setView("auth");
-  const goLanding = () => setView("landing");
-  const afterCreate = (id: string) => {
-    reload();
-    const username = auth.user?.username;
-    const url = username
-      ? `${location.origin}/u/${username}/clip/${id}`
-      : `${location.origin}/?clip=${id}`;
-    navigator.clipboard.writeText(url).catch(() => {});
-    showToast("Link copied to clipboard");
-    openClip(id);
-  };
+  const goCloud = useCallback(
+    (v: CloudView = "library") => {
+      // When unauthed, route to the explicit auth view (don't flash through Landing → Login).
+      if (auth.authEnabled && !auth.user) {
+        setView("auth");
+        return;
+      }
+      setView("cloud");
+      setCloudView(v);
+    },
+    [auth.authEnabled, auth.user],
+  );
 
-  // Apply the theme on <html> so `html,body{background:var(--env),var(--bg)}` resolves the
-  // theme variables (they're defined on [data-theme]). Without this the body background is empty
-  // and translucent panel washes paint over the browser's default white.
+  const goAuth = useCallback(() => setView("auth"), []);
+  const goLanding = useCallback(() => setView("landing"), []);
+  const goImport = useCallback(
+    () => goCloud("import"),
+    [goCloud],
+  );
+
+  const afterCreate = useCallback(
+    (id: string) => {
+      reload();
+      const username = auth.user?.username;
+      const url = username
+        ? `${location.origin}/u/${username}/clip/${id}`
+        : `${location.origin}/?clip=${id}`;
+      navigator.clipboard.writeText(url).catch(() => {});
+      showToast("Link copied to clipboard");
+      openClip(id);
+    },
+    [auth.user?.username, openClip, reload, showToast],
+  );
+
+  // Apply the theme on <html> so the env gradient + body vars resolve.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
@@ -91,8 +108,7 @@ export default function App() {
     history.replaceState(null, "", u.toString());
   }, [view, cloudView, activeClipId]);
 
-  // On login, reload the (now per-user) library and drop the user straight into the app
-  // (a hosted account shouldn't land on the marketing page). Deep links keep their target.
+  // On login, reload the (now per-user) library and drop the user straight into the app.
   useEffect(() => {
     if (auth.user) {
       reload();
@@ -105,10 +121,6 @@ export default function App() {
   }, [auth.user?.id]);
 
   // Loading / auth gate.
-  // - auth.loading → spinner.
-  // - explicit auth view → Login screen (always reachable, with back-to-landing).
-  // - deep link (someone shared a /u/me/clip/abc URL) → still publicly watchable.
-  // - otherwise → Landing (which has its own Login button for discoverability).
   if (auth.loading) {
     return (
       <div data-theme={theme} className="auth-screen">
@@ -119,6 +131,12 @@ export default function App() {
   if (view === "auth") {
     return (
       <div data-theme={theme}>
+        <Seo
+          title={SEO_VIEWS.auth.title}
+          description={SEO_VIEWS.auth.description}
+          path={SEO_VIEWS.auth.path}
+          noindex
+        />
         <div className="auth-screen">
           <div className="auth-card" style={{ position: "relative" }}>
             <button
@@ -138,71 +156,184 @@ export default function App() {
 
   return (
     <div data-theme={theme}>
-      {view === "landing" ? (
-        <Landing
-          theme={theme}
-          toggleTheme={toggleTheme}
-          onOpenApp={() => goCloud("library")}
-          onLogin={goAuth}
-        />
-      ) : (
-        <div className="cloud">
-          <Sidebar
-            cloudView={cloudView}
-            clipCount={clips?.length ?? 0}
-            onNav={(v) => setCloudView(v)}
-            onBrand={() => setView("landing")}
-            user={auth.user}
-            onLogout={auth.user ? () => auth.logout() : undefined}
-          />
-          <main className="main">
-            <div className="topbar">
-              {cloudView !== "library" && (
-                <button className="btn-ghost" onClick={() => setCloudView("library")} style={{ borderRadius: 0, padding: "6px 12px", fontSize: 13 }}>
-                  ← Library
+      <AnimatePresence mode="wait" initial={false}>
+        {view === "landing" ? (
+          <motion.div
+            key="landing"
+            variants={vMount}
+            initial={reduced ? false : "hidden"}
+            animate="shown"
+            exit={{ opacity: 0, transition: { duration: 0.18 } }}
+          >
+            <Seo
+              title={SEO_VIEWS.landing.title}
+              description={SEO_VIEWS.landing.description}
+              path={SEO_VIEWS.landing.path}
+            />
+            <Landing
+              theme={theme}
+              toggleTheme={toggleTheme}
+              onOpenApp={() => goCloud("library")}
+              onImport={goImport}
+              onLogin={goAuth}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="cloud"
+            variants={vMount}
+            initial={reduced ? false : "hidden"}
+            animate="shown"
+            exit={{ opacity: 0, transition: { duration: 0.18 } }}
+            className="cloud"
+          >
+            <Seo
+              title={cloudView === "clip" ? "Clip" : SEO_VIEWS[cloudView].title}
+              description={
+                cloudView === "clip"
+                  ? SEO_VIEWS.clip.description
+                  : SEO_VIEWS[cloudView].description
+              }
+              path={cloudView === "clip" ? "/clip" : SEO_VIEWS[cloudView].path}
+              noindex={cloudView === "clip" || cloudView === "chat"}
+            />
+            <Sidebar
+              cloudView={cloudView}
+              clipCount={clips?.length ?? 0}
+              onNav={setCloudView}
+              onBrand={goLanding}
+              user={auth.user}
+              onLogout={auth.user ? () => auth.logout() : undefined}
+            />
+            <main className="main">
+              <div className="topbar">
+                {cloudView !== "library" && (
+                  <button
+                    className="topbar-back"
+                    onClick={() => setCloudView("library")}
+                  >
+                    ← Library
+                  </button>
+                )}
+                <SearchBox
+                  cloudView={cloudView}
+                  clipId={activeClipId}
+                  filter={filter}
+                  onFilter={setFilter}
+                  onSeek={(t) => setSeekTo({ t, nonce: Date.now() })}
+                />
+                <div style={{ flex: 1 }} />
+                <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                <button
+                  className="btn btn-pill"
+                  onClick={() => setCloudView("recording")}
+                  style={{ background: "var(--sodium)", color: "var(--on-accent)", border: "none", boxShadow: "var(--pop-sodium)" }}
+                >
+                  <span className="dot" style={{ background: "var(--on-accent)" }} /> Record
                 </button>
-              )}
-              <SearchBox
-                cloudView={cloudView}
-                clipId={activeClipId}
-                filter={filter}
-                onFilter={setFilter}
-                onSeek={(t) => setSeekTo({ t, nonce: Date.now() })}
-              />
-              <div style={{ flex: 1 }} />
-              <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
-              <button className="btn-sodium" onClick={() => setCloudView("recording")} style={{ borderRadius: 0 }}>
-                <span className="dot" style={{ background: "var(--on-accent)" }} /> Record
-              </button>
-            </div>
+              </div>
 
-            {cloudView === "library" && (
-              <Library
+              {/* inner view transitions are handled by each child keying on cloudView */}
+              <ViewBody
+                cloudView={cloudView}
                 clips={clips}
                 filter={filter}
-                onOpen={openClip}
-                onPasteImport={(url) => {
-                  setImportUrl(url);
-                  setCloudView("import");
-                }}
+                openClip={openClip}
+                importUrl={importUrl}
+                setImportUrl={setImportUrl}
+                setCloudView={setCloudView}
+                activeClipId={activeClipId}
+                seekTo={seekTo}
+                showToast={showToast}
+                afterCreate={afterCreate}
               />
-            )}
-            {cloudView === "clip" && (
-              <ClipPage key={activeClipId ?? "none"} id={activeClipId} seekTo={seekTo} showToast={showToast} />
-            )}
-            {cloudView === "recording" && <Recording onClipReady={afterCreate} showToast={showToast} />}
-            {cloudView === "import" && <ImportView initialUrl={importUrl} onDone={afterCreate} showToast={showToast} />}
-            {cloudView === "chat" && <Chat clips={clips} onOpen={openClip} />}
-          </main>
-        </div>
-      )}
+            </main>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {toast && (
-        <div className="toast" role="status" aria-live="polite">
-          {toast}
-        </div>
-      )}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key="toast"
+            className="toast"
+            role="status"
+            aria-live="polite"
+            initial={reduced ? false : { opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0, transition: tSoftSpring }}
+            exit={{ opacity: 0, y: 6, transition: { duration: 0.18 } }}
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+/* Soft toast spring — used in the toast stack. */
+const tSoftSpring = { type: "spring", stiffness: 320, damping: 28, mass: 0.7 } as const;
+
+/** Tiny inner router. Extracted so each route key can mount fresh + animate. */
+function ViewBody(p: {
+  cloudView: CloudView;
+  clips: ReturnType<typeof useClips>["clips"];
+  filter: string;
+  openClip: (id: string) => void;
+  importUrl: string | undefined;
+  setImportUrl: (u: string | undefined) => void;
+  setCloudView: (v: CloudView) => void;
+  activeClipId: string | null;
+  seekTo: SeekRequest | null;
+  showToast: (m: string) => void;
+  afterCreate: (id: string) => void;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const baseProps = {
+    initial: reduced ? false : { opacity: 0, y: 10 },
+    animate: { opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] } },
+    exit: { opacity: 0, y: -6, transition: { duration: 0.18 } },
+  };
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      {p.cloudView === "library" && (
+        <motion.div key="library" {...baseProps}>
+          <Library
+            clips={p.clips}
+            filter={p.filter}
+            onOpen={p.openClip}
+            onPasteImport={(url) => {
+              p.setImportUrl(url);
+              p.setCloudView("import");
+            }}
+          />
+        </motion.div>
+      )}
+      {p.cloudView === "clip" && (
+        <motion.div key={"clip-" + (p.activeClipId ?? "none")} {...baseProps}>
+          <ClipPage id={p.activeClipId} seekTo={p.seekTo} showToast={p.showToast} />
+        </motion.div>
+      )}
+      {p.cloudView === "recording" && (
+        <motion.div key="recording" {...baseProps}>
+          <Recording onClipReady={p.afterCreate} showToast={p.showToast} />
+        </motion.div>
+      )}
+      {p.cloudView === "import" && (
+        <motion.div key="import" {...baseProps}>
+          <ImportView
+            initialUrl={p.importUrl}
+            onDone={p.afterCreate}
+            showToast={p.showToast}
+          />
+        </motion.div>
+      )}
+      {p.cloudView === "chat" && (
+        <motion.div key="chat" {...baseProps}>
+          <Chat clips={p.clips} onOpen={p.openClip} />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -210,14 +341,33 @@ function ThemeToggle({ theme, toggleTheme }: { theme: Theme; toggleTheme: () => 
   const dark = theme === "dark";
   return (
     <button
-      className="theme-toggle"
+      className="theme-pill"
       onClick={toggleTheme}
       title="Light studio ⟷ night studio"
       aria-label={dark ? "Switch to light studio theme" : "Switch to night studio theme"}
       aria-pressed={dark}
     >
-      <span aria-hidden style={{ background: !dark ? "var(--sodium)" : "transparent", color: !dark ? "var(--on-accent)" : "var(--text-3)" }}>W</span>
-      <span aria-hidden style={{ background: dark ? "var(--signal)" : "transparent", color: dark ? "var(--on-accent)" : "var(--text-3)" }}>R</span>
+      <span
+        className={"theme-pill-cell" + (!dark ? " on-sodium" : "")}
+        style={{ color: !dark ? "var(--on-accent)" : "var(--text-3)" }}
+        aria-hidden
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="5.4" fill="currentColor" />
+        </svg>
+      </span>
+      <span
+        className={"theme-pill-cell" + (dark ? " on-signal" : "")}
+        style={{ color: dark ? "var(--on-accent)" : "var(--text-3)" }}
+        aria-hidden
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M21 14.3 A8.4 8.4 0 1 1 11.4 3.4 A6.5 6.5 0 0 0 21 14.3 Z"
+            fill="currentColor"
+          />
+        </svg>
+      </span>
     </button>
   );
 }

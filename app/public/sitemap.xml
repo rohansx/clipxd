@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <!--
+    Public surface. The SPA shares one index.html for every route, so a crawler
+    that only reads the HTML can't distinguish the marketing page from a clip
+    view; the canonical URL is the marketing page. Clip deep-links live at
+    /u/<username>/clip/<id> and are linked to from share-cards, not crawlers.
+
+    Update the <lastmod> when you ship. We hard-code the dates instead of
+    generating at build time so the deployed file is deterministic.
+  -->
+  <url>
+    <loc>https://clipxd.com/</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://clipxd.com/og-image.svg</image:loc>
+      <image:title>clipxd — a screen recording an agent can read</image:title>
+      <image:caption>Local-first screen recorder. Every video ships with a structured, MCP-queryable index.</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://clipxd.com/?action=record</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://clipxd.com/?action=import</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://clipxd.com/?action=chat</loc>
+    <lastmod>2026-07-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>
