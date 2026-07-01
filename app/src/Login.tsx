@@ -96,7 +96,7 @@ export function Login({ onLogin, onSignup }: LoginProps) {
 
         {err && <div className="auth-err">{err}</div>}
 
-        <button className="btn-signal" onClick={submit} disabled={busy} style={{ borderRadius: 0, width: "100%", height: 42 }}>
+        <button className="btn-signal btn-pill" onClick={submit} disabled={busy} style={{ width: "100%", height: 42 }}>
           {busy ? <span className="spin" /> : mode === "signup" ? "Create account" : "Sign in"}
         </button>
 

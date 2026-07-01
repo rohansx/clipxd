@@ -1,5 +1,7 @@
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { importUrl } from "./api";
+import { usePrefersReducedMotion } from "./motion";
 
 interface ImportProps {
   initialUrl?: string;
@@ -25,9 +27,10 @@ const STEP_DEFS = [
 ];
 
 export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
+  const reduced = usePrefersReducedMotion();
   const [url, setUrl] = useState(initialUrl ?? "");
   const [busy, setBusy] = useState(false);
-  const [active, setActive] = useState(-1); // -1 idle; otherwise index of running step
+  const [active, setActive] = useState(-1);
   const [err, setErr] = useState<string | null>(null);
   const autoRan = useRef(false);
 
@@ -43,7 +46,6 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
     if (!u || busy) return;
     setBusy(true);
     setErr(null);
-    // optimistic step animation while the (synchronous) import runs server-side
     setActive(0);
     const timers = [1, 2, 3, 4].map((i, k) => window.setTimeout(() => setActive(i), (k + 1) * 1400));
     try {
@@ -61,7 +63,6 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
     }
   };
 
-  // If the user typed a URL in the Library paste-bar, start the import immediately (once).
   useEffect(() => {
     if (initialUrl && initialUrl.trim() && !autoRan.current) {
       autoRan.current = true;
@@ -89,7 +90,7 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
               autoFocus
             />
           </div>
-          <button className="btn-signal" onClick={run} disabled={busy || !url.trim()} style={{ borderRadius: 0, padding: "0 22px" }}>
+          <button className="btn-signal btn-pill" onClick={run} disabled={busy || !url.trim()} style={{ padding: "0 22px" }}>
             {busy ? <span className="spin" /> : "Read it →"}
           </button>
         </div>
@@ -110,27 +111,38 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
           </div>
         )}
 
-        {(busy || active >= 0) && (
-          <div className="import-steps">
-            <div className="head">
-              <span>reading {url || "source"} →</span>
-              <span style={{ marginLeft: "auto", color: "var(--signal-text)" }}>video stays at source — only the index is built</span>
-            </div>
-            {STEP_DEFS.map((st, i) => {
-              const s = stepState(i);
-              return (
-                <div key={i} className={"step " + s}>
-                  <span className="glyph">{s === "done" ? "✓" : s === "active" ? "●" : i + 1}</span>
-                  <div style={{ flex: 1 }}>
-                    <div className="label">{st.label}</div>
-                    <div className="detail">{st.detail}</div>
-                  </div>
-                  <span className="state">{s === "done" ? "done" : s === "active" ? "reading…" : "queued"}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <AnimatePresence>
+          {(busy || active >= 0) && (
+            <motion.div
+              className="import-steps"
+              initial={reduced ? false : { opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] } }}
+              exit={{ opacity: 0, y: 6, transition: { duration: 0.18 } }}
+            >
+              <div className="head">
+                <span>reading {url || "source"} →</span>
+                <span className="note">video stays at source — only the index is built</span>
+              </div>
+              <div className="body">
+                {STEP_DEFS.map((st, i) => {
+                  const s = stepState(i);
+                  return (
+                    <div key={i} className={"step " + s}>
+                      <span className="glyph">
+                        {s === "done" ? "✓" : s === "active" ? "●" : i + 1}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div className="label">{st.label}</div>
+                        <div className="detail">{st.detail}</div>
+                      </div>
+                      <span className="state">{s === "done" ? "done" : s === "active" ? "reading…" : "queued"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

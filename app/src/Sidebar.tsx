@@ -1,4 +1,4 @@
-import { Brand } from "./Brand";
+import { Logomark } from "./Brand";
 import type { CloudView } from "./App";
 import type { AuthUser } from "./api";
 
@@ -15,36 +15,80 @@ interface NavDef {
   icon: string;
   label: string;
   view: CloudView;
-  count?: number;
+  /** Hex / token for the nav chip background when the row is active. */
+  accent: string;
+  count?: string;
 }
 
 export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }: SidebarProps) {
   const items: NavDef[] = [
-    { icon: "▦", label: "Library", view: "library", count: clipCount },
-    { icon: "●", label: "Recording", view: "recording" },
-    { icon: "↧", label: "Import", view: "import" },
-    { icon: "◈", label: "Ask agent", view: "chat" },
+    { icon: "▦", label: "Library", view: "library", count: clipCount > 0 ? String(clipCount) : "", accent: "var(--grape)" },
+    { icon: "●", label: "Recording", view: "recording", accent: "var(--sodium)" },
+    { icon: "↧", label: "Import", view: "import", accent: "var(--signal)" },
+    { icon: "◈", label: "Ask agent", view: "chat", accent: "var(--signal)" },
+    { icon: "⚙", label: "Settings", view: "library", accent: "var(--text-3)" },
   ];
   // "Library" stays highlighted while viewing a clip (clips live under the library).
-  const isActive = (v: CloudView) => cloudView === v || (v === "library" && cloudView === "clip");
+  const isActive = (v: CloudView) =>
+    cloudView === v || (v === "library" && cloudView === "clip");
 
   return (
     <aside className="sidebar">
-      <div className="side-brand" onClick={onBrand}>
-        <Brand onClick={onBrand} size={26} />
+      <div className="side-bubble" onClick={onBrand}>
+        <span className="logo-glow">
+          <Logomark size={26} />
+        </span>
+        <span className="name">
+          Clip
+          <span
+            style={{
+              display: "inline-flex",
+              background: "var(--signal)",
+              color: "var(--on-accent)",
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "1px 5px 2px",
+              borderRadius: 7,
+              transform: "rotate(-5deg)",
+              boxShadow: "var(--clay-sm)",
+              marginLeft: 3,
+            }}
+          >
+            XD
+          </span>
+        </span>
       </div>
-      <div className="side-head">WORKSPACE · local</div>
-      {items.map((n) => (
-        <button key={n.view} className={"side-item" + (isActive(n.view) ? " active" : "")} onClick={() => onNav(n.view)}>
-          <span className="ico">{n.icon}</span>
-          {n.label}
-          {n.count != null && n.count > 0 && <span className="count">{n.count}</span>}
-        </button>
-      ))}
+
+      <div className="side-workspace">WORKSPACE · local</div>
+
+      {items.map((n) => {
+        const active = isActive(n.view);
+        return (
+          <button
+            key={n.label}
+            className={"side-row" + (active ? " active" : "")}
+            onClick={() => onNav(n.view)}
+            aria-pressed={active}
+          >
+            <span
+              className="chip"
+              style={{
+                background: active ? n.accent : undefined,
+                color: active ? "var(--on-accent)" : undefined,
+              }}
+            >
+              <span className="chip-icon">{n.icon}</span>
+            </span>
+            {n.label}
+            {n.count && <span className="count">{n.count}</span>}
+          </button>
+        );
+      })}
+
       <div className="side-foot">
         <div className="row">
-          <span className="led-on" />
-          clipxd-web · connected
+          <span className="dot signal" style={{ width: 8, height: 8, boxShadow: "0 0 8px var(--signal)" }} />
+          MCP server · connected
         </div>
         <div className="sub">0 px egress · {clipCount} clips indexed</div>
         {user && (

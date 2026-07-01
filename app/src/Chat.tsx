@@ -1,6 +1,8 @@
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { queryClip, searchClip } from "./api";
 import type { ClipSummary } from "./types";
+import { usePrefersReducedMotion } from "./motion";
 
 interface ChatProps {
   clips: ClipSummary[] | null;
@@ -15,6 +17,7 @@ interface Msg {
 }
 
 export function Chat({ clips, onOpen }: ChatProps) {
+  const reduced = usePrefersReducedMotion();
   const [thread, setThread] = useState<Msg[]>([
     {
       who: "agent",
@@ -28,8 +31,8 @@ export function Chat({ clips, onOpen }: ChatProps) {
 
   // keep the newest message in view
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [thread]);
+    endRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "end" });
+  }, [thread, reduced]);
 
   const ask = async () => {
     const question = q.trim();
@@ -40,7 +43,6 @@ export function Chat({ clips, onOpen }: ChatProps) {
     setBusy(true);
 
     try {
-      // 1) rank clips by full-text hit score for the question
       const scored = await Promise.all(
         list.map(async (c) => {
           const hits = await searchClip(c.id, question);
@@ -53,7 +55,6 @@ export function Chat({ clips, onOpen }: ChatProps) {
       if (!ranked.length) {
         reply = { who: "agent", text: "No clip in your library matches that. Try different words, or import/record the relevant clip first." };
       } else {
-        // 2) query the top clip(s) for a grounded answer
         const answers = await Promise.all(
           ranked.map(async (r) => ({ r, a: await queryClip(r.c.id, question) })),
         );
@@ -84,32 +85,40 @@ export function Chat({ clips, onOpen }: ChatProps) {
         </div>
       </div>
       <div className="chat-thread">
-        {thread.map((m, i) => (
-          <div key={i} className={"msg " + m.who}>
-            <div className="bubble" style={{ whiteSpace: "pre-wrap" }}>
-              {m.thinking ? (
-                <span>
-                  <span className="spin" /> {m.text}
-                </span>
-              ) : (
-                m.text
-              )}
-            </div>
-            {m.cites && m.cites.length > 0 && (
-              <div className="cites">
-                <span className="lead">grounded in:</span>
-                {m.cites.map((c) => (
-                  <button key={c.id} className="cite" onClick={() => onOpen(c.id)}>
-                    {c.label}
-                  </button>
-                ))}
-                <span className="lead" style={{ marginLeft: 4 }}>
-                  watched_video: <span style={{ color: "var(--danger)" }}>false</span>
-                </span>
+        <AnimatePresence initial={false}>
+          {thread.map((m, i) => (
+            <motion.div
+              key={i}
+              className={"msg " + m.who}
+              initial={reduced ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
+              exit={{ opacity: 0, transition: { duration: 0.16 } }}
+            >
+              <div className="bubble" style={{ whiteSpace: "pre-wrap" }}>
+                {m.thinking ? (
+                  <span>
+                    <span className="spin" /> {m.text}
+                  </span>
+                ) : (
+                  m.text
+                )}
               </div>
-            )}
-          </div>
-        ))}
+              {m.cites && m.cites.length > 0 && (
+                <div className="cites">
+                  <span className="lead">grounded in:</span>
+                  {m.cites.map((c) => (
+                    <button key={c.id} className="cite" onClick={() => onOpen(c.id)}>
+                      {c.label}
+                    </button>
+                  ))}
+                  <span className="lead" style={{ marginLeft: 4 }}>
+                    watched_video: <span style={{ color: "var(--danger)" }}>false</span>
+                  </span>
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
         <div ref={endRef} />
       </div>
       <div className="chat-input">
@@ -121,7 +130,7 @@ export function Chat({ clips, onOpen }: ChatProps) {
             onKeyDown={(e) => e.key === "Enter" && ask()}
             placeholder="Ask across every clip in your library…"
           />
-          <button className="btn-signal" onClick={ask} disabled={busy} style={{ borderRadius: 0, padding: "0 22px" }}>
+          <button className="btn-signal btn-pill" onClick={ask} disabled={busy} style={{ padding: "0 22px" }}>
             {busy ? <span className="spin" /> : "Ask"}
           </button>
         </div>

@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { motion } from "framer-motion";
+import { memo, useState } from "react";
 import { thumbUrl } from "./api";
 import { fmt, type ClipSummary, type ClipSource } from "./types";
+import { vMount, vStagger, usePrefersReducedMotion } from "./motion";
 
 interface LibraryProps {
   clips: ClipSummary[] | null;
@@ -10,9 +12,9 @@ interface LibraryProps {
 }
 
 const SOURCE_TINT: Record<ClipSource, string> = {
-  browser: "#42427E",
-  screen: "#1E6360",
-  import: "#6E3A4E",
+  browser: "linear-gradient(135deg,#5FD3B2,#2E8C8A)",
+  screen: "linear-gradient(135deg,#FF9E7D,#C9618A)",
+  import: "linear-gradient(135deg,#A99BFF,#6E6FB0)",
 };
 
 function relTime(created: string): string {
@@ -36,10 +38,17 @@ function badges(c: ClipSummary): string[] {
   return b;
 }
 
-function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen: (id: string) => void }) {
+/** A single clip card. Memoised so the grid stays snappy while filters apply or
+ *  unrelated clips are hovered. */
+const ClipCard = memo(function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen: (id: string) => void }) {
   const [thumbOk, setThumbOk] = useState(true);
   return (
-    <button className="clip-card lift" onClick={() => onOpen(c.id)}>
+    <motion.button
+      className="clip-card lift"
+      onClick={() => onOpen(c.id)}
+      whileHover={{ y: -4 }}
+      transition={{ type: "spring", stiffness: 320, damping: 26 }}
+    >
       <div className="clip-thumb" style={{ background: SOURCE_TINT[c.source] ?? "#241f2b" }}>
         {thumbOk && <img src={thumbUrl(c.id)} alt="" onError={() => setThumbOk(false)} loading="lazy" />}
         <div className="play">▶</div>
@@ -70,11 +79,12 @@ function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen: (id: string) => void 
           ))}
         </div>
       </div>
-    </button>
+    </motion.button>
   );
-}
+});
 
 export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) {
+  const reduced = usePrefersReducedMotion();
   const [src, setSrc] = useState<"all" | ClipSource>("all");
   const [pasteUrl, setPasteUrl] = useState("");
   const filters: ("all" | ClipSource)[] = ["all", "browser", "screen", "import"];
@@ -94,14 +104,20 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
         </div>
         <div className="filters">
           {filters.map((f) => (
-            <button type="button" key={f} className={"filter" + (src === f ? " on" : "")} aria-pressed={src === f} onClick={() => setSrc(f)}>
+            <button
+              type="button"
+              key={f}
+              className={"filter-pill" + (src === f ? " on" : "")}
+              aria-pressed={src === f}
+              onClick={() => setSrc(f)}
+            >
               {f === "all" ? "All" : f[0].toUpperCase() + f.slice(1)}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="import-bar">
+      <div className="paste-bar">
         <span className="lead">paste link ↓</span>
         <input
           value={pasteUrl}
@@ -109,24 +125,37 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
           placeholder="loom.com/share/… · cap.so/… · youtube.com/… · any video link"
           onKeyDown={(e) => e.key === "Enter" && onPasteImport(pasteUrl.trim() || undefined)}
         />
-        <button className="btn-signal" onClick={() => onPasteImport(pasteUrl.trim() || undefined)} style={{ borderRadius: 0 }}>
+        <button
+          className="btn-signal btn-pill"
+          onClick={() => onPasteImport(pasteUrl.trim() || undefined)}
+        >
           Read it
         </button>
       </div>
 
-      <div className="clip-grid">
-        {clips == null && <div className="empty">loading clips…</div>}
-        {clips != null && shown.length === 0 && (
-          <div className="empty">
-            {clips.length === 0
-              ? "No clips yet — hit Record or Import to make one."
-              : "No clips match that filter."}
-          </div>
-        )}
-        {shown.map((c) => (
-          <ClipCard key={c.id} c={c} onOpen={onOpen} />
-        ))}
-      </div>
+      {clips == null && <div className="empty">loading clips…</div>}
+      {clips != null && shown.length === 0 && (
+        <div className="empty">
+          {clips.length === 0
+            ? "No clips yet — hit Record or Import to make one."
+            : "No clips match that filter."}
+        </div>
+      )}
+      {shown.length > 0 && (
+        <motion.div
+          className="clip-grid"
+          variants={vStagger(0.04)}
+          initial={reduced ? false : "hidden"}
+          animate="shown"
+          key={src + ":" + filter}
+        >
+          {shown.map((c) => (
+            <motion.div key={c.id} variants={vMount}>
+              <ClipCard c={c} onOpen={onOpen} />
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
     </div>
   );
 }

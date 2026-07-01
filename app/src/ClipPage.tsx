@@ -203,7 +203,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             Read
           </button>
         </div>
-        <button className="btn-sodium" onClick={onShare} style={{ borderRadius: 0 }}>
+        <button className="btn-share-pill" onClick={onShare}>
           Share link
         </button>
       </div>
