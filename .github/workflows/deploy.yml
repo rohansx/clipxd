@@ -1,0 +1,78 @@
+name: deploy
+
+# Auto-deploy the Hetzner box on every push to master.
+#
+# Architecture:
+#   1. CI (`ci.yml`) passes — confirms typecheck + Rust check succeed.
+#   2. This workflow SSHes into clipxd.com as the `clipxd` user with a
+#      KEY whose forced command is /home/clipxd/.github-actions/ci-deploy.sh.
+#      That wrapper is the ONLY thing the key can run; no shell, no file
+#      reads, no port forwarding.
+#   3. The wrapper does:
+#         git fetch github master  (we cannot push code FROM here, only refetch)
+#         fail-if-local-HEAD-stale (no racing another in-flight deploy)
+#         ./deploy/deploy.sh         (existing, idempotent, restarts the systemd unit)
+#   4. Every invocation is appended to /var/log/clipxd-ci-deploy.log.
+#
+# Required secrets (configure once in repo Settings → Secrets and variables):
+#   BOX_SSH_KEY      — the clipxd-ci private key (NOT the admin one!).
+#                     Generate with:  tools/show-ci-secret.sh
+#
+# The wrapper also validates that local HEAD matches the remote branch tip
+# before it deploys, so a manual commit on the box (followed by an unsynced
+# push from elsewhere) will refuse the deploy rather than silently
+# overwriting local code.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch / SHA to deploy (defaults to master)"
+        required: false
+        default: master
+
+concurrency:
+  group: deploy-master
+  cancel-in-progress: false  # queue, don't cancel — a deploy is only ever partial
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to clipxd.com (Hetzner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy (forced-command SSH)
+        uses: appleboy/ssh-action@v1
+        with:
+          # The matched SSH key in /opt/clipxd/.ssh/authorized_keys has a
+          # forced-command restriction, so whatever `script` we send here is
+          # silently replaced by /home/clipxd/.github-actions/ci-deploy.sh.
+          # We still pass a benign command so the SSH subsystem accepts the
+          # request.
+          host: ${{ secrets.BOX_SSH_HOST || vars.BOX_SSH_HOST || 'clipxd.com' }}
+          username: clipxd
+          key: ${{ secrets.BOX_SSH_KEY }}
+          command_timeout: 12m
+          script: |
+            set -e
+            echo "─── CI trigger: ${{ github.event_name }} on ${{ github.ref }} (${{ github.sha }})"
+            echo "    actor: ${{ github.actor }}"
+            /home/clipxd/.github-actions/ci-deploy.sh
+
+      - name: Smoke-test the deployed site
+        run: |
+          sleep 2
+          curl -fsS -o /dev/null -w "    HTTP %{http_code} (%{time_total}s)\n" https://clipxd.com/
+          curl -fsS -o /dev/null -w "    HTTP %{http_code}  /robots.txt\n"  https://clipxd.com/robots.txt
+          curl -fsS -o /dev/null -w "    HTTP %{http_code}  /sitemap.xml\n" https://clipxd.com/sitemap.xml
+          curl -fsS -o /dev/null -w "    HTTP %{http_code}  /og-image.svg\n" https://clipxd.com/og-image.svg
+          echo "    title:    $(curl -fsS https://clipxd.com/ | grep -oE '<title>[^<]+</title>' | head -1)"

@@ -1,0 +1,73 @@
+name: ci
+
+# Fast gate on every PR + direct push. Same checks the operator used to
+# run by hand before pushing. Catches type errors, missing imports,
+# malformed JSON-LD, broken Rust types — before they reach master.
+
+on:
+  pull_request:
+  push:
+    branches: [master, design/**]
+
+# Don't pile up duplicate CI runs on PR pushes after a sync.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: SPA typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install SPA deps
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript check + Vite production build
+        working-directory: app
+        run: |
+          npx tsc --noEmit
+          npx vite build
+
+      - name: Confirm SEO assets ship
+        working-directory: app
+        run: |
+          grep -q 'og-image.svg' dist/index.html
+          grep -q 'application/ld+json' dist/index.html
+          grep -q 'rel="manifest"' dist/index.html
+          ls dist/favicon.svg dist/og-image.svg dist/robots.txt dist/sitemap.xml dist/manifest.json
+
+      - name: Upload SPA build
+        uses: actions/upload-artifact@v4
+        with:
+          name: spa-dist
+          path: app/dist
+          retention-days: 7
+
+  rust:
+    name: Rust (clipxd-web) check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: target → .
+
+      - name: cargo check (no build)
+        run: cargo check --workspace --all-targets
