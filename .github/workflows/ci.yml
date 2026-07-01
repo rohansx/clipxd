@@ -63,6 +63,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out the veyo path-dep repo as a sibling
+        # The workspace root Cargo.toml has path deps on ../veyo/crates/* (the
+        # public salience-codec + enrich crates). Cargo loads EVERY workspace
+        # member's manifest to build the graph — including recorder/import,
+        # which reference veyo — so ../veyo must exist even to `cargo check` a
+        # single crate. Clone the public repo next to this checkout.
+        run: git clone --depth 1 https://github.com/rohansx/veyo.git ../veyo
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -70,9 +78,7 @@ jobs:
           workspaces: target → .
 
       - name: cargo check (no build)
-        # CI mirrors the production build exactly: only the crates the box
-        # actually ships (`deploy.sh` does cargo build for clipxd-web +
-        # clipxd-cli). The wider workspace includes recorder/import which
-        # depend on ../veyo/ path-deps that only exist on the dev box.
-        run: |
-          cargo check -p clipxd-web -p clipxd-cli -p clipxd-mcp -p clipxd-index
+        # veyo is now present, so check the whole workspace — this covers the
+        # recorder/import enrich + clean_index write paths, not just the shipped
+        # binaries.
+        run: cargo check --workspace --all-targets

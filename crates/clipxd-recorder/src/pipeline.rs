@@ -115,6 +115,7 @@ pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events:
     };
     let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() });
 
+    clipxd_index::clean_index(&mut index); // dedup noisy streams + build the search corpus
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
     Ok(index)
@@ -155,6 +156,7 @@ pub fn record_from_capture(cap: &dyn LiveCapture, id: &str, title: &str, out_dir
     };
     let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps, ..Default::default() });
 
+    clipxd_index::clean_index(&mut index); // dedup noisy streams + build the search corpus
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
 

@@ -1,4 +1,4 @@
-//! The clip-index schema (`clipxd_version = "1"`).
+//! The clip-index schema (`clipxd_version = "2"`).
 //!
 //! A clip resolves, from one URL, to this object. It is a **time-indexed bundle of
 //! streams**: transcript, visual timeline, on-screen text, event track — plus a derived
@@ -7,8 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Wire schema version. Bump only on a breaking change to [`Index`].
-pub const CLIPXD_SCHEMA_VERSION: &str = "1";
+/// Wire schema version. `"2"` adds the additive [`SearchCorpus`] (`search`) field and the
+/// post-enrichment [`clean`](crate::clean) pass; every `"1"` field keeps its shape.
+pub const CLIPXD_SCHEMA_VERSION: &str = "2";
 
 /// Which backend produced a clip. The agent surface is identical across all three;
 /// only which streams are populated differs (import has an empty [`Index::event_track`]).
@@ -44,6 +45,29 @@ pub struct Index {
     pub event_track: Vec<Event>,
     pub summary: Summary,
     pub redaction: Redaction,
+    /// v2: consolidated, lowercase, deduped text corpus for agent retrieval.
+    /// Always present post-clean_index. Old consumers (who never read
+    /// `search`) ignore it via serde's default behaviour. None of the v1
+    /// fields change shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<SearchCorpus>,
+}
+
+/// A single string per kind — easy to grep, easy to embed, easy to score
+/// against.  An agent that gets this blob can answer retrieval-style
+/// questions without parsing the structured tree.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SearchCorpus {
+    /// Full transcript text (no timestamps — just the running text).
+    #[serde(default)]
+    pub transcript: String,
+    /// All OCR text spans, joined with a single space, deduped of
+    /// single-frame noise.
+    #[serde(default)]
+    pub screen_text: String,
+    /// Event labels — "click at (23%, 50%)", "press 'a'", "GET /foo" …
+    #[serde(default)]
+    pub events: String,
 }
 
 impl Index {
@@ -61,6 +85,7 @@ impl Index {
             event_track: Vec::new(),
             summary: Summary::default(),
             redaction: Redaction::default(),
+            search: None,
         }
     }
 }
@@ -234,7 +259,7 @@ mod tests {
         let json = serde_json::to_string(&idx).unwrap();
         assert!(json.contains("\"source\":\"import\""), "{json}");
         assert!(json.contains("\"status\":\"complete\""), "{json}");
-        assert!(json.contains("\"clipxd_version\":\"1\""), "{json}");
+        assert!(json.contains("\"clipxd_version\":\"2\""), "{json}");
     }
 
     #[test]
