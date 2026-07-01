@@ -4,6 +4,7 @@ import { queryClip, renderClip, downloadBlob, shareLink, apiBase, reEnrichClip }
 import { fmt, type QueryAnswer, type Index } from "./types";
 import { editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
 import { Seo } from "./seo";
+import { getLastClip, onLastClipChange, type LastClip } from "./lastClip";
 
 /** The clip's phase-2 enrich produced no semantic annotations. The cap/OCR/transcriber
  *  was offline at recording time — surface a re-enrich CTA instead of looking "done". */
@@ -165,6 +166,13 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
 
+  // Track "is this the clip you just made?" so the indexing banner can show
+  // alongside the small titlebar pill.  Both signals come from the same
+  // localStorage key, so a hard refresh keeps both in sync.
+  const [lastClip, setLastClip] = useState<LastClip | null>(getLastClip);
+  useEffect(() => onLastClipChange(setLastClip), []);
+  const justRecorded = !!lastClip && lastClip.id === id && index.status === "enriching";
+
   return (
     <div className="clip-page">
       {index && (
@@ -187,6 +195,15 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             publisher: { "@type": "Organization", name: "clipxd", url: "https://clipxd.com/" },
           }}
         />
+      )}
+      {justRecorded && (
+        <div className="clip-indexing-banner" role="status" aria-live="polite">
+          <span className="spin" />
+          <div>
+            <b>Indexing this clip…</b>
+            <span>building transcript, OCR, captions, and event track — this updates live, no need to refresh.</span>
+          </div>
+        </div>
       )}
       <div className="clip-titlebar">
         <h1>{index.metadata.title || id}</h1>

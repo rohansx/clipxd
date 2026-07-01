@@ -1191,6 +1191,85 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 .cam-bubble video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
 
 /* ------------------------------------------------------------------------
+   "Link ready" card — the visible outcome of a successful recording.
+   Sticks to the top of the Recording view so the user sees the URL the
+   instant they stop. Replaces the previously invisible 3 s toast.
+   ------------------------------------------------------------------------ */
+.link-ready{
+  margin-top:14px;border:1px solid color-mix(in oklab,var(--signal) 40%,var(--border));
+  background:var(--signal-wash);
+  border-radius:var(--r);box-shadow:var(--pop-signal);
+  padding:14px 16px;display:flex;flex-direction:column;gap:10px;
+}
+.link-ready-head{display:flex;align-items:center;gap:8px}
+.link-ready-head b{font-size:13.5px;color:var(--text);font-weight:600}
+.link-ready-head .dot{margin-right:4px;animation:recPulse 2s var(--ease-clip) infinite}
+.link-ready-x{
+  margin-left:auto;background:transparent;border:1px solid var(--border);
+  color:var(--text-3);width:24px;height:24px;border-radius:50%;cursor:pointer;
+  font-size:12px;line-height:1;display:grid;place-items:center;
+  font-family:inherit;
+}
+.link-ready-x:hover{color:var(--text);border-color:var(--border-2)}
+.link-ready-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.link-ready-hint{
+  font-family:var(--font-mono);font-size:11px;color:var(--text-3);
+  margin-left:auto;
+}
+
+/* ------------------------------------------------------------------------
+   "Your latest clip is still being indexed" banner — pinned to the top
+   of the Library so the user knows the indexing is happening even after a
+   refresh. Reads its source-of-truth from localStorage so it survives
+   hard reloads and cross-tab navigation.
+   ------------------------------------------------------------------------ */
+.last-clip-banner{
+  margin:14px 0 6px;
+  display:flex;align-items:center;gap:14px;
+  background:var(--sodium-wash);border:1px solid color-mix(in oklab,var(--sodium) 35%,transparent);
+  border-radius:var(--r);box-shadow:var(--clay-sm);
+  padding:12px 14px;
+}
+.last-clip-banner .last-clip-icon{
+  width:34px;height:34px;border-radius:12px;background:var(--panel);
+  display:grid;place-items:center;color:var(--sodium-text);
+  box-shadow:var(--clay-sm);flex:none;
+}
+.last-clip-banner.indexing{
+  background:var(--sodium-wash);
+  border-color:color-mix(in oklab,var(--sodium) 45%,transparent);
+}
+.last-clip-body{min-width:0;flex:1}
+.last-clip-title{
+  font-size:13.5px;font-weight:600;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.last-clip-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin-top:2px}
+/* ------------------------------------------------------------------------
+   "Indexing this clip…" banner — pinned to the top of the ClipPage when
+   the clip on screen is the one the user just recorded AND it's still
+   enriching.  Mirrors the Library banner so the user sees the same status
+   wherever they navigate.
+   ------------------------------------------------------------------------ */
+.clip-indexing-banner{
+  margin:0 26px 14px;display:flex;align-items:center;gap:14px;
+  background:var(--sodium-wash);border:1px solid color-mix(in oklab,var(--sodium) 40%,transparent);
+  border-radius:var(--r);box-shadow:var(--clay-sm);padding:12px 16px;
+}
+.clip-indexing-banner .spin{color:var(--sodium-text);flex:none}
+.clip-indexing-banner b{display:block;color:var(--text);font-weight:600;font-size:13.5px}
+.clip-indexing-banner span{display:block;color:var(--text-2);font-size:12.5px;margin-top:2px}
+@media (max-width:760px){.clip-indexing-banner{margin:0 12px 12px}}
+
+.last-clip-actions{display:flex;align-items:center;gap:8px;flex:none}
+.last-clip-x{
+  background:transparent;border:1px solid var(--border);color:var(--text-3);
+  width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:12px;
+  line-height:1;display:grid;place-items:center;font-family:inherit;
+}
+.last-clip-x:hover{color:var(--text);border-color:var(--border-2)}
+
+/* ------------------------------------------------------------------------
    teleprompter overlay (shown on the recording screen)
    ------------------------------------------------------------------------ */
 .prompter{
