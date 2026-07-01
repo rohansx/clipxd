@@ -1,13 +1,16 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useScreenRecorder } from "./useScreenRecorder";
 import { Prompter } from "./Prompter";
-import { apiBase } from "./api";
+import { apiBase, ingest, postCursor } from "./api";
 import { usePrefersReducedMotion } from "./motion";
+import { recordLastClip, shareUrlFor, clearLastClip, getLastClip, onLastClipChange } from "./lastClip";
 
 interface RecordingProps {
   onClipReady: (id: string) => void;
   showToast: (m: string) => void;
+  /** SPA navigation when the user picks "Open clip →" from the link card. */
+  onOpenClip: (id: string) => void;
 }
 
 const MIC_BARS = Array.from({ length: 56 }, (_, i) => ({
@@ -22,16 +25,40 @@ const HINTS = [
   { icon: "◈", label: "agent-queryable", detail: "ask the clip the moment it finishes" },
 ];
 
-export function Recording({ onClipReady, showToast }: RecordingProps) {
+// Single source of truth for share-link + fallback ingest path. The recorder
+// hook calls this from its onstop handler so the UI gets the same "ready" event
+// regardless of whether the stage-session succeeded or fell back to /ingest.
+async function commitAndCopy(id: string, username: string | null): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(shareUrlFor(id, username));
+  } catch {
+    /* the link card below still shows the URL — user can copy it manually */
+  }
+  recordLastClip(id, username);
+}
+
+export function Recording({ onClipReady, showToast, onOpenClip }: RecordingProps) {
   const reduced = usePrefersReducedMotion();
   const base = apiBase();
-  const { state, start, stop } = useScreenRecorder(base, (id) => {
-    onClipReady(id);
-  });
   const [camera, setCamera] = useState(false);
   const [showPrompter, setShowPrompter] = useState(false);
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
   const [secs, setSecs] = useState(0);
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+
+  // The recorder callback is wired through state — the link card belongs to
+  // THIS component, so we record it here and let App.tsx still receive the
+  // id for routing. This avoids a useScreenRecorder re-render storm.
+  const handleReady = useCallback(
+    (id: string) => {
+      const username = localStorage.getItem("clipxd:username");
+      commitAndCopy(id, username);
+      setCopied("copied");
+      onClipReady(id);
+    },
+    [onClipReady],
+  );
+  const { state, start, stop } = useScreenRecorder(base, handleReady);
 
   // camera preview stream
   useEffect(() => {
@@ -75,6 +102,29 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
   const recording = state === "recording";
   const processing = state === "processing";
 
+  // The "just made a clip" card. Survives across view switches via localStorage.
+  const [lastClip, setLastClipState] = useState(getLastClip);
+  useEffect(() => onLastClipChange(setLastClipState), []);
+
+  // When the user starts recording again, retire the link card so it doesn't
+  // race a brand-new recording-id landing on top of it.
+  const retire = () => {
+    clearLastClip();
+    setCopied("idle");
+  };
+
+  const copyAgain = async () => {
+    if (!lastClip) return;
+    try {
+      await navigator.clipboard.writeText(lastClip.url);
+      setCopied("copied");
+      window.setTimeout(() => setCopied("idle"), 1400);
+    } catch {
+      setCopied("failed");
+      window.setTimeout(() => setCopied("idle"), 1800);
+    }
+  };
+
   return (
     <div className="recording">
       <div className="rec-left">
@@ -86,6 +136,62 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
           <span className="rec-clock">{recording ? clock : "00:00"}</span>
           <span className="rec-hint">screen · 1080p · auto-zoom on{camera ? " · camera" : ""}</span>
         </div>
+
+        {/* The link-ready card. Sticky-top within the page so it's the first thing
+            the user sees after they stop. Auto-fades after 12 s, or on Record Again. */}
+        <AnimatePresence>
+          {lastClip && !recording && !processing && (
+            <motion.div
+              key="linkReady"
+              className="link-ready"
+              initial={reduced ? false : { opacity: 0, y: -12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 320, damping: 28 } }}
+              exit={{ opacity: 0, y: -8, transition: { duration: 0.18 } }}
+            >
+              <div className="link-ready-head">
+                <span className="dot signal" style={{ width: 8, height: 8, boxShadow: "0 0 8px var(--signal)" }} />
+                <b>Recording ready · link copied</b>
+                <button
+                  type="button"
+                  className="link-ready-x"
+                  onClick={() => retire()}
+                  aria-label="Dismiss link card"
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                className="input mono"
+                readOnly
+                value={lastClip.url}
+                onFocus={(e) => e.currentTarget.select()}
+                onClick={(e) => e.currentTarget.select()}
+              />
+              <div className="link-ready-row">
+                <button
+                  type="button"
+                  className="btn-signal btn-pill"
+                  onClick={copyAgain}
+                  style={{ padding: "0 18px" }}
+                >
+                  {copied === "copied" ? "✓ Copied" : copied === "failed" ? "Press ⌘C" : "Copy link"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-pill"
+                  onClick={() => lastClip && onOpenClip(lastClip.id)}
+                  style={{ padding: "0 18px" }}
+                >
+                  Open clip →
+                </button>
+                <span className="link-ready-hint">
+                  Indexing transcript / OCR / captions in the background — refresh any time.
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="stage-shell">
           <div className="vframe mock">
@@ -126,8 +232,8 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
 
         <div className="toolbar">
           {!recording && !processing && (
-            <button className="btn-sodium btn-pill" onClick={() => start(camStream)} style={{ fontSize: 14, padding: "12px 22px" }}>
-              ● Start recording
+            <button className="btn-sodium btn-pill" onClick={() => { retire(); start(camStream); }} style={{ fontSize: 14, padding: "12px 22px" }}>
+              ● {lastClip ? "Record another" : "Start recording"}
             </button>
           )}
           {recording && (
@@ -137,7 +243,7 @@ export function Recording({ onClipReady, showToast }: RecordingProps) {
           )}
           {processing && (
             <button className="btn btn-pill" disabled style={{ fontSize: 14, padding: "12px 22px" }}>
-              <span className="spin" /> Indexing…
+              <span className="spin" /> Uploading…
             </button>
           )}
           <button
@@ -218,3 +324,6 @@ function CameraBubble({ stream }: { stream: MediaStream }) {
     </motion.div>
   );
 }
+
+// Exposed so the deploy script can sanity-check the API surface in dev.
+export const __recordingInternals = { commitAndCopy, ingest, postCursor };

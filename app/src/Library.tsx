@@ -1,8 +1,9 @@
-import { motion } from "framer-motion";
-import { memo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { memo, useEffect, useMemo, useState } from "react";
 import { thumbUrl } from "./api";
 import { fmt, type ClipSummary, type ClipSource } from "./types";
 import { vMount, vStagger, usePrefersReducedMotion } from "./motion";
+import { clearLastClip, getLastClip, onLastClipChange, type LastClip } from "./lastClip";
 
 interface LibraryProps {
   clips: ClipSummary[] | null;
@@ -83,10 +84,96 @@ const ClipCard = memo(function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen:
   );
 });
 
+/** The "your latest recording is still being indexed" banner. Survives
+ *  refresh — it reads its state from localStorage + the live `clips` list
+ *  (which `useClips` polls every 3 s when any clip is enriching). */
+function LastClipBanner({
+  clips,
+  lastClip,
+  onOpen,
+}: {
+  clips: ClipSummary[] | null;
+  lastClip: LastClip | null;
+  onOpen: (id: string) => void;
+}) {
+  // Look up the clip in the live list so we can show indexed-vs-indexing.
+  const live = useMemo(
+    () => (lastClip ? clips?.find((c) => c.id === lastClip.id) ?? null : null),
+    [clips, lastClip],
+  );
+  // We need three flags to decide what's shown:
+  //   - have we recorded in this tab?          (lastClip != null)
+  //   - do we know about the clip on the server yet? (live != null)
+  //   - is it still being enriched?              (live.status === "enriching")
+  // If `live === undefined` after clips loaded, the recording was committed
+  // but the server hasn't listed it yet — show "almost there".
+  const show = !!lastClip;
+  const indexing = show && !!live && live.status === "enriching";
+  const pending = show && clips != null && !live; // committed, not yet listed
+  const done = show && !!live && live.status !== "enriching";
+
+  return (
+    <AnimatePresence>
+      {show && !done && (
+        <motion.div
+          key="lastClip"
+          className={"last-clip-banner" + (indexing ? " indexing" : "")}
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 320, damping: 28 } }}
+          exit={{ opacity: 0, y: -8, transition: { duration: 0.18 } }}
+        >
+          <div className="last-clip-icon">
+            <span className="spin" />
+          </div>
+          <div className="last-clip-body">
+            <div className="last-clip-title">
+              {indexing
+                ? "Your latest clip is still being indexed"
+                : pending
+                ? "Saving your latest clip…"
+                : "Your latest clip is ready"}
+            </div>
+            <div className="last-clip-sub">
+              {indexing
+                ? "Building transcript, OCR, captions, and event track — usually <30 s."
+                : pending
+                ? "It'll show up in the library in a moment."
+                : "Done."}
+            </div>
+          </div>
+          <div className="last-clip-actions">
+            {lastClip && (
+              <button
+                type="button"
+                className="btn btn-pill"
+                onClick={() => lastClip && onOpen(lastClip.id)}
+                style={{ padding: "0 14px" }}
+              >
+                Open
+              </button>
+            )}
+            <button
+              type="button"
+              className="last-clip-x"
+              onClick={() => clearLastClip()}
+              aria-label="Dismiss"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) {
   const reduced = usePrefersReducedMotion();
   const [src, setSrc] = useState<"all" | ClipSource>("all");
   const [pasteUrl, setPasteUrl] = useState("");
+  const [lastClip, setLastClip] = useState(getLastClip);
+  useEffect(() => onLastClipChange(setLastClip), []);
   const filters: ("all" | ClipSource)[] = ["all", "browser", "screen", "import"];
 
   const shown = (clips ?? [])
@@ -116,6 +203,8 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
           ))}
         </div>
       </div>
+
+      <LastClipBanner clips={clips} lastClip={lastClip} onOpen={onOpen} />
 
       <div className="paste-bar">
         <span className="lead">paste link ↓</span>
