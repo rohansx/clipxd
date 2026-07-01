@@ -8,7 +8,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use clipxd_index::{query, Index};
@@ -90,6 +90,9 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/clip/:id/claim", post(clip_claim))
             .route("/clip/:id/re-enrich", post(clip_re_enrich))
             .route("/ingest", post(ingest))
+            .route("/ingest/stage", post(ingest_stage_create))
+            .route("/ingest/stage/:session", put(ingest_stage_append))
+            .route("/ingest/stage/:session/commit", post(ingest_stage_commit))
             .route("/import", post(import_url))
     };
     if has_auth {
@@ -410,6 +413,11 @@ struct Qs {
     q: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct StageQuery {
+    seq: u32,
+}
+
 async fn get_query(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<Qs>) -> Result<Json<serde_json::Value>, WebErr> {
     let idx = load_index(&s, &id).await?;
     let a = query::query_clip(&idx, p.q.as_deref().unwrap_or(""));
@@ -517,6 +525,13 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
     if body.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "empty body".into()));
     }
+    ingest_bytes(s, user, body).await
+}
+
+/// Shared ingest core — called by both `/ingest` (full blob) and `/ingest/stage/:s/commit`
+/// (reassembled chunks). Two-phase: Phase 1 persists + stubs immediately, Phase 2 enriches
+/// in the background.
+async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
     let dir = s.clips_dir.clone();
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let id = format!("clp_{:08x}", stamp as u32);
@@ -580,6 +595,87 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
     });
 
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// `POST /ingest/stage` — begin a streaming upload session.
+/// Returns `{"session": "<id>"}` immediately; the client then PUTs 15-second chunks.
+async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
+    require_user(&s, &headers)?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let session = format!("stg_{:016x}", stamp as u64);
+    let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
+    tokio::fs::create_dir_all(&dir).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "session": session })))
+}
+
+/// `PUT /ingest/stage/:session` — store one MediaRecorder timeslice chunk (?seq=N).
+/// Fire-and-forget from the client; the server writes it to disk instantly.
+async fn ingest_stage_append(
+    State(s): State<AppState>,
+    Path(session): Path<String>,
+    Query(q): Query<StageQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, WebErr> {
+    require_user(&s, &headers)?;
+    if !session.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err((StatusCode::BAD_REQUEST, "invalid session id".into()));
+    }
+    if body.is_empty() {
+        return Ok(StatusCode::OK);
+    }
+    let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
+    if !dir.exists() {
+        return Err((StatusCode::NOT_FOUND, "session not found".into()));
+    }
+    let chunk_path = dir.join(format!("chunk-{:06}.bin", q.seq));
+    tokio::task::spawn_blocking(move || std::fs::write(&chunk_path, &body))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(StatusCode::OK)
+}
+
+/// `POST /ingest/stage/:session/commit` — concatenate all uploaded chunks in order and
+/// create the clip. Chunks are valid WebM segments; concatenation produces a valid WebM.
+async fn ingest_stage_commit(
+    State(s): State<AppState>,
+    Path(session): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    let user = require_user(&s, &headers)?;
+    if !session.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err((StatusCode::BAD_REQUEST, "invalid session id".into()));
+    }
+    let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
+    if !dir.exists() {
+        return Err((StatusCode::NOT_FOUND, "session not found; call POST /ingest/stage first".into()));
+    }
+    let video_bytes = tokio::task::spawn_blocking({
+        let dir = dir.clone();
+        move || -> anyhow::Result<Vec<u8>> {
+            let mut entries: Vec<_> = std::fs::read_dir(&dir)?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("chunk-"))
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            if entries.is_empty() {
+                return Err(anyhow::anyhow!("no chunks in stage session"));
+            }
+            let mut all = Vec::new();
+            for entry in entries {
+                all.extend(std::fs::read(entry.path())?);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            Ok(all)
+        }
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
+
+    ingest_bytes(s, user, Bytes::from(video_bytes)).await
 }
 
 /// `POST /clip/:id/cursor` — the browser recorder captured a cursor track (pointer moves +

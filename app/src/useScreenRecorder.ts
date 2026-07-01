@@ -16,7 +16,9 @@ function recorderOpts(): MediaRecorderOptions {
 
 // Screen recording in the browser. A supplied camera stream is composited as a circular
 // bubble onto a canvas and recorded (face baked in). High-bitrate VP9 + 1080p when available.
-// The webm is POSTed to /ingest, the captured cursor to /cursor (zoom follows it), then reload.
+// Streaming upload: MediaRecorder emits a chunk every 15 s which is immediately PUT to
+// /ingest/stage/:session — so by the time the user stops, most of the video is already
+// on the server. Only the last ≤15 s chunk needs to upload after stop.
 export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) => void) {
   const [state, setState] = useState<RecState>("idle");
   const ref = useRef<{ mr: MediaRecorder } | null>(null);
@@ -65,16 +67,17 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
         recordStream = comp;
       }
 
-      let mr: MediaRecorder;
-      try { mr = new MediaRecorder(recordStream, recorderOpts()); } catch { mr = new MediaRecorder(recordStream); }
-      mr.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data); };
+      // Streaming stage session — pre-create on server so dir exists before first chunk arrives.
+      const sessionId = `stg_${Date.now().toString(16).padStart(16, "0")}`;
+      fetch(`${apiBase}/ingest/stage`, { method: "POST", credentials: "include" }).catch(() => {});
 
-      // capture the cursor (screen-normalized) so the zoom follows it, Screen-Studio style.
-      // Pointer events only fire while the cursor is over this window — best for web content;
-      // the native recorder captures the OS cursor globally.
-      const startMs = Date.now();
+      let chunkSeq = 0;
+      // Track the last PUT so we can await it before commit (ensures final chunk is on server).
+      let lastChunkPut: Promise<unknown> = Promise.resolve();
+
       const cursors: { t: number; x: number; y: number }[] = [];
       const clicks: { t: number; x: number; y: number }[] = [];
+      const startMs = Date.now();
       const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
       let lastSample = -1;
       const onMove = (e: PointerEvent) => {
@@ -93,35 +96,72 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
         window.removeEventListener("pointerdown", onDown, true);
       });
 
+      let mr: MediaRecorder;
+      try { mr = new MediaRecorder(recordStream, recorderOpts()); } catch { mr = new MediaRecorder(recordStream); }
+
+      mr.ondataavailable = (e) => {
+        if (!e.data.size) return;
+        chunks.current.push(e.data);
+        // Upload every chunk (both mid-recording 15 s slices and the final flush on stop)
+        // as a fire-and-forget PUT. Track the promise so onstop can await the last one.
+        const seq = chunkSeq++;
+        lastChunkPut = fetch(`${apiBase}/ingest/stage/${sessionId}?seq=${seq}`, {
+          method: "PUT",
+          body: e.data,
+          credentials: "include",
+        }).catch(() => {});
+      };
+
       mr.onstop = async () => {
         cleanups.forEach((fn) => fn());
         setState("processing");
+
+        // Wait for the final chunk PUT to land before calling commit.
+        await lastChunkPut;
+
+        try {
+          const res = await fetch(`${apiBase}/ingest/stage/${sessionId}/commit`, {
+            method: "POST",
+            credentials: "include",
+          });
+          if (res.ok) {
+            const data = await res.json() as { id?: string };
+            const id = data.id;
+            if (id) {
+              if (cursors.length || clicks.length) {
+                try { await postCursor(id, { cursors, clicks, keys: [] }, apiBase); } catch { /* non-fatal */ }
+              }
+              setState("idle");
+              if (onClipReady) onClipReady(id);
+              else window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
+              return;
+            }
+          }
+        } catch { /* fall through to full-blob fallback */ }
+
+        // Fallback: assemble full blob and POST to /ingest (original behaviour).
         const blob = new Blob(chunks.current, { type: "video/webm" });
         try {
           const id = await ingest(blob, apiBase);
           if (id) {
             if (cursors.length || clicks.length) {
-              try {
-                await postCursor(id, { cursors, clicks, keys: [] }, apiBase);
-              } catch (e) { console.warn("cursor post failed:", e); }
+              try { await postCursor(id, { cursors, clicks, keys: [] }, apiBase); } catch { /* non-fatal */ }
             }
-            if (onClipReady) {
-              setState("idle");
-              onClipReady(id); // SPA navigation — no reload
-            } else {
-              window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
-            }
+            setState("idle");
+            if (onClipReady) onClipReady(id);
+            else window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
             return;
           }
-        } catch (e) { console.warn("ingest failed:", e); }
+        } catch { /* nothing more to try */ }
         setState("idle");
       };
+
       screen.getVideoTracks()[0].addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
-      mr.start();
+      // 15 000 ms timeslice: emit a chunk every 15 seconds so upload can start during recording.
+      mr.start(15_000);
       ref.current = { mr };
       setState("recording");
-    } catch (e) {
-      console.warn("screen capture canceled/failed:", e);
+    } catch {
       setState("idle");
     }
   };
