@@ -87,3 +87,77 @@ intentionally small so the design stays subtle, not chatty.
    and signal (dark); env gradient + env tokens swap.
 6. Enable "Reduce motion" in your OS accessibility settings — animations
    become instant transitions.
+
+---
+
+# Follow-up: SEO + agent-browser sweep
+
+## What this follow-up adds
+
+### Real SEO
+The SPA now actually looks like a meta-rich surface to crawlers.
+
+* `app/index.html` is filled with: `<title>`, `<meta description>`, robots,
+  `og:title/description/url/image/type/width/height/alt/site_name/locale`,
+  `twitter:card/site/creator/title/description/image/alt`, canonical,
+  `apple-mobile-web-app-*`, theme color (light + dark), manifest link,
+  preconnects, plus **two JSON-LD blobs**: a `SoftwareApplication` schema
+  with featureList / offers / license and an `Organization` schema.
+* `public/favicon.svg` — the new clay tablet mark in vector form (scales
+  from 16px favicon to 512px PWA icon).
+* `public/og-image.svg` — 1200x630 SVG social card mirroring the hero.
+* `public/manifest.json` — PWA manifest with three shortcuts.
+* `public/robots.txt` — allows all good crawlers, blocks `/api /clip /u`,
+  exposes sitemap. Explicit allow for GPTBot, ClaudeBot, PerplexityBot,
+  Google-Extended.
+* `public/sitemap.xml` — root + three shortcut URLs, image entry.
+* `src/seo.tsx` — `<Seo>` component on `react-helmet-async` with
+  `prioritizeSeoTags` and a `SEO_VIEWS` table. The Landing/Auth/Cloud views
+  each emit their own per-view meta. The ClipPage owns its own SEO with
+  a dynamically-loaded title and a `VideoObject` JSON-LD blob.
+* `src/main.tsx` — wired `HelmetProvider`.
+
+### UI bugs found with agent-browser
+
+While driving the dev server with [`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser)
+I caught (and fixed) the following:
+
+1. **MCP code block rendered as literal `<span>` text** — the original
+   template string embedded JSX span tags. React printed them as text.
+   Rewrote with proper JSX spans + `pre.code` styling.
+2. **Wipe parse-box labels clipped by the seam** — labels were positioned
+   at `top:-9px; left:-1px` (just outside the box), so when the box
+   straddled the seam and got clipped, the label went with it. Moved them
+   INSIDE the box at `top:6px; left:8px` so they always stay visible.
+3. **Auth card phantom second card** — `Login.tsx` was rendering its own
+   `.auth-screen > .auth-card` wrapper, nested inside the one in
+   `App.tsx`. The page looked like two cards stacked. Split: the shell
+   belongs to App (where the back button lives); Login is just the form.
+4. **Auth card overflowed the viewport** — reduced internal padding and
+   switched the grid from `place-items: center` to `align-content: center;
+   justify-items: center` so the centered card never ends up above the
+   fold.
+5. **"Paste a Loom instead" was a no-op** — wired it to navigate to the
+   import view (the obvious behaviour). "Read the docs" now opens the
+   GitHub repo in a new tab.
+6. **Wipe seam was too thin to find** — widened to 3px with a stronger
+   glass glow; the knob now has explicit z-index so it always sits above
+   the read overlay.
+
+### Agent-browser wiring
+
+The CLI is now a dev dep so the team (or future agents) can spin up a
+live browser against the dev server for UI audits:
+
+    npx agent-browser install        # one-time, downloads Chrome
+    npx agent-browser open http://localhost:5174/
+    npx agent-browser snapshot -i    # accessibility tree with @refs
+    npx agent-browser screenshot /tmp/x.png
+    npx agent-browser set viewport 1440 900
+    npx agent-browser diff screenshot --baseline before.png
+
+### Other small cleanups
+
+* `Brand.tsx` now accepts `withWord` and uses **per-size SVG gradient
+  IDs** so multiple Brand instances on one page don't collide.
+* The `Wordmark` export is gone (folded into Brand with `withWord`).
