@@ -67,7 +67,8 @@ rsync_to() {
 echo "==> 1/4 build the SPA"
 if [ ! -d "$ROOT/app/node_modules" ]; then
   echo "    app/node_modules missing — running npm ci (this is a fresh clone?)"
-  ( cd "$ROOT/app" && npm ci --no-audit --no-fund --prefer-offline )
+  ( cd "$ROOT/app" && rm -rf dist && npm ci --no-audit --no-fund --prefer-offline )
+  chown -R "$(id -un)":"$(id -gn)" "$ROOT/app/dist" "$ROOT/app/node_modules" 2>/dev/null || true
 fi
 ( cd "$ROOT/app" && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build )
 

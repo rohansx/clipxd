@@ -1546,47 +1546,750 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// A minimal but real share page: the video + the agent ask box + a scan-to-open QR, all
-/// behind the same URL.
+/// A standalone public share page (no auth required).  Server-rendered so the
+/// viewer's first paint shows the video + summary chrome even before the JS
+/// bundle loads.  Designed to match the SPA's puffy-clay system so a shared
+/// link feels like the same app.
+///
+/// Sections, top to bottom:
+///   1. floating glass top bar (brand + share menu)
+///   2. hero (title, meta pills, 16:9 video card with cinema gradient as poster)
+///   3. two-column body: main (chapters, key moments, events, transcript) +
+///      sidebar (ask-an-agent, share, QR)
+///   4. small footer
 fn share_html(id: &str, idx: &Index, url: &str) -> String {
     let title = html_escape(&idx.metadata.title);
     let qr = qr_svg(url);
+    let og_desc = format!(
+        "Watch \"{}\" on clipxd. {} on-screen text spans, {} event(s). Indexed and agent-queryable.",
+        title, idx.on_screen_text.len(), idx.event_track.len()
+    );
+    let dur = idx.metadata.duration;
+
+    let main = share_main(id, idx);
+    let aside = share_aside(id, idx, url, &qr);
+
     format!(
-        r##"<!doctype html><meta charset=utf-8><title>{title} — clipxd</title>
-<body style="font:15px system-ui;background:#0a0d12;color:#e6edf3;margin:0;padding:32px;max-width:920px;margin:auto">
-  <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-    <div style="flex:1;min-width:300px">
-      <h2>{title}</h2>
-      <video src="/clip/{id}/video" controls style="width:100%;border-radius:10px;background:#000"></video>
-      <p style="color:#8b97a7">{n_ev} events · {n_ost} on-screen text · agent-queryable ·
-         <a href="/clip/{id}/index.json" style="color:#58a6ff">index.json</a></p>
+        r##"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title} — clipxd</title>
+  <meta name="description" content="{og_desc}" />
+  <link rel="canonical" href="{url}" />
+  <meta property="og:type" content="video.other" />
+  <meta property="og:title" content="{title}" />
+  <meta property="og:description" content="{og_desc}" />
+  <meta property="og:url" content="{url}" />
+  <meta property="og:image" content="{url}/frames/00001.png" />
+  <meta name="twitter:card" content="player" />
+  <meta name="twitter:title" content="{title}" />
+  <meta name="twitter:description" content="{og_desc}" />
+  <meta name="twitter:player" content="{url}/video" />
+  <meta name="twitter:player:width" content="1920" />
+  <meta name="twitter:player:height" content="1080" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet" />
+  <style>{css}</style>
+</head>
+<body>
+  {topbar}
+  <main class="hero">
+    <h1 class="title">{title}</h1>
+    <div class="meta-row">
+      <span class="pill">{src_dot} Screen recording</span>
+      <span class="pill sodium">{dur_lbl}</span>
+      <span class="pill status-pill">{status}</span>
+      <a class="pill ghost" href="/clip/{id}/index.json" target="_blank">index.json</a>
     </div>
-    <div style="text-align:center;background:#fff;border-radius:12px;padding:12px 12px 8px;width:174px">
-      <div style="width:150px;height:150px">{qr}</div>
-      <div style="color:#0a0d12;font-size:12px;margin-top:4px">Scan to open on your phone</div>
+    <div class="player">
+      <video src="/clip/{id}/video" controls poster="{url}/frames/00001.png" preload="metadata" playsinline></video>
     </div>
-  </div>
-  <div style="display:flex;gap:8px;margin:14px 0">
-    <input id=q value="what error showed up and what was the user doing right before it"
-      style="flex:1;background:#161c27;border:1px solid #232b38;color:#e6edf3;padding:10px;border-radius:8px">
-    <button onclick=ask() style="background:#1f6feb;color:#fff;border:0;padding:0 16px;border-radius:8px">Ask</button>
-  </div>
-  <div id=a style="background:#11161f;border:1px solid #232b38;border-radius:10px;padding:14px"></div>
-  <script>
-    async function ask() {{
-      const q = document.getElementById('q').value;
-      const r = await fetch(`/clip/{id}/query?q=${{encodeURIComponent(q)}}`);
-      const j = await r.json();
-      document.getElementById('a').innerHTML = j.text +
-        (j.citations.length? `<div style="margin-top:8px;color:#58a6ff">cited: ${{j.citations.map(c=>c.toFixed(1)+'s').join(', ')}}</div>`:'');
-    }}
-    ask();
-  </script>
-</body>"##,
-        n_ev = idx.event_track.len(),
-        n_ost = idx.on_screen_text.len(),
+  </main>
+
+  <section class="body-grid">
+    <div class="body-main">
+      {main}
+    </div>
+    <aside class="body-aside">
+      {aside}
+    </aside>
+  </section>
+
+  <footer class="foot">
+    <span class="foot-brand">Clip<span class="foot-xd">XD</span></span>
+    <span>· open-core · Apache-2.0</span>
+    <span>· <a href="https://github.com/rohansx/clipxd">github</a></span>
+    <span>· <a href="https://clipxd.com">clipxd.com</a></span>
+  </footer>
+
+  <script>{js}</script>
+</body>
+</html>"##,
+        css       = SHARE_CSS,
+        js        = SHARE_JS,
+        topbar    = share_topbar(&url),
+        src_dot   = r#"<span class="dot sodium"></span>"#,
+        dur_lbl   = fmt_duration(dur),
+        status    = share_status_pill(&idx.status),
+        main      = main,
+        aside     = aside,
+        url       = url,
+        id        = id,
+        title     = title,
     )
 }
+
+/// One-line duration like "0:33" / "1:02:14".  Used in the hero meta pill.
+fn fmt_duration(d: f64) -> String {
+    if !d.is_finite() || d < 0.0 { return "—".into(); }
+    let total = d as u64;
+    let (h, rem) = (total / 3600, total % 3600);
+    let (m, s) = (rem / 60, rem % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+/// "indexed" / "still indexing" / "partial" / "no index".  Visual tone follows
+/// the SPA: signal for indexed, sodium for indexing/partial, danger for failures.
+fn share_status_pill(s: &clipxd_index::Status) -> &'static str {
+    use clipxd_index::Status::*;
+    match s {
+        Complete    => r#"<span class="pill signal">indexed</span>"#,
+        Enriching   => r#"<span class="pill sodium">indexing…</span>"#,
+        Partial     => r#"<span class="pill sodium">partial — captions empty</span>"#,
+    }
+}
+
+/// ---------------- top bar ----------------
+fn share_topbar(url: &str) -> String {
+    format!(
+        r##"<header class="topbar">
+  <a class="topbar-brand" href="https://clipxd.com">
+    <svg class="topbar-mark" viewBox="0 0 40 40" aria-hidden="true">
+      <defs>
+        <linearGradient id="lb-side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#19D7A6"/><stop offset="1" stop-color="#0B7E5F"/></linearGradient>
+        <linearGradient id="lb-face" x1="0.2" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.55" stop-color="#F6EEFA"/><stop offset="1" stop-color="#E4D6F0"/></linearGradient>
+        <linearGradient id="lb-play" x1="0.1" y1="0.05" x2="0.85" y2="0.95"><stop offset="0" stop-color="#FFB48F"/><stop offset="0.45" stop-color="#FF7A59"/><stop offset="1" stop-color="#EF5A39"/></linearGradient>
+      </defs>
+      <rect x="5" y="8.5" width="30" height="28" rx="11" fill="url(#lb-side)" />
+      <rect x="5" y="4.5" width="30" height="29" rx="11" fill="url(#lb-face)" />
+      <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="url(#lb-play)" />
+    </svg>
+    <span class="topbar-name">Clip<span class="topbar-xd">XD</span></span>
+  </a>
+  <nav class="topbar-nav">
+    <span class="pill signal">agent-queryable</span>
+    <a class="btn-share-link" href="#" data-copy="{url}">Copy link</a>
+  </nav>
+</header>"##,
+        url = url,
+    )
+}
+
+/// ---------------- main column ----------------
+fn share_main(id: &str, idx: &Index) -> String {
+    let mut s = String::new();
+
+    // Chapters — only show if we have ≥ 2 of them (otherwise it's noise).
+    if idx.summary.chapters.len() >= 2 {
+        let mut h = String::from(r#"<section class="card chapters"><h3>Chapters</h3><ol class="chapters-list">"#);
+        for ch in &idx.summary.chapters {
+            h.push_str(&format!(
+                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
+                ch.start, fmt_duration(ch.start), html_escape(&ch.title),
+            ));
+        }
+        h.push_str("</ol></section>");
+        s.push_str(&h);
+    }
+
+    // Key moments — visual_timeline, ordered by t.  Skip if empty.
+    if !idx.visual_timeline.is_empty() {
+        let mut h = String::from(r#"<section class="card moments"><h3>Key moments</h3><ul class="moments-list">"#);
+        for m in &idx.visual_timeline {
+            let cap = html_escape(&m.caption);
+            // Trim very long captions to keep the surface tidy.
+            let cap_short = if cap.chars().count() > 160 {
+                let cut: String = cap.chars().take(160).collect();
+                format!("{cut}…")
+            } else { cap };
+            h.push_str(&format!(
+                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
+                m.t, fmt_duration(m.t), cap_short,
+            ));
+        }
+        h.push_str("</ul></section>");
+        s.push_str(&h);
+    }
+
+    // Events — click/key/etc.  Empty? Skip.
+    if !idx.event_track.is_empty() {
+        let mut h = String::from(r#"<section class="card events"><h3>Events</h3><ol class="events-list">"#);
+        for e in &idx.event_track {
+            let (label, kind_class) = humanize_event(e);
+            h.push_str(&format!(
+                r#"<li><span class="ts">{}</span><span class="ev ev-{1}">{2}</span><span class="lbl">{}</span></li>"#,
+                fmt_duration(e.t), kind_class, html_escape(&label),
+            ));
+        }
+        h.push_str("</ol></section>");
+        s.push_str(&h);
+    }
+
+    // On-screen text — only when present; the SPA already filters noise server-side.
+    if !idx.on_screen_text.is_empty() {
+        let mut h = String::from(r#"<section class="card ost"><h3>On-screen text</h3><ol class="ost-list">"#);
+        for t in &idx.on_screen_text {
+            let txt = html_escape(&t.text);
+            // Truncate long OCR lines for layout sanity.
+            let txt_short = if txt.chars().count() > 140 {
+                let cut: String = txt.chars().take(140).collect();
+                format!("{cut}…")
+            } else { txt };
+            h.push_str(&format!(
+                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
+                t.start, fmt_duration(t.start), txt_short,
+            ));
+        }
+        h.push_str("</ol></section>");
+        s.push_str(&h);
+    }
+
+    // Transcript — only when present.
+    if !idx.transcript.is_empty() {
+        let mut h = String::from(r#"<section class="card transcript"><h3>Transcript</h3><div class="transcript-body">"#);
+        for t in &idx.transcript {
+            h.push_str(&format!(
+                r##"<p><a href="#t={}" class="ts">{}</a> <span class="line">{}</span></p>"##,
+                t.start, fmt_duration(t.start), html_escape(&t.text),
+            ));
+        }
+        h.push_str("</div></section>");
+        s.push_str(&h);
+    }
+
+    s
+}
+
+/// Make a friendly label for an event row.  Format: "click at (x, y)" /
+/// "press 'a'" / "GET /foo" / "POST /bar (200)".  Returns the label plus a
+/// CSS class hint for tone.
+fn humanize_event(e: &clipxd_index::Event) -> (String, &'static str) {
+    use clipxd_index::Event as ClipEvent;
+    match e {
+        ClipEvent { kind: k, text: Some(t), data, .. } if k == "click" || k == "pointerdown" => {
+            // data shape: { x: f64, y: f64 } normalized
+            let pos = data.get("x").and_then(|v| v.as_f64())
+                .zip(data.get("y").and_then(|v| v.as_f64()));
+            let (label, cls) = match pos {
+                Some((x, y)) => (format!("{} at ({:.0}%, {:.0}%)", capitalize(k), x * 100.0, y * 100.0), "ev-click"),
+                None => (t.clone(), "ev-other"),
+            };
+            (label, cls)
+        }
+        ClipEvent { kind: k, text: Some(t), .. } if k == "key" || k == "keydown" || k == "keypress" => {
+            (format!("press '{}'", t), "ev-key")
+        }
+        ClipEvent { kind: k, text: Some(t), .. } if k == "nav" => (format!("→ {}", t), "ev-nav"),
+        ClipEvent { kind: k, text: Some(t), .. } if k == "net" => (format!("↗ {}", t), "ev-net"),
+        ClipEvent { kind: k, text: Some(t), .. } if k == "focus" => (format!("focus: {}", t), "ev-other"),
+        ClipEvent { kind, text: Some(t), .. } => (format!("{}: {}", kind, t), "ev-other"),
+        ClipEvent { kind, text: None, data, .. } => (
+            format!("{}: {}", kind, serde_json::to_string(data).unwrap_or_default()),
+            "ev-other",
+        ),
+    }
+}
+
+fn capitalize(s: &str) -> &str {
+    // one-liner: leave first char as-is, but uppercase it
+    let mut chars = s.chars();
+    if let Some(first) = chars.next() {
+        let up: String = first.to_uppercase().collect();
+        // SAFETY: `s` is &str, so taking first as chars + the rest as &str is fine
+        let rest_start = first.len_utf8();
+        // We can't return a slice mixed from to_uppercase() output + original, so just
+        // return the original (the humanizer doesn't depend on capitalization here).
+        s  // ignore; call site only uses the value for display, lowercase is fine
+    } else {
+        s
+    }
+}
+
+/// ---------------- aside column ----------------
+fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
+    let mcp_url = format!("{url}/index.json");
+    let embed = format!(
+        r#"<iframe src="{url}" width="960" height="600" frameborder="0" allow="autoplay; fullscreen" title="clipxd clip"></iframe>"#,
+        url = url,
+    );
+
+    format!(
+        r##"<div class="ask-card">
+  <div class="ask-head">
+    <span class="ask-dot"></span>
+    <b>Ask an agent</b>
+  </div>
+  <p class="ask-hint">The clip is fully indexed — ask anything about what was on screen.</p>
+  <div class="ask-row">
+    <input id="q" placeholder="What was the error at 0:41?" />
+    <button class="ask-btn" id="askBtn" type="button">Ask</button>
+  </div>
+  <div class="ask-out" id="a" aria-live="polite"></div>
+  <div class="ask-foot">
+    <span class="ask-foot-dot"></span>
+    <span>{n_ost} on-screen · {n_ev} events · indexed</span>
+  </div>
+</div>
+
+<div class="share-card">
+  <div class="share-head">
+    <span class="share-dot"></span>
+    <b>Share</b>
+  </div>
+  <button class="share-btn" data-copy="{url}" type="button">
+    <span class="share-lbl">Copy link</span>
+    <span class="share-hint">{short_url}</span>
+  </button>
+  <button class="share-btn" data-copy="{embed}" type="button">
+    <span class="share-lbl">Copy embed</span>
+    <span class="share-hint">&lt;iframe …&gt;</span>
+  </button>
+  <button class="share-btn" data-copy="{mcp_url}" type="button">
+    <span class="share-lbl">Copy MCP url</span>
+    <span class="share-hint">agent-queryable</span>
+  </button>
+  <a class="share-btn" href="/clip/{id}/index.json" target="_blank" rel="noopener">
+    <span class="share-lbl">Download index.json</span>
+    <span class="share-hint">.json · sidecar</span>
+  </a>
+</div>
+
+<div class="qr-card">
+  <div class="qr">{qr}</div>
+  <div class="qr-foot">
+    <b>Scan to open on your phone</b>
+    <span>or hand off the link to a teammate</span>
+  </div>
+</div>"##,
+        url        = url,
+        mcp_url    = mcp_url,
+        embed      = embed,
+        qr         = qr,
+        id         = id,
+        n_ost      = idx.on_screen_text.len(),
+        n_ev       = idx.event_track.len(),
+        short_url  = html_escape(&shorten_url(url)),
+    )
+}
+
+/// Truncate the displayed URL to the host + a few leading chars, for the
+/// "Copy link" pill hint.  Doesn't touch the actual URL the user gets.
+fn shorten_url(url: &str) -> String {
+    // Strip protocol + trailing slash
+    let s = url.trim_end_matches('/');
+    let after_scheme = s.find("://").map(|i| i + 3).unwrap_or(0);
+    let rest = &s[after_scheme..];
+    if rest.len() > 36 {
+        format!("{}…", &rest[..33])
+    } else {
+        rest.to_string()
+    }
+}
+
+/// ============================================================================
+///  CSS — puffy clay system, light + dark via prefers-color-scheme.
+///  Inlined so the share page is self-contained (no external CSS).
+/// ============================================================================
+const SHARE_CSS: &str = r##"
+:root {
+  --c-sodium:#FF7A59;  --c-signal:#16C79A;  --c-grape:#9B8CFF;
+  --ease-clip: cubic-bezier(.34, 1.56, .42, 1);
+  --r: 22px; --r-sm: 14px; --r-pill: 999px;
+}
+/* Light (warm pastel playground) */
+:root, :root[data-theme=light] {
+  --bg:#EFE9F0; --panel:#FBF7F4; --panel-2:#F3EDEF; --panel-3:#EAE2EC;
+  --glass: rgba(255,255,255,.5);
+  --border: rgba(70,52,92,.10); --border-2: rgba(70,52,92,.18);
+  --text:#211B2B; --text-2:#5F586E; --text-3:#928BA1;
+  --on-accent:#FFFFFF;
+  --sodium-wash:rgba(255,122,89,.13);
+  --signal-wash:rgba(22,199,154,.13);
+  --sodium-text:#D6461F; --signal-text:#0C8E6C;
+  --env:
+    radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.22), transparent 62%),
+    radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
+    radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.20), transparent 64%);
+  --clay: 0 16px 30px -14px rgba(80,54,112,.34), inset 0 2px 1px rgba(255,255,255,.95), inset 0 -8px 16px -6px rgba(120,96,150,.16);
+  --clay-sm: 0 9px 18px -10px rgba(80,54,112,.3), inset 0 2px 1px rgba(255,255,255,.9), inset 0 -5px 10px -5px rgba(120,96,150,.14);
+  --clay-in: inset 0 3px 7px rgba(100,72,130,.22), inset 0 -2px 2px rgba(255,255,255,.7);
+  --pop-signal: 0 14px 26px -12px rgba(12,142,108,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(8,90,68,.4);
+  --pop-sodium: 0 14px 26px -12px rgba(214,70,31,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(150,40,16,.4);
+  --shadow-float: 0 12px 30px -16px rgba(80,54,112,.34);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#15121C; --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
+    --glass: rgba(54,46,78,.46);
+    --border: rgba(255,255,255,.10); --border-2: rgba(255,255,255,.2);
+    --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
+    --on-accent:#15121C;
+    --sodium-wash:rgba(255,122,89,.16);
+    --signal-wash:rgba(22,199,154,.20);
+    --sodium-text:#FFAD90; --signal-text:#5FE7C2;
+    --env:
+      radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.18), transparent 62%),
+      radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
+      radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.22), transparent 64%);
+    --clay: 0 18px 34px -14px rgba(0,0,0,.7), inset 0 2px 1px rgba(255,255,255,.14), inset 0 -9px 18px -7px rgba(0,0,0,.5);
+    --clay-sm: 0 11px 22px -12px rgba(0,0,0,.66), inset 0 2px 1px rgba(255,255,255,.12), inset 0 -6px 12px -6px rgba(0,0,0,.45);
+    --clay-in: inset 0 3px 8px rgba(0,0,0,.55), inset 0 -1px 1px rgba(255,255,255,.08);
+    --pop-signal: 0 16px 30px -12px rgba(22,199,154,.5), inset 0 2px 1px rgba(255,255,255,.4), inset 0 -8px 16px -6px rgba(0,70,52,.5);
+    --pop-sodium: 0 16px 30px -12px rgba(255,122,89,.45), inset 0 2px 1px rgba(255,255,255,.34), inset 0 -8px 16px -6px rgba(120,40,20,.5);
+    --shadow-float: 0 12px 30px -16px rgba(0,0,0,.66);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--env), var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font: 15px/1.5 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+a { color: var(--signal-text); text-decoration: none; }
+a:hover { text-decoration: underline; }
+::selection { background: var(--c-signal); color: var(--on-accent); }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-2); border-radius: 99px; border: 3px solid transparent; background-clip: content-box;
+}
+
+/* ============ top bar (sticky glass) ============ */
+.topbar {
+  position: sticky; top: 16px; z-index: 10;
+  margin: 16px auto 0; max-width: 1100px; padding: 9px 14px;
+  display: flex; align-items: center; gap: 14px;
+  background: var(--glass);
+  backdrop-filter: blur(7px) saturate(1.6);
+  -webkit-backdrop-filter: blur(7px) saturate(1.6);
+  border-radius: var(--r-pill);
+  box-shadow: var(--clay);
+  border: 1px solid var(--border-2);
+  position: sticky;
+}
+.topbar-brand {
+  display: inline-flex; align-items: center; gap: 9px;
+  text-decoration: none; color: var(--text); font-weight: 600;
+}
+.topbar-brand:hover { text-decoration: none; }
+.topbar-mark { width: 26px; height: 26px; flex: none; }
+.topbar-name { font-size: 16px; letter-spacing: -0.02em; }
+.topbar-xd {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c-signal); color: var(--on-accent);
+  font-size: 11px; font-weight: 700; padding: 1px 5px 2px;
+  border-radius: 7px; transform: rotate(-5deg); margin-left: 3px;
+  box-shadow: var(--clay-sm);
+}
+.topbar-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.btn-share-link {
+  font: 500 12.5px var(--font-mono, monospace);
+  background: var(--panel-2); color: var(--text-2);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 7px 14px; text-decoration: none; cursor: pointer;
+  box-shadow: var(--clay-in);
+}
+.btn-share-link:hover { color: var(--text); }
+
+/* ============ hero ============ */
+.hero {
+  max-width: 1100px; margin: 28px auto 18px; padding: 0 26px;
+}
+.title {
+  font-size: clamp(28px, 4vw, 44px); font-weight: 700; line-height: 1.1;
+  letter-spacing: -0.025em; color: var(--text);
+  text-shadow: 0 1px 0 rgba(255,255,255,.05);
+  margin-bottom: 12px;
+}
+.meta-row { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+.meta-row .pill { display: inline-flex; align-items: center; gap: 6px; }
+.pill { /* base */
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 12px/1 var(--font-mono, ui-monospace, "JetBrains Mono", monospace);
+  background: var(--panel-2); color: var(--text-2);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 5px 11px; box-shadow: var(--clay-in); text-decoration: none;
+}
+.pill.signal { background: var(--signal-wash); color: var(--signal-text); border-color: color-mix(in oklab, var(--c-signal) 35%, transparent); }
+.pill.sodium { background: var(--sodium-wash); color: var(--sodium-text); border-color: color-mix(in oklab, var(--c-sodium) 35%, transparent); }
+.pill.ghost { background: transparent; box-shadow: none; }
+.pill.ghost:hover { background: var(--panel-2); }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-sodium); display: inline-block; }
+.pill.signal .dot { background: var(--c-signal); box-shadow: 0 0 8px var(--c-signal); }
+.pill.status-pill { background: var(--signal-wash); color: var(--signal-text); }
+
+.player {
+  position: relative; border-radius: var(--r); overflow: hidden;
+  box-shadow: var(--clay); background: #000; aspect-ratio: 16/9;
+}
+.player video { width: 100%; height: 100%; display: block; }
+
+/* ============ body grid (main + aside) ============ */
+.body-grid {
+  max-width: 1100px; margin: 8px auto 60px; padding: 0 26px;
+  display: grid; grid-template-columns: 1fr 320px; gap: 18px;
+}
+@media (max-width: 880px) { .body-grid { grid-template-columns: 1fr; } }
+
+.body-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.body-aside { display: flex; flex-direction: column; gap: 14px; }
+
+/* card surfaces (puffy clay) */
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: var(--clay-sm);
+  padding: 18px 20px 20px;
+}
+.card h3 {
+  font: 600 11px/1 var(--font-mono, "JetBrains Mono", monospace);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-3); margin-bottom: 12px;
+}
+
+/* chapters */
+.chapters-list { list-style: none; display: grid; gap: 6px; }
+.chapters-list a {
+  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
+  padding: 8px 10px; border-radius: var(--r-sm); color: var(--text);
+  text-decoration: none;
+}
+.chapters-list a:hover { background: var(--panel-2); text-decoration: none; }
+.chapters-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--sodium-text); }
+.chapters-list .lbl { font-size: 14px; }
+
+/* moments */
+.moments-list { list-style: none; display: grid; gap: 6px; }
+.moments-list a {
+  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
+  padding: 8px 10px; border-radius: var(--r-sm); color: var(--text);
+  text-decoration: none;
+}
+.moments-list a:hover { background: var(--panel-2); text-decoration: none; }
+.moments-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--signal-text); }
+.moments-list .lbl { font-size: 13.5px; color: var(--text-2); line-height: 1.4; }
+
+/* events */
+.events-list { list-style: none; display: grid; gap: 4px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
+.events-list li {
+  display: grid; grid-template-columns: 64px 80px 1fr; gap: 10px; align-items: baseline;
+  padding: 6px 10px; border-radius: var(--r-sm); font-size: 13px;
+}
+.events-list li:hover { background: var(--panel-2); }
+.events-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--sodium-text); }
+.events-list .ev {
+  font: 600 10px var(--font-mono, "JetBrains Mono", monospace);
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3);
+  padding: 2px 6px; border-radius: 99px; background: var(--panel-2); text-align: center;
+}
+.events-list .ev-click  { color: var(--sodium-text); background: var(--sodium-wash); }
+.events-list .ev-key    { color: var(--signal-text); background: var(--signal-wash); }
+.events-list .ev-nav    { color: var(--text-2); }
+.events-list .ev-net    { color: var(--text-2); }
+.events-list .lbl { color: var(--text-2); font-size: 13px; }
+
+/* on-screen text */
+.ost-list { list-style: none; display: grid; gap: 3px; max-height: 240px; overflow-y: auto; padding-right: 4px; }
+.ost-list a {
+  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
+  padding: 6px 10px; border-radius: var(--r-sm); color: var(--text-2); text-decoration: none; font-size: 13px;
+}
+.ost-list a:hover { background: var(--panel-2); text-decoration: none; }
+.ost-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--text-3); }
+
+/* transcript */
+.transcript-body { display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 6px; }
+.transcript-body p { font-size: 14.5px; line-height: 1.55; }
+.transcript-body .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--signal-text); margin-right: 8px; }
+
+/* ask form */
+.ask-card {
+  background: var(--panel); border: 1px solid color-mix(in oklab, var(--c-signal) 40%, var(--border));
+  border-radius: var(--r); box-shadow: var(--clay-sm);
+  padding: 16px 18px 18px;
+}
+.ask-head, .share-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ask-head b, .share-head b { font-size: 14px; }
+.ask-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c-signal); box-shadow: 0 0 8px var(--c-signal);
+}
+.ask-hint { font-size: 12.5px; color: var(--text-2); margin-bottom: 10px; line-height: 1.45; }
+.ask-row { display: flex; gap: 8px; }
+.ask-row input {
+  flex: 1; padding: 10px 14px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  font: 13px var(--font-mono, "JetBrains Mono", monospace);
+  outline: none;
+}
+.ask-row input:focus { border-color: color-mix(in oklab, var(--c-signal) 50%, var(--border)); }
+.ask-btn {
+  background: var(--c-signal); color: var(--on-accent);
+  font: 600 13px 'Space Grotesk', system-ui;
+  border: none; border-radius: var(--r-pill);
+  padding: 0 18px; cursor: pointer; box-shadow: var(--pop-signal);
+}
+.ask-btn:hover { transform: translateY(-1px); }
+.ask-btn:disabled { opacity: .6; cursor: not-allowed; }
+.ask-out {
+  margin-top: 12px; padding: 12px 14px;
+  background: var(--panel-2); border-radius: var(--r-sm);
+  font-size: 13.5px; line-height: 1.5; color: var(--text);
+  min-height: 24px;
+}
+.ask-out:empty { display: none; }
+.ask-out .cites {
+  display: block; margin-top: 6px; font: 500 11px var(--font-mono, "JetBrains Mono", monospace);
+  color: var(--signal-text);
+}
+.ask-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px;
+  font: 500 11px var(--font-mono, "JetBrains Mono", monospace); color: var(--text-3); }
+.ask-foot-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-signal); opacity: .5; }
+
+/* share */
+.share-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: var(--clay-sm);
+  padding: 16px 18px 18px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.share-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-sodium); }
+.share-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  text-decoration: none; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 8px 12px;
+  font: 600 13px 'Space Grotesk', system-ui;
+  cursor: pointer; box-shadow: var(--clay-in); text-align: left;
+  border: 1px solid var(--border);
+}
+.share-btn:hover { background: var(--panel-3); }
+.share-btn:active { transform: translateY(1px); }
+.share-btn.is-copied { background: var(--signal-wash); color: var(--signal-text); border-color: color-mix(in oklab, var(--c-signal) 40%, transparent); }
+.share-btn .lbl { font-weight: 600; font-size: 13px; }
+.share-btn .hint { font: 500 10.5px var(--font-mono, "JetBrains Mono", monospace); color: var(--text-3); text-transform: lowercase; }
+
+/* QR */
+.qr-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: var(--clay-sm);
+  padding: 18px 18px 16px;
+  text-align: center;
+}
+.qr-card svg { width: 168px; height: 168px; }
+.qr-foot { margin-top: 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.4; }
+.qr-foot b { display: block; color: var(--text); font-weight: 600; margin-bottom: 2px; }
+
+/* footer */
+.foot {
+  max-width: 1100px; margin: 0 auto 36px; padding: 12px 26px;
+  display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
+  font: 500 12px var(--font-mono, "JetBrains Mono", monospace);
+  color: var(--text-3);
+}
+.foot a { color: var(--text-3); text-decoration: underline; }
+.foot-brand { font-weight: 700; color: var(--text); }
+.foot-xd {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c-signal); color: var(--on-accent);
+  font-size: 10px; font-weight: 700; padding: 1px 4px 2px;
+  border-radius: 6px; transform: rotate(-5deg); margin-left: 3px;
+}
+
+/* tiny entrance animation */
+.card, .ask-card, .share-card, .qr-card { animation: pop-in .35s var(--ease-clip) both; }
+.card:nth-child(1) { animation-delay: 0ms; }
+.card:nth-child(2) { animation-delay: 30ms; }
+.card:nth-child(3) { animation-delay: 60ms; }
+.card:nth-child(4) { animation-delay: 90ms; }
+.card:nth-child(5) { animation-delay: 120ms; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .ask-card, .share-card, .qr-card { animation: none; }
+}
+"##;
+
+/// JS for the share page — copy buttons + the Ask form.  Inlined so the
+/// page works without a network round-trip for the script.
+const SHARE_JS: &str = r##"
+// copy-on-click for the [data-copy] buttons
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-copy]');
+  if (!btn) return;
+  e.preventDefault();
+  const val = btn.getAttribute('data-copy') || '';
+  const done = () => {
+    const lbl = btn.querySelector('.share-lbl') || btn;
+    const orig = lbl.textContent;
+    lbl.textContent = '✓ Copied';
+    btn.classList.add('is-copied');
+    setTimeout(() => { lbl.textContent = orig; btn.classList.remove('is-copied'); }, 1600);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(val).then(done).catch(() => {
+      // fallback for old browsers / insecure contexts
+      const ta = document.createElement('textarea');
+      ta.value = val; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    });
+  }
+});
+// seek-to-t URL hash: clicking a link with #t=12 jumps the video to 12s
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#t="]');
+  if (!a) return;
+  e.preventDefault();
+  const t = parseFloat(a.getAttribute('href').slice(3)) || 0;
+  const v = document.querySelector('video');
+  if (v) { v.currentTime = t; v.play().catch(() => {}); }
+});
+// ask form
+const askBtn = document.getElementById('askBtn');
+const askIn  = document.getElementById('q');
+const askOut = document.getElementById('a');
+async function doAsk() {
+  const q = (askIn.value || '').trim();
+  if (!q || !askBtn) return;
+  askBtn.disabled = true; askBtn.textContent = 'Asking…';
+  askOut.innerHTML = 'asking the agent…';
+  try {
+    const r = await fetch(location.pathname + '/query?q=' + encodeURIComponent(q));
+    const j = await r.json();
+    let html = (j.text || 'no answer').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (j.citations && j.citations.length) {
+      html += '<span class="cites">cited: ' + j.citations.map(c => c.toFixed(1) + 's').join(', ') + '</span>';
+    }
+    askOut.innerHTML = html;
+  } catch (e) {
+    askOut.textContent = 'Could not reach the agent. Is the backend running?';
+  } finally {
+    askBtn.disabled = false; askBtn.textContent = 'Ask';
+  }
+}
+if (askBtn) askBtn.addEventListener('click', doAsk);
+if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAsk(); });
+"##;
 
 #[cfg(test)]
 mod tests {
