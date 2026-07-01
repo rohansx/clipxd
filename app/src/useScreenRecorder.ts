@@ -67,9 +67,15 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
         recordStream = comp;
       }
 
-      // Streaming stage session — pre-create on server so dir exists before first chunk arrives.
-      const sessionId = `stg_${Date.now().toString(16).padStart(16, "0")}`;
-      fetch(`${apiBase}/ingest/stage`, { method: "POST", credentials: "include" }).catch(() => {});
+      // Streaming stage session — the server creates the on-disk session dir and hands back
+      // its id; chunk PUTs must target *that* id (not a locally-generated one) or they 404.
+      const sessionPromise: Promise<string | null> = fetch(`${apiBase}/ingest/stage`, {
+        method: "POST",
+        credentials: "include",
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { session?: string } | null) => d?.session ?? null)
+        .catch(() => null);
 
       let chunkSeq = 0;
       // Track the last PUT so we can await it before commit (ensures final chunk is on server).
@@ -103,13 +109,18 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
         if (!e.data.size) return;
         chunks.current.push(e.data);
         // Upload every chunk (both mid-recording 15 s slices and the final flush on stop)
-        // as a fire-and-forget PUT. Track the promise so onstop can await the last one.
+        // as a fire-and-forget PUT, once the session id is known. Track the promise so
+        // onstop can await the last one.
         const seq = chunkSeq++;
-        lastChunkPut = fetch(`${apiBase}/ingest/stage/${sessionId}?seq=${seq}`, {
-          method: "PUT",
-          body: e.data,
-          credentials: "include",
-        }).catch(() => {});
+        const chunkData = e.data;
+        lastChunkPut = sessionPromise.then((session) => {
+          if (!session) return;
+          return fetch(`${apiBase}/ingest/stage/${session}?seq=${seq}`, {
+            method: "PUT",
+            body: chunkData,
+            credentials: "include",
+          }).catch(() => {});
+        });
       };
 
       mr.onstop = async () => {
@@ -118,9 +129,11 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
 
         // Wait for the final chunk PUT to land before calling commit.
         await lastChunkPut;
+        const session = await sessionPromise;
 
         try {
-          const res = await fetch(`${apiBase}/ingest/stage/${sessionId}/commit`, {
+          if (!session) throw new Error("no stage session");
+          const res = await fetch(`${apiBase}/ingest/stage/${session}/commit`, {
             method: "POST",
             credentials: "include",
           });

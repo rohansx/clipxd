@@ -3,14 +3,19 @@
 #
 # Routing: the backend owns the clip/api/auth surface; everything else is the React SPA.
 #   /clip/*  → public share pages + per-clip JSON/video/query  (backend)
-#   /clips, /ingest, /import, /net, /auth/*                     (backend, auth-gated)
+#   /clips, /ingest*, /import, /net, /auth/*                    (backend, auth-gated)
 #   /  and  /assets/*                                            (static SPA)
+#
+# /ingest* (not just /ingest) is required: the streaming stage-upload endpoints live at
+# /ingest/stage, /ingest/stage/:session, and /ingest/stage/:session/commit — an exact-path
+# matcher would let all three fall through to the static file_server, which 405s on
+# POST/PUT instead of reaching the backend.
 
 {$CLIPXD_DOMAIN} {
 	encode zstd gzip
 
 	# Backend surface
-	@backend path /clip/* /clips /ingest /import /net /auth/* /u/*
+	@backend path /clip/* /clips /ingest* /import /net /auth/* /u/*
 	handle @backend {
 		reverse_proxy 127.0.0.1:8787
 	}
