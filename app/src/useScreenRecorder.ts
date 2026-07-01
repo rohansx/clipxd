@@ -1,7 +1,27 @@
 import { useRef, useState } from "react";
-import { ingest, postCursor } from "./api";
+import { postCursor } from "./api";
 
-export type RecState = "idle" | "recording" | "processing";
+export type RecState = "idle" | "recording" | "processing" | "failed";
+
+export interface RecorderCallbacks {
+  /** Fires the moment the recorder stops. Persist a "saving" record to
+   *  localStorage NOW so a hard refresh during upload doesn't lose state. */
+  onPending?: (stopId: string) => void;
+  /** Fires with the server-issued clip id once Phase 1 is committed. */
+  onClipReady?: (id: string) => void;
+  /** Fires if every upload path timed out or errored. */
+  onError?: (reason: string) => void;
+}
+
+// Total time we'll wait between Stop and a usable id. The server's commit
+// involves concatenating chunks (fast), storing Phase 1 (fast), then
+// spawning Phase 2 enrichment in the background. Phase 1 should be
+// < 5s; we give it 60s before falling back to /ingest, then a further
+// 60s on /ingest, for a total worst-case of ~120s. Anything past that
+// is a real failure (server hung, OOM, network) and we surface an error
+// rather than spin forever.
+const COMMIT_TIMEOUT_MS = 60_000;
+const INGEST_TIMEOUT_MS = 60_000;
 
 // Best available high-quality recorder config (VP9 → VP8 → default, ~8 Mbps).
 function recorderOpts(): MediaRecorderOptions {
@@ -14,13 +34,25 @@ function recorderOpts(): MediaRecorderOptions {
   return { videoBitsPerSecond: 8_000_000 };
 }
 
+/** Wrap a fetch with an AbortController and reject on timeout. */
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+  const ctl = new AbortController();
+  const to = window.setTimeout(() => ctl.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: ctl.signal })
+    .catch((e) => { throw new Error(`${label} ${e?.name === "AbortError" ? "timed out after " + (timeoutMs / 1000) + "s" : "failed: " + (e?.message ?? e)}`); })
+    .finally(() => window.clearTimeout(to));
+}
+
 // Screen recording in the browser. A supplied camera stream is composited as a circular
 // bubble onto a canvas and recorded (face baked in). High-bitrate VP9 + 1080p when available.
 // Streaming upload: MediaRecorder emits a chunk every 15 s which is immediately PUT to
 // /ingest/stage/:session — so by the time the user stops, most of the video is already
 // on the server. Only the last ≤15 s chunk needs to upload after stop.
-export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) => void) {
+export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks = {}) {
+  const { onPending, onClipReady, onError } = callbacks;
   const [state, setState] = useState<RecState>("idle");
+  // Distinct "we tried, here's why" reason once state === "failed".
+  const [error, setError] = useState<string | null>(null);
   const ref = useRef<{ mr: MediaRecorder } | null>(null);
   const chunks = useRef<Blob[]>([]);
 
@@ -125,48 +157,67 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
 
       mr.onstop = async () => {
         cleanups.forEach((fn) => fn());
+        const stopId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        // Persist a "saving" record the instant the user clicks Stop.  A mid-upload
+        // refresh now keeps the banner instead of dropping everything on the floor.
+        if (onPending) onPending(stopId);
         setState("processing");
 
-        // Wait for the final chunk PUT to land before calling commit.
-        await lastChunkPut;
-        const session = await sessionPromise;
+        const failed = (reason: string) => {
+          setError(reason);
+          setState("failed");
+          if (onError) onError(reason);
+        };
+        const ok = (id: string) => {
+          setError(null);
+          setState("idle");
+          if (cursors.length || clicks.length) {
+            postCursor(id, { cursors, clicks, keys: [] }, apiBase).catch(() => {});
+          }
+          if (onClipReady) onClipReady(id);
+          else window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
+        };
 
         try {
-          if (!session) throw new Error("no stage session");
-          const res = await fetch(`${apiBase}/ingest/stage/${session}/commit`, {
-            method: "POST",
-            credentials: "include",
-          });
-          if (res.ok) {
-            const data = await res.json() as { id?: string };
-            const id = data.id;
-            if (id) {
-              if (cursors.length || clicks.length) {
-                try { await postCursor(id, { cursors, clicks, keys: [] }, apiBase); } catch { /* non-fatal */ }
-              }
-              setState("idle");
-              if (onClipReady) onClipReady(id);
-              else window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
-              return;
-            }
-          }
-        } catch { /* fall through to full-blob fallback */ }
+          // Wait for the final chunk PUT to land before calling commit.
+          await lastChunkPut;
+          const session = await sessionPromise;
 
-        // Fallback: assemble full blob and POST to /ingest (original behaviour).
-        const blob = new Blob(chunks.current, { type: "video/webm" });
-        try {
-          const id = await ingest(blob, apiBase);
-          if (id) {
-            if (cursors.length || clicks.length) {
-              try { await postCursor(id, { cursors, clicks, keys: [] }, apiBase); } catch { /* non-fatal */ }
+          if (session) {
+            let res: Response;
+            try {
+              res = await fetchWithTimeout(
+                `${apiBase}/ingest/stage/${session}/commit`,
+                { method: "POST", credentials: "include" },
+                COMMIT_TIMEOUT_MS,
+                "commit",
+              );
+            } catch (e) {
+              // Stage commit timed out or errored — try the original /ingest as a
+              // fallback rather than hanging the UI.
+              console.warn("[clipxd] stage commit failed, falling back to /ingest:", (e as Error).message);
+              res = new Response("", { status: 599 });
             }
-            setState("idle");
-            if (onClipReady) onClipReady(id);
-            else window.location.href = `${location.pathname}?clip=${id}&api=${encodeURIComponent(apiBase)}`;
-            return;
+            if (res.ok) {
+              const data = await res.json().catch(() => ({})) as { id?: string };
+              if (data.id) { ok(data.id); return; }
+            }
+            // 5xx or no id → fall through to the original /ingest path.
           }
-        } catch { /* nothing more to try */ }
-        setState("idle");
+
+          // Fallback: assemble full blob and POST to /ingest.
+          const blob = new Blob(chunks.current, { type: "video/webm" });
+          if (blob.size === 0) { failed("Recording produced no data"); return; }
+          try {
+            const id = await ingestWithTimeout(blob, apiBase, INGEST_TIMEOUT_MS);
+            if (id) { ok(id); return; }
+            failed("Upload did not return a clip id (server unreachable or timed out)");
+          } catch (e) {
+            failed(`Upload failed: ${(e as Error).message}`);
+          }
+        } catch (e) {
+          failed(`Unexpected error: ${(e as Error).message}`);
+        }
       };
 
       screen.getVideoTracks()[0].addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
@@ -174,11 +225,34 @@ export function useScreenRecorder(apiBase: string, onClipReady?: (id: string) =>
       mr.start(15_000);
       ref.current = { mr };
       setState("recording");
-    } catch {
+      setError(null);
+    } catch (e) {
       setState("idle");
+      setError((e as Error).message ?? "Could not start recording");
     }
   };
 
-  const stop = () => ref.current?.mr.stop();
-  return { state, start, stop };
+  const stop = () => {
+    const mr = ref.current?.mr;
+    if (!mr || mr.state === "inactive") return;
+    mr.stop();
+  };
+
+  return { state, error, start, stop };
+}
+
+async function ingestWithTimeout(blob: Blob, apiBase: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const r = await fetchWithTimeout(
+      `${apiBase}/ingest`,
+      { method: "POST", headers: { "content-type": "video/webm" }, body: blob, credentials: "include" },
+      timeoutMs,
+      "/ingest",
+    );
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => ({})) as { id?: string };
+    return j.id ?? null;
+  } catch {
+    return null;
+  }
 }

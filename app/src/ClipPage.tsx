@@ -166,12 +166,20 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
 
-  // Track "is this the clip you just made?" so the indexing banner can show
-  // alongside the small titlebar pill.  Both signals come from the same
-  // localStorage key, so a hard refresh keeps both in sync.
+  // Track "is this the clip you just made?" so the indexing banner can
+  // show across the watch body.  Three signals count:
+  //   1. Localstorage has an unsaved entry (`pending_*`) — server hasn't
+  //      committed yet, so `id` won't match.  We trust the local status.
+  //   2. Localstorage has a saved id matching the URL — server committed.
+  //   3. The server says the clip is still enriching.
+  // The banner mounts if ANY of these hold.
   const [lastClip, setLastClip] = useState<LastClip | null>(getLastClip);
   useEffect(() => onLastClipChange(setLastClip), []);
-  const justRecorded = !!lastClip && lastClip.id === id && index.status === "enriching";
+  const justRecorded =
+    !!lastClip && (
+      lastClip.status === "saving" ||
+      (lastClip.id === id && index.status === "enriching")
+    );
 
   return (
     <div className="clip-page">

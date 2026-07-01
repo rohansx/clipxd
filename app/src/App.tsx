@@ -83,32 +83,23 @@ export default function App() {
 
   // Called by Recording.tsx once the server hands us a clip id.
   //
-  // Notes on what we *don't* do here:
-  //   1. No auto-navigate to the new clip. The user just spent 30+ s recording
-  //      and the LAST thing they want is for the page to jump away from the
-  //      "Link ready" card. The Recording view keeps the URL visible, the
-  //      Copy / Open buttons reachable, AND the Library banner live.
-  //   2. No toast. 3 s toast = invisible feedback. The link-ready card on
-  //      Recording and the indexing banner on Library do the work now.
+  //   1. No auto-navigate.  The user just spent 30+ s recording; jumping
+  //      away from the "Link ready" card is hostile.  Recording's view
+  //      keeps the URL visible, the Copy / Open buttons reachable, AND
+  //      the Library banner live.
+  //   2. No toast (3 s toasts are invisible feedback).  The link-ready
+  //      card on Recording + the banner on Library do the work.
   //
-  // We DO update the URL: `?clip=…` so a refresh keeps the user on their
-  // new clip (and the indexing banner stays mounted).
+  // We DO update the URL bar to `?clip=…` so a refresh keeps the user
+  // on their new clip (and the indexing banner stays mounted).
   const afterCreate = useCallback(
     (id: string) => {
       reload();
-      const username = auth.user?.username;
-      const url = username
-        ? `${location.origin}/u/${username}/clip/${id}`
-        : `${location.origin}/?clip=${id}`;
-      // Best-effort clipboard write; Recording's link card covers the
-      // "user missed it" case via a visible URL + Copy button.
-      navigator.clipboard.writeText(url).catch(() => {});
-      // Reflect in the URL bar so refresh keeps the user oriented.
       const u = new URL(location.href);
       u.searchParams.set("clip", id);
       history.replaceState(null, "", u.toString());
     },
-    [auth.user?.username, reload],
+    [reload],
   );
 
   // Apply the theme on <html> so the env gradient + body vars resolve.
@@ -338,6 +329,7 @@ function ViewBody(p: {
             onClipReady={p.afterCreate}
             showToast={p.showToast}
             onOpenClip={p.onClipInCloudView}
+            onRetry={p.afterCreate}
           />
         </motion.div>
       )}

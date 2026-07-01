@@ -1201,6 +1201,14 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   border-radius:var(--r);box-shadow:var(--pop-signal);
   padding:14px 16px;display:flex;flex-direction:column;gap:10px;
 }
+.link-ready.saving{
+  border-color:color-mix(in oklab,var(--sodium) 40%,var(--border));
+  background:var(--sodium-wash);box-shadow:var(--clay-sodium);
+}
+.link-ready.failed{
+  border-color:color-mix(in oklab,var(--danger) 40%,var(--border));
+  background:var(--danger-soft);box-shadow:var(--clay-sm);
+}
 .link-ready-head{display:flex;align-items:center;gap:8px}
 .link-ready-head b{font-size:13.5px;color:var(--text);font-weight:600}
 .link-ready-head .dot{margin-right:4px;animation:recPulse 2s var(--ease-clip) infinite}
@@ -1235,10 +1243,16 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   display:grid;place-items:center;color:var(--sodium-text);
   box-shadow:var(--clay-sm);flex:none;
 }
-.last-clip-banner.indexing{
+.last-clip-banner.indexing,
+.last-clip-banner.saving{
   background:var(--sodium-wash);
   border-color:color-mix(in oklab,var(--sodium) 45%,transparent);
 }
+.last-clip-banner.failed{
+  background:var(--danger-soft);
+  border-color:color-mix(in oklab,var(--danger) 35%,transparent);
+}
+.last-clip-banner.failed .last-clip-icon{ color:var(--danger) }
 .last-clip-body{min-width:0;flex:1}
 .last-clip-title{
   font-size:13.5px;font-weight:600;color:var(--text);
