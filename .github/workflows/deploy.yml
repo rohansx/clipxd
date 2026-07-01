@@ -3,28 +3,32 @@ name: deploy
 # Auto-deploy the Hetzner box on every push to master.
 #
 # Architecture:
-#   1. CI (`ci.yml`) passes — confirms typecheck + Rust check succeed.
+#   1. CI (`ci.yml`) on the same push runs first. We wait for it via
+#      `workflow_run` and bail out unless it succeeded.
 #   2. This workflow SSHes into clipxd.com as the `clipxd` user with a
 #      KEY whose forced command is /home/clipxd/.github-actions/ci-deploy.sh.
 #      That wrapper is the ONLY thing the key can run; no shell, no file
 #      reads, no port forwarding.
 #   3. The wrapper does:
-#         git fetch github master  (we cannot push code FROM here, only refetch)
-#         fail-if-local-HEAD-stale (no racing another in-flight deploy)
-#         ./deploy/deploy.sh         (existing, idempotent, restarts the systemd unit)
+#         git fetch github master
+#         git merge --ff-only origin/master  (kept local master current)
+#         ./deploy/deploy.sh                (existing, idempotent, restarts systemd)
+#         log to /var/log/clipxd-ci-deploy.log
 #   4. Every invocation is appended to /var/log/clipxd-ci-deploy.log.
 #
 # Required secrets (configure once in repo Settings → Secrets and variables):
 #   BOX_SSH_KEY      — the clipxd-ci private key (NOT the admin one!).
 #                     Generate with:  tools/show-ci-secret.sh
-#
-# The wrapper also validates that local HEAD matches the remote branch tip
-# before it deploys, so a manual commit on the box (followed by an unsynced
-# push from elsewhere) will refuse the deploy rather than silently
-# overwriting local code.
 
 on:
   push:
+    branches: [master]
+  # workflow_run fires AFTER another workflow completes. We only deploy if
+  # the ci workflow finished with conclusion=success — otherwise we'd ship
+  # a broken build.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [master]
   workflow_dispatch:
     inputs:
@@ -45,6 +49,10 @@ jobs:
     name: Deploy to clipxd.com (Hetzner)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Manual runs can bypass the CI gate (useful after fixing CI itself).
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     environment:
       name: production
     steps:
@@ -56,8 +64,6 @@ jobs:
           # The matched SSH key in /opt/clipxd/.ssh/authorized_keys has a
           # forced-command restriction, so whatever `script` we send here is
           # silently replaced by /home/clipxd/.github-actions/ci-deploy.sh.
-          # We still pass a benign command so the SSH subsystem accepts the
-          # request.
           host: ${{ secrets.BOX_SSH_HOST || vars.BOX_SSH_HOST || 'clipxd.com' }}
           username: clipxd
           key: ${{ secrets.BOX_SSH_KEY }}

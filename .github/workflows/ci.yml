@@ -70,4 +70,9 @@ jobs:
           workspaces: target → .
 
       - name: cargo check (no build)
-        run: cargo check --workspace --all-targets
+        # CI mirrors the production build exactly: only the crates the box
+        # actually ships (`deploy.sh` does cargo build for clipxd-web +
+        # clipxd-cli). The wider workspace includes recorder/import which
+        # depend on ../veyo/ path-deps that only exist on the dev box.
+        run: |
+          cargo check -p clipxd-web -p clipxd-cli -p clipxd-mcp -p clipxd-index
