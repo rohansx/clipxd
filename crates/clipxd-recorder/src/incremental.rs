@@ -102,6 +102,7 @@ impl IncrementalIndexer {
             move_dir(&self.frames_dir, &target_frames)?;
         }
 
+        clipxd_index::clean_index(&mut index); // dedup noisy streams + build the search corpus
         std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
         std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
         Ok(index)

@@ -100,6 +100,16 @@ enum Cmd {
     },
     /// Show a clip's metadata and stream sizes.
     Info { clip: PathBuf },
+    /// Re-clean an existing clip's index.json in place: dedup the noisy streams, cap moments,
+    /// tame the tldr, and (re)build the search corpus. Backfills clips indexed before the
+    /// clean pass existed.
+    Clean {
+        /// A clip directory, an index.json path, or (with --all) a parent dir of clips.
+        clip: PathBuf,
+        /// Treat `clip` as a parent directory and clean every `*/index.json` beneath it.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 fn load_index(clip: &Path) -> Result<Index> {
@@ -241,6 +251,37 @@ fn main() -> Result<()> {
                 idx.event_track.len()
             );
             println!("summary: {}", idx.summary.tldr);
+        }
+        Cmd::Clean { clip, all } => {
+            let targets: Vec<PathBuf> = if all {
+                let mut ps: Vec<PathBuf> = std::fs::read_dir(&clip)
+                    .with_context(|| format!("reading {}", clip.display()))?
+                    .filter_map(|e| e.ok().map(|e| e.path().join("index.json")))
+                    .filter(|p| p.exists())
+                    .collect();
+                ps.sort();
+                ps
+            } else if clip.is_dir() {
+                vec![clip.join("index.json")]
+            } else {
+                vec![clip.clone()]
+            };
+            let mut cleaned = 0usize;
+            for path in &targets {
+                let mut idx: Index = load_index(path)?;
+                clipxd_index::clean_index(&mut idx);
+                std::fs::write(path, serde_json::to_string_pretty(&idx)?)
+                    .with_context(|| format!("writing {}", path.display()))?;
+                cleaned += 1;
+                println!(
+                    "✓ {}  moments={} on_screen_text={} tldr={}c",
+                    idx.id,
+                    idx.visual_timeline.len(),
+                    idx.on_screen_text.len(),
+                    idx.summary.tldr.chars().count()
+                );
+            }
+            println!("cleaned {cleaned} clip(s)");
         }
     }
     Ok(())

@@ -12,13 +12,15 @@
 //! [`get_frame_context`](query::get_frame_context), [`query_clip`](query::query_clip))
 //! that the MCP server and JSON API sit on top of.
 
+pub mod clean;
 pub mod query;
 pub mod schema;
 
+pub use clean::clean_index;
 pub use query::{Answer, FrameContext, TextHit};
 pub use schema::{
-    AppFocus, Chapter, Event, Index, Metadata, OnScreenText, Redaction, RedactionItem, Source,
-    Status, Summary, TextKind, TranscriptSegment, VisualMoment, CLIPXD_SCHEMA_VERSION,
+    AppFocus, Chapter, Event, Index, Metadata, OnScreenText, Redaction, RedactionItem, SearchCorpus,
+    Source, Status, Summary, TextKind, TranscriptSegment, VisualMoment, CLIPXD_SCHEMA_VERSION,
 };
 
 /// Milliseconds → seconds, the unit every timestamp in the index uses.
