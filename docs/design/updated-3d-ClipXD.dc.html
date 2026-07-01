@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --sodium:#FF7A59; --signal:#16C79A; --grape:#9B8CFF; --sun:#FFC75A;
+    --font-display:'Space Grotesk',system-ui,sans-serif;
+    --font-ui:'Space Grotesk',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',monospace;
+    --ease-clip:cubic-bezier(.34,1.56,.42,1);
+    --cinema:linear-gradient(135deg,#FFD3B0 0%,#FFAFC2 36%,#C9B6FF 68%,#A6E6CF 100%);
+    --r:22px; --r-lg:30px; --r-sm:15px;
+  }
+  /* LIGHT = playground — warm pastel clay */
+  [data-theme="light"]{
+    --bg:#EFE9F0;
+    --panel:#FBF7F4; --panel-2:#F3EDEF; --panel-3:#EAE2EC;
+    --glass:rgba(255,255,255,.5); --glass-2:rgba(255,255,255,.66);
+    --border:rgba(70,52,92,.10); --border-2:rgba(70,52,92,.18);
+    --text:#211B2B; --text-2:#5F586E; --text-3:#928BA1;
+    --sodium-text:#D6461F; --signal-text:#0C8E6C;
+    --on-accent:#FFFFFF; --danger:#E0452B; --danger-soft:#FBE4DF;
+    --sodium-wash:rgba(255,122,89,.13); --signal-wash:rgba(22,199,154,.13);
+    --grid:rgba(70,52,92,.04);
+    --scrim:rgba(244,238,246,.74);
+    --clay:0 16px 30px -14px rgba(80,54,112,.34), inset 0 2px 1px rgba(255,255,255,.95), inset 0 -8px 16px -6px rgba(120,96,150,.16);
+    --clay-sm:0 9px 18px -10px rgba(80,54,112,.3), inset 0 2px 1px rgba(255,255,255,.9), inset 0 -5px 10px -5px rgba(120,96,150,.14);
+    --clay-in:inset 0 3px 7px rgba(100,72,130,.22), inset 0 -2px 2px rgba(255,255,255,.7);
+    --clay-signal:0 14px 26px -12px rgba(12,142,108,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(8,90,68,.4);
+    --clay-sodium:0 14px 26px -12px rgba(214,70,31,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(150,40,16,.4);
+    --raise:0 32px 60px -28px rgba(80,54,112,.4), 0 8px 18px -10px rgba(80,54,112,.22);
+    --raise-sm:0 12px 26px -14px rgba(80,54,112,.32);
+    --pop:var(--clay); --pop-sm:var(--clay-sm); --pop-signal:var(--clay-signal); --pop-sodium:var(--clay-sodium);
+    --inset:var(--clay-in);
+    --env:radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.22), transparent 62%), radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.2), transparent 62%), radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.2), transparent 64%);
+    --lg-hi1:.5; --lg-hi2:.12; --lg-edge:.85; --lg-side:.4; --lg-border:.45; --nav-top-hi:rgba(255,255,255,.5);
+    --emboss:0 1px 0 rgba(255,255,255,.85), 0 -1px 1px rgba(120,90,150,.16), 1px 3px 3px rgba(80,54,112,.14), 2px 6px 10px rgba(80,54,112,.14);
+    --sidebar-bg:linear-gradient(180deg,#F6EEFA,#EFE4F5);
+  }
+  /* DARK = night playground — deep plum clay + glow */
+  [data-theme="dark"]{
+    --bg:#15121C;
+    --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
+    --glass:rgba(54,46,78,.46); --glass-2:rgba(60,52,86,.6);
+    --border:rgba(255,255,255,.10); --border-2:rgba(255,255,255,.2);
+    --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
+    --sodium-text:#FFAD90; --signal-text:#5FE7C2;
+    --on-accent:#15121C; --danger:#FF6F5A; --danger-soft:#3A1A22;
+    --sodium-wash:rgba(255,122,89,.16); --signal-wash:rgba(22,199,154,.2);
+    --grid:rgba(255,255,255,.04);
+    --scrim:rgba(21,18,28,.7);
+    --clay:0 18px 34px -14px rgba(0,0,0,.7), inset 0 2px 1px rgba(255,255,255,.14), inset 0 -9px 18px -7px rgba(0,0,0,.5);
+    --clay-sm:0 11px 22px -12px rgba(0,0,0,.66), inset 0 2px 1px rgba(255,255,255,.12), inset 0 -6px 12px -6px rgba(0,0,0,.45);
+    --clay-in:inset 0 3px 8px rgba(0,0,0,.55), inset 0 -1px 1px rgba(255,255,255,.08);
+    --clay-signal:0 16px 30px -12px rgba(22,199,154,.5), inset 0 2px 1px rgba(255,255,255,.4), inset 0 -8px 16px -6px rgba(0,70,52,.5);
+    --clay-sodium:0 16px 30px -12px rgba(255,122,89,.45), inset 0 2px 1px rgba(255,255,255,.34), inset 0 -8px 16px -6px rgba(120,40,20,.5);
+    --raise:0 36px 70px -30px rgba(0,0,0,.85), 0 8px 20px -10px rgba(0,0,0,.7);
+    --raise-sm:0 14px 30px -16px rgba(0,0,0,.75);
+    --pop:var(--clay); --pop-sm:var(--clay-sm); --pop-signal:var(--clay-signal); --pop-sodium:var(--clay-sodium);
+    --inset:var(--clay-in);
+    --env:radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.18), transparent 62%), radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.2), transparent 62%), radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.22), transparent 64%);
+    --lg-hi1:.16; --lg-hi2:.05; --lg-edge:.16; --lg-side:.12; --lg-border:.14; --nav-top-hi:rgba(255,255,255,.07);
+    --emboss:0 1px 0 rgba(255,255,255,.10), 0 -1px 1px rgba(0,0,0,.4), 1px 3px 4px rgba(0,0,0,.5), 2px 7px 14px rgba(0,0,0,.45);
+    --sidebar-bg:linear-gradient(180deg,#241D33,#1B1727);
+  }
+  html,body{background:var(--bg);color:var(--text);font-family:var(--font-ui);-webkit-font-smoothing:antialiased}
+  /* clay base — everything puffy & bouncy */
+  button{transition:transform .2s var(--ease-clip),box-shadow .2s var(--ease-clip),background .14s,color .14s;cursor:pointer}
+  button:hover{transform:translateY(-2px)}
+  button:active{transform:translateY(1px) scale(.98)}
+  input{box-shadow:var(--inset)}
+  .lift{transition:transform .26s var(--ease-clip),box-shadow .26s var(--ease-clip)}
+  .lift:hover{transform:translateY(-6px) scale(1.012)}
+  .lift:hover{box-shadow:var(--raise)}
+  /* liquid-glass lens — frosted, specular, refractive */
+  .lglass{backdrop-filter:blur(7px) saturate(1.6);-webkit-backdrop-filter:blur(7px) saturate(1.6);background:radial-gradient(120% 120% at 30% 22%,rgba(255,255,255,var(--lg-hi1)),rgba(255,255,255,var(--lg-hi2)) 46%,rgba(255,255,255,.04) 70%);box-shadow:inset 0 2px 3px rgba(255,255,255,var(--lg-edge)),inset 0 -10px 16px -8px rgba(60,40,90,.5),inset 3px 0 8px -4px rgba(255,255,255,var(--lg-side)),0 14px 30px -10px rgba(40,24,70,.5);border:1px solid rgba(255,255,255,var(--lg-border))}
+  @keyframes boxIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+  @keyframes sweepGlow{0%,100%{opacity:.5}50%{opacity:1}}
+  @keyframes wobble{0%,100%{border-radius:46% 54% 56% 44%/52% 48% 52% 48%}50%{border-radius:54% 46% 44% 56%/46% 56% 44% 54%}}
+  ::selection{background:var(--signal);color:#06231B}
+  ::-webkit-scrollbar{width:11px;height:11px}
+  ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:99px;border:3px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-track{background:transparent}
+  button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  @keyframes pulseSig{0%{box-shadow:0 0 0 0 rgba(51,224,194,.55)}70%{box-shadow:0 0 0 10px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  @keyframes pulseSod{0%{box-shadow:0 0 0 0 rgba(240,162,60,.55)}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes revealUp{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes scanX{0%{transform:translateX(-130%)}100%{transform:translateX(130%)}}
+  @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes recPulse{0%{box-shadow:0 0 0 0 var(--sodium)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  @keyframes navSheen{0%{transform:translateX(-180%) skewX(-12deg)}45%,100%{transform:translateX(420%) skewX(-12deg)}}
+  .logobob svg{transition:transform .35s var(--ease-clip)}
+  .logobob:hover svg{transform:translateY(-2px) rotate(-5deg) scale(1.05)}
+  @keyframes toastIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.001ms !important;animation-iteration-count:1 !important}
+  }
+</style>
+</helmet>
+
+<div data-theme="{{ theme }}" style="background:var(--env), var(--bg);background-attachment:fixed;color:var(--text);min-height:100vh;transition:background .3s var(--ease-clip),color .3s">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <filter id="liquidlens" x="-30%" y="-30%" width="160%" height="160%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.016" numOctaves="2" seed="7" result="noise"></feTurbulence>
+      <feGaussianBlur in="noise" stdDeviation="1.4" result="sn"></feGaussianBlur>
+      <feDisplacementMap in="SourceGraphic" in2="sn" scale="16" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>
+    </filter>
+  </defs></svg>
+  <!-- ============ NAV — floating clay-glass bar (landing only) ============ -->
+  <sc-if value="{{ isLanding }}" hint-placeholder-val="{{ true }}">
+  <nav style="position:sticky;top:0;z-index:50;padding:16px 20px 0">
+    <div class="lglass" style="position:relative;overflow:hidden;max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:13px;border-radius:999px;padding:9px 11px 9px 14px">
+      <div style="position:absolute;top:0;left:0;right:0;height:50%;border-radius:999px 999px 0 0;background:linear-gradient(180deg,var(--nav-top-hi),transparent);pointer-events:none;opacity:.8"></div>
+      <div style="position:absolute;top:0;bottom:0;width:34%;background:linear-gradient(105deg,transparent,rgba(255,255,255,.55),transparent);filter:blur(2px);pointer-events:none;animation:navSheen 7s var(--ease-clip) infinite"></div>
+      <div onClick="{{ goLanding }}" class="logobob" style="display:flex;align-items:center;gap:12px;cursor:pointer;flex:none">
+        <span style="display:inline-flex;line-height:0;filter:drop-shadow(0 8px 10px rgba(60,30,90,.32))">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-label="ClipXD logo">
+            <defs>
+              <linearGradient id="lx_side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#19D7A6"></stop><stop offset="1" stop-color="#0B7E5F"></stop></linearGradient>
+              <linearGradient id="lx_face" x1="0.2" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#FFFFFF"></stop><stop offset="0.55" stop-color="#F6EEFA"></stop><stop offset="1" stop-color="#E4D6F0"></stop></linearGradient>
+              <linearGradient id="lx_play" x1="0.1" y1="0.05" x2="0.85" y2="0.95"><stop offset="0" stop-color="#FFB48F"></stop><stop offset="0.45" stop-color="#FF7A59"></stop><stop offset="1" stop-color="#EF5A39"></stop></linearGradient>
+              <radialGradient id="lx_spec" cx="0.32" cy="0.26" r="0.55"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"></stop><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"></stop></radialGradient>
+            </defs>
+            <rect x="5" y="8.5" width="30" height="28" rx="11" fill="url(#lx_side)"></rect>
+            <rect x="5" y="4.5" width="30" height="29" rx="11" fill="url(#lx_face)"></rect>
+            <path d="M11 6.5 H29 C32 6.5 33.5 8 33.5 11 V15 C29 12 11 12 6.5 15 V11 C6.5 8 8 6.5 11 6.5 Z" fill="url(#lx_spec)" opacity="0.7"></path>
+            <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="#C8432A" transform="translate(0,1.6)" stroke="#C8432A" stroke-width="3" stroke-linejoin="round"></path>
+            <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="url(#lx_play)" stroke="url(#lx_play)" stroke-width="3" stroke-linejoin="round"></path>
+            <ellipse cx="18.6" cy="16.4" rx="2.1" ry="1.4" fill="#FFFFFF" opacity="0.6" transform="rotate(-32 18.6 16.4)"></ellipse>
+          </svg>
+        </span>
+        <span style="font-family:var(--font-display);font-weight:700;font-size:20px;letter-spacing:-.025em;display:inline-flex;align-items:center;gap:5px">Clip<span style="display:inline-flex;align-items:center;justify-content:center;background:var(--signal);color:var(--on-accent);font-size:15px;font-weight:700;letter-spacing:0;padding:2px 7px 3px;border-radius:9px;transform:rotate(-5deg);box-shadow:var(--clay-sm)">XD</span></span>
+      </div>
+      <span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);background:var(--panel-2);border-radius:999px;padding:5px 11px 5px 9px;box-shadow:var(--clay-in)">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--sodium);animation:recPulse 2s var(--ease-clip) infinite"></span>rec_ready
+      </span>
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:2px;background:var(--panel-2);border-radius:999px;padding:4px;box-shadow:var(--clay-in)">
+        <span onClick="{{ goLanding }}" style="cursor:pointer;font-family:var(--font-mono);font-size:12.5px;color:var(--text-2);padding:7px 13px;border-radius:999px"><span style="color:var(--sodium-text)">◆</span> product</span>
+        <span onClick="{{ goCloud }}" style="cursor:pointer;font-family:var(--font-mono);font-size:12.5px;color:var(--text-2);padding:7px 13px;border-radius:999px"><span style="color:var(--grape)">↗</span> cloud</span>
+      </div>
+      <button onClick="{{ toggleTheme }}" title="light studio &lt;-&gt; night studio" style="display:flex;align-items:center;gap:1px;background:var(--panel-2);border:none;border-radius:999px;padding:4px;cursor:pointer;box-shadow:var(--clay-in)">
+        <span style="display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:{{ watchBtnBg }};box-shadow:{{ watchBtnShadow }};transition:all .2s var(--ease-clip)">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+            <defs><radialGradient id="ic_sun" cx="0.35" cy="0.3" r="0.75"><stop offset="0" stop-color="#FFF4CC"></stop><stop offset="0.5" stop-color="#FFC75A"></stop><stop offset="1" stop-color="#FF9036"></stop></radialGradient></defs>
+            <g stroke="{{ sunRay }}" stroke-width="2.1" stroke-linecap="round"><line x1="12" y1="1.8" x2="12" y2="4.4"></line><line x1="12" y1="19.6" x2="12" y2="22.2"></line><line x1="1.8" y1="12" x2="4.4" y2="12"></line><line x1="19.6" y1="12" x2="22.2" y2="12"></line><line x1="4.8" y1="4.8" x2="6.6" y2="6.6"></line><line x1="17.4" y1="17.4" x2="19.2" y2="19.2"></line><line x1="19.2" y1="4.8" x2="17.4" y2="6.6"></line><line x1="6.6" y1="17.4" x2="4.8" y2="19.2"></line></g>
+            <circle cx="12" cy="12" r="5.4" fill="url(#ic_sun)"></circle>
+            <ellipse cx="10.2" cy="10.1" rx="1.7" ry="1.1" fill="#fff" opacity="0.65" transform="rotate(-30 10.2 10.1)"></ellipse>
+          </svg>
+        </span>
+        <span style="display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:{{ readBtnBg }};box-shadow:{{ readBtnShadow }};transition:all .2s var(--ease-clip)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <defs><linearGradient id="ic_moon" x1="0.1" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#F3EEFF"></stop><stop offset="1" stop-color="#B5A4E6"></stop></linearGradient></defs>
+            <path d="M21 14.3 A8.4 8.4 0 1 1 11.4 3.4 A6.5 6.5 0 0 0 21 14.3 Z" fill="url(#ic_moon)"></path>
+            <ellipse cx="9.6" cy="8.4" rx="1.5" ry="1" fill="#fff" opacity="0.5" transform="rotate(-30 9.6 8.4)"></ellipse>
+            <circle cx="16.5" cy="5.5" r="0.9" fill="{{ moonStar }}"></circle>
+          </svg>
+        </span>
+      </button>
+      <button onClick="{{ goCloud }}" style="display:inline-flex;align-items:center;gap:7px;background:var(--signal);color:var(--on-accent);font-weight:600;font-size:13.5px;font-family:var(--font-ui);padding:10px 18px;border-radius:999px;border:none;cursor:pointer;box-shadow:var(--pop-signal)">Open app</button>
+    </div>
+  </nav>
+  </sc-if>
+
+  <!-- ============ LANDING ============ -->
+  <sc-if value="{{ isLanding }}" hint-placeholder-val="{{ true }}">
+  <div>
+    <!-- HERO — the watch⟷read wipe -->
+    <section style="position:relative;overflow:hidden;padding:54px 0 40px">
+      <div style="position:absolute;inset:0;pointer-events:none;background:var(--env)"></div>
+      <div style="position:relative;max-width:1240px;margin:0 auto;padding:0 28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(540px,1fr));gap:44px;align-items:start">
+
+        <!-- headline block -->
+        <div style="min-width:0">
+          <div style="display:inline-flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11px;color:var(--text-2);letter-spacing:.1em;text-transform:uppercase;margin-bottom:22px;background:var(--panel);border-radius:999px;padding:7px 14px 7px 12px;box-shadow:var(--clay-sm)">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--signal);box-shadow:0 0 9px var(--signal)"></span>powered by the veyo visual-event codec
+          </div>
+          <h1 style="font-family:var(--font-display);font-size:clamp(40px,5.6vw,72px);line-height:1.02;letter-spacing:-.035em;font-weight:700;text-wrap:balance;color:var(--text);text-shadow:var(--emboss)">A screen recording<br>an agent can <span style="color:var(--signal)">read</span>.</h1>
+          <p style="margin-top:20px;font-family:var(--font-ui);font-size:18.5px;line-height:1.55;color:var(--text-2);max-width:560px;text-wrap:pretty">Record once. Humans get a beautiful video. Agents get a structured index — <span style="color:var(--text)">transcript, on-screen text, clicks, network, the moments that matter</span> — queryable straight from the link. <span style="color:var(--sodium-text)">Drag the seam below</span> to see one second, both ways.</p>
+        </div>
+
+        <!-- THE WIPE -->
+        <div style="min-width:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;font-family:var(--font-mono);font-size:11px">
+            <span style="display:inline-flex;align-items:center;gap:7px;color:var(--sodium-text);background:var(--sodium-wash);border-radius:999px;padding:5px 12px 5px 10px;box-shadow:var(--clay-sm)"><span style="width:8px;height:8px;border-radius:50%;background:var(--sodium)"></span>WATCH — what a human sees</span>
+            <span style="color:var(--text-3)">t=0:41 · drag to parse ↔</span>
+            <span style="display:inline-flex;align-items:center;gap:7px;color:var(--signal-text);background:var(--signal-wash);border-radius:999px;padding:5px 10px 5px 12px;box-shadow:var(--clay-sm)">how the machine reads it — READ<span style="width:8px;height:8px;border-radius:50%;background:var(--signal)"></span></span>
+          </div>
+
+          <div onPointerDown="{{ startDrag }}" style="position:relative;width:100%;aspect-ratio:16/9.5;border-radius:var(--r-lg);overflow:hidden;cursor:ew-resize;user-select:none;touch-action:none;box-shadow:var(--clay);background:var(--panel-2)">
+            <!-- BASE: the raw video (watch) -->
+            <div style="position:absolute;inset:0;background:var(--panel-2)">
+              <div style="position:absolute;inset:0;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:34px 34px;pointer-events:none"></div>
+              <div style="position:absolute;inset:0;display:grid;place-items:center;padding:6% 12%">
+                <div style="width:100%;max-width:560px;border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.5);box-shadow:0 30px 70px -20px rgba(40,24,60,.55),0 8px 20px -12px rgba(40,24,60,.4);background:#fff">
+                  <div style="display:flex;align-items:center;gap:6px;padding:8px 11px;background:#f1f1f3;border-bottom:1px solid #e3e3e6">
+                    <span style="width:9px;height:9px;border-radius:50%;background:#ec6a5e"></span>
+                    <span style="width:9px;height:9px;border-radius:50%;background:#f4be4f"></span>
+                    <span style="width:9px;height:9px;border-radius:50%;background:#61c454"></span>
+                    <span style="margin-left:8px;font-family:var(--font-mono);font-size:10px;color:#8a8a90;background:#fff;border:1px solid #e3e3e6;border-radius:7px;padding:2px 9px">shop.acme.test/checkout</span>
+                  </div>
+                  <div style="padding:18px 20px;background:#fff;color:#222">
+                    <div style="font-size:14px;font-weight:700;color:#111">Payment</div>
+                    <div style="margin-top:11px;height:34px;border:1px solid #ddd;border-radius:8px;display:flex;align-items:center;padding:0 11px;font-family:var(--font-mono);font-size:12px;color:#777">4242 4242 4242 4242</div>
+                    <div style="margin-top:9px;display:flex;gap:9px"><div style="flex:1;height:30px;border:1px solid #ddd;border-radius:8px"></div><div style="width:84px;height:30px;border:1px solid #ddd;border-radius:8px"></div></div>
+                    <div style="margin-top:12px;background:#1a1a1a;color:#fff;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:700">Pay $89.00</div>
+                    <div style="margin-top:12px;background:#fdecec;border:1px solid #f5b5b5;color:#c0392b;border-radius:9px;padding:10px 12px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;border-radius:50%;background:#c0392b"></span>Payment failed: card_declined</div>
+                  </div>
+                </div>
+              </div>
+              <!-- watch-side HUD -->
+              <div style="position:absolute;left:14px;top:13px;display:flex;flex-direction:column;gap:7px;align-items:flex-start">
+                <span style="display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10.5px;color:var(--text);background:var(--panel);border-radius:999px;padding:5px 11px 5px 9px;box-shadow:var(--clay-sm)"><span style="width:7px;height:7px;border-radius:50%;background:var(--sodium);animation:recPulse 2s var(--ease-clip) infinite"></span>REC · 00:41 · 1080p</span>
+                <span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;color:var(--sodium-text);background:var(--panel);border-radius:999px;padding:5px 11px;box-shadow:var(--clay-sm)">⌖ cinematic auto-zoom 2.4×</span>
+              </div>
+              <span style="position:absolute;left:14px;bottom:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-3);background:var(--panel);padding:5px 11px;border-radius:999px;box-shadow:var(--clay-sm)">the pixels — what a human watches</span>
+            </div>
+
+            <!-- READ overlay: identical card, parsed in place — clipped to right of the seam -->
+            <div style="position:absolute;inset:0;clip-path:{{ revealClip }}">
+              <div style="position:absolute;inset:0;background:var(--panel-2)"></div>
+              <div style="position:absolute;inset:0;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:34px 34px;pointer-events:none"></div>
+              <div style="position:absolute;inset:0;background:var(--signal-wash);pointer-events:none"></div>
+              <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(0deg,transparent 0 3px,rgba(22,199,154,.06) 3px 4px);pointer-events:none"></div>
+              <div style="position:absolute;inset:0;display:grid;place-items:center;padding:6% 12%">
+                <div style="width:100%;max-width:560px;border-radius:20px;overflow:visible;border:1px solid transparent;background:transparent">
+                  <div style="display:flex;align-items:center;gap:6px;padding:8px 11px;border-bottom:1px solid transparent">
+                    <span style="width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18)"></span>
+                    <span style="width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18)"></span>
+                    <span style="width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18)"></span>
+                    <div style="position:relative;margin-left:8px"><span style="font-family:var(--font-mono);font-size:10px;color:transparent;border:1px solid transparent;border-radius:7px;padding:2px 9px">shop.acme.test/checkout</span>
+                      <div style="position:absolute;inset:-2px;border:1.5px solid var(--signal);border-radius:9px"><span style="position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--on-accent);background:var(--signal);padding:2px 5px;border-radius:3px;white-space:nowrap">ocr · url</span></div>
+                    </div>
+                  </div>
+                  <div style="padding:18px 20px">
+                    <div style="position:relative;display:inline-block"><div style="font-size:14px;font-weight:700;color:transparent">Payment</div>
+                      <div style="position:absolute;inset:-3px -6px;border:1.5px solid var(--signal);border-radius:9px"><span style="position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--on-accent);background:var(--signal);padding:2px 5px;border-radius:3px;white-space:nowrap">ocr · "Payment"</span></div>
+                    </div>
+                    <div style="position:relative;margin-top:11px;height:34px"><div style="position:absolute;inset:0;border:1.5px solid var(--signal);border-radius:9px;animation:boxIn .3s var(--ease-clip)"><span style="position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--on-accent);background:var(--signal);padding:2px 5px;border-radius:3px;white-space:nowrap">ocr · "4242 4242 4242 4242" · pii?</span></div></div>
+                    <div style="margin-top:9px;display:flex;gap:9px"><div style="flex:1;height:30px"></div><div style="width:84px;height:30px"></div></div>
+                    <div style="position:relative;margin-top:12px"><div style="padding:11px;text-align:center;font-size:13px;font-weight:700;color:transparent">Pay $89.00</div><div style="position:absolute;inset:0;border:1.5px solid var(--sodium);border-radius:9px;animation:boxIn .3s var(--ease-clip)"><span style="position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--on-accent);background:var(--sodium);padding:2px 5px;border-radius:3px;white-space:nowrap">event · click "Pay $89.00" @0:40</span></div></div>
+                    <div style="position:relative;margin-top:12px"><div style="padding:10px 12px;font-size:12.5px;font-weight:600;color:transparent;display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px"></span>Payment failed: card_declined</div><div style="position:absolute;inset:0;border:1.5px solid var(--danger);border-radius:9px;animation:boxIn .3s var(--ease-clip)"><span style="position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;font-weight:600;color:#fff;background:var(--danger);padding:2px 5px;border-radius:3px;white-space:nowrap">ocr+net · 500 "card_declined"</span></div></div>
+                  </div>
+                </div>
+              </div>
+              <!-- read-side index detail -->
+              <div style="position:absolute;right:14px;top:13px;display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+                <div style="font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-2);background:var(--panel);border-radius:13px;padding:9px 12px;box-shadow:var(--clay-sm);display:flex;flex-direction:column;gap:3px;text-align:left">
+                  <span style="color:var(--text-3);font-size:8.5px;letter-spacing:.12em">INDEX · 5 TRACKS</span>
+                  <span><span style="color:var(--signal-text)">●</span> transcript · whisper.cpp</span>
+                  <span><span style="color:var(--signal-text)">●</span> on-screen text · ocr</span>
+                  <span><span style="color:var(--sodium-text)">●</span> events · click / key / scroll</span>
+                  <span><span style="color:var(--grape)">●</span> network · DOM · a11y</span>
+                  <span><span style="color:var(--text-3)">●</span> summary · chapters</span>
+                </div>
+                <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--danger);background:var(--panel);border-radius:999px;padding:5px 10px;box-shadow:var(--clay-sm)">⊘ CloakPipe · 1 secret redacted</span>
+              </div>
+              <span style="position:absolute;right:14px;bottom:12px;font-family:var(--font-mono);font-size:11px;color:var(--signal-text);background:var(--panel);padding:5px 11px;border-radius:999px;box-shadow:var(--clay-sm)">~340 tokens · queryable over MCP</span>
+            </div>
+
+            <!-- the seam handle — liquid-glass lens -->
+            <div style="position:absolute;top:0;bottom:0;left:{{ wipePct }};width:2.5px;background:linear-gradient(180deg,rgba(255,255,255,.6),var(--signal),rgba(255,255,255,.6));box-shadow:0 0 16px rgba(22,199,154,.6);pointer-events:none">
+              <span class="lglass" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);font-size:17px;color:var(--text);text-shadow:0 1px 2px rgba(255,255,255,.6)">⟺</span>
+              <span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:54px;height:54px;border-radius:50%;filter:url(#liquidlens);background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.45),transparent 55%);pointer-events:none"></span>
+            </div>
+          </div>
+
+          <!-- CTA row welded under the device -->
+          <div style="display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap">
+            <button onClick="{{ goCloud }}" style="display:inline-flex;align-items:center;gap:9px;background:var(--signal);color:var(--on-accent);font-weight:600;font-size:15px;font-family:var(--font-ui);padding:13px 22px;border-radius:16px;border:none;cursor:pointer;box-shadow:var(--pop-signal)"><span style="width:8px;height:8px;border-radius:50%;background:var(--on-accent)"></span>Record a clip</button>
+            <button onClick="{{ scrollDemo }}" style="display:inline-flex;align-items:center;gap:8px;background:var(--panel-2);color:var(--text);font-weight:600;font-size:15px;font-family:var(--font-ui);padding:13px 22px;border-radius:15px;border:1px solid var(--border);cursor:pointer">Paste a Loom instead</button>
+            <span onClick="{{ resumeSweep }}" style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-3);cursor:pointer;border:1px solid var(--border);border-radius:18px;padding:6px 10px">seam: {{ sweepLabel }} · click to auto-sweep</span>
+          </div>
+
+          <!-- stat ledger -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px">
+            <div style="background:var(--panel);border-radius:16px;padding:16px 18px;box-shadow:var(--clay-sm)"><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text)">0 px</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">leave your device — veyo runs on-CPU</div></div>
+            <div style="background:var(--panel);border-radius:16px;padding:16px 18px;box-shadow:var(--clay-sm)"><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text)">&lt;1%</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">of frames enriched — salience-gated</div></div>
+            <div style="background:var(--panel);border-radius:16px;padding:16px 18px;box-shadow:var(--clay-sm)"><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text)">1 link</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">video + queryable index, same URL</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRUST STRIP -->
+      <div style="max-width:1240px;margin:34px auto 0;padding:0 28px">
+        <div class="lglass" style="border-radius:999px;padding:14px 24px;display:flex;align-items:center;gap:13px;flex-wrap:wrap;justify-content:center;font-family:var(--font-mono);font-size:12px;color:var(--text-3)">
+          <span>reads &amp; speaks</span>
+          <span style="color:var(--text-2)">MCP</span><span>·</span>
+          <span style="color:var(--text-2)">Claude</span><span>·</span>
+          <span style="color:var(--text-2)">Loom imports</span><span>·</span>
+          <span style="color:var(--text-2)">Cap imports</span><span>·</span>
+          <span style="color:var(--text-2)">whisper.cpp</span><span>·</span>
+          <span style="color:var(--text-2)">CloakPipe</span><span>·</span>
+          <span style="color:var(--text-2)">local SQLite + FTS</span>
+        </div>
+      </div>
+
+      <!-- TWO BODIES THESIS (merged into hero) -->
+      <div style="max-width:1240px;margin:0 auto;padding:50px 28px 6px">
+        <div style="max-width:620px;margin-bottom:32px">
+          <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-3);margin-bottom:14px">the thesis</div>
+          <h2 style="font-family:var(--font-display);font-size:clamp(30px,3.8vw,46px);line-height:1.05;letter-spacing:-.02em;font-weight:500;text-wrap:balance">Two bodies, one recording.</h2>
+          <p style="margin-top:15px;font-size:17px;color:var(--text-2);line-height:1.55">A clip has a body a human <span style="color:var(--sodium-text)">watches</span> and a body an agent <span style="color:var(--signal-text)">reads</span>. Same content, two voices — warm and optical for people, structured and monospaced for machines.</p>
+        </div>
+        <div style="border-radius:var(--r);overflow:hidden;display:grid;grid-template-columns:1fr 1fr;box-shadow:var(--clay)">
+          <!-- watch half -->
+          <div style="padding:30px;background:var(--sodium-wash);border-right:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--sodium-text);margin-bottom:18px"><span style="width:8px;height:8px;border-radius:50%;background:var(--sodium)"></span>WATCH · for a person</div>
+            <div style="font-family:var(--font-display);font-size:25px;font-weight:500;letter-spacing:-.01em;line-height:1.2">Checkout 500 — the card declines on pay</div>
+            <p style="margin-top:14px;font-size:14.5px;color:var(--text-2);line-height:1.6">Cinematic auto-zoom follows the cursor into the form, settles on the Pay button, and holds as the red banner appears. Beautiful, optical, human.</p>
+            <div style="margin-top:18px;display:flex;gap:14px;font-size:13px;color:var(--text-3)">
+              <span style="font-family:var(--font-display);font-style:italic">serif display</span><span>·</span><span style="font-family:var(--font-display);font-style:italic">warm sodium</span><span>·</span><span style="font-family:var(--font-display);font-style:italic">cinematic ease</span>
+            </div>
+          </div>
+          <!-- read half -->
+          <div style="padding:30px;background:var(--signal-wash)">
+            <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text);margin-bottom:18px"><span style="width:8px;height:8px;border-radius:50%;background:var(--signal)"></span>READ · for an agent</div>
+            <div style="font-family:var(--font-mono);font-size:12.5px;line-height:1.85;color:var(--text-2)">
+<span style="color:var(--text-3)">0:40</span> event:click  <span style="color:var(--text)">"Pay $89.00"</span><br>
+<span style="color:var(--text-3)">0:41</span> net         <span style="color:var(--text)">POST /charge → 500</span><br>
+<span style="color:var(--text-3)">0:41</span> ocr         <span style="color:var(--danger)">"card_declined"</span><br>
+<span style="color:var(--text-3)">0:42</span> transcript  <span style="color:var(--text)">"it just fails…"</span>
+            </div>
+            <div style="margin-top:18px;display:flex;gap:14px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)">
+              <span>mono utility</span><span>·</span><span>cool signal</span><span>·</span><span>scan reveal</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- INDEX BREAKDOWN -->
+    <section style="max-width:1240px;margin:0 auto;padding:56px 28px 30px">
+      <div style="max-width:640px">
+        <div style="font-family:var(--font-mono);font-size:13px;color:var(--signal-text);margin-bottom:14px">the moat</div>
+        <h2 style="font-family:var(--font-display);font-size:clamp(28px,3.6vw,44px);line-height:1.05;letter-spacing:-.02em;font-weight:500;text-wrap:balance">An agent should never need the pixels.</h2>
+        <p style="margin-top:16px;font-size:17px;color:var(--text-2);line-height:1.55">Every clip resolves from one URL into a structured object — five tracks, all timestamped, all text. If the agent ever has to watch the video, the index failed.</p>
+      </div>
+      <div style="margin-top:38px;display:grid;grid-template-columns:repeat(6,1fr);gap:14px">
+        <sc-for list="{{ indexParts }}" as="p" hint-placeholder-count="5">
+          <div class="lift" style="background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);padding:20px;display:flex;flex-direction:column;gap:12px;grid-column:{{ p.span }}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--on-accent);background:var(--signal);border-radius:8px;padding:3px 8px;font-weight:500;box-shadow:var(--clay-sm)">{{ p.tag }}</span>
+              <span style="font-family:var(--font-display);font-weight:500;font-size:17px;letter-spacing:-.01em">{{ p.title }}</span>
+            </div>
+            <p style="font-size:13.5px;color:var(--text-2);line-height:1.5">{{ p.desc }}</p>
+            <div style="margin-top:auto;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3);background:var(--panel-2);border-radius:12px;padding:10px 12px;line-height:1.6;white-space:pre-wrap;box-shadow:var(--clay-in)">{{ p.sample }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- PIPELINE -->
+    <section style="max-width:1240px;margin:0 auto;padding:50px 28px">
+      <div style="border:1px solid var(--border);background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);padding:34px 30px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;margin-bottom:30px">
+          <div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-3);margin-bottom:10px">architecture — thin recorder, fat index</div>
+            <h2 style="font-family:var(--font-display);font-size:clamp(24px,3vw,36px);letter-spacing:-.02em;font-weight:500">How a recording becomes queryable</h2>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--signal-text);border:1px solid color-mix(in oklab,var(--signal) 35%,transparent);border-radius:var(--r-sm);padding:7px 11px">no imagery leaves the device →</div>
+        </div>
+        <div style="display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:6px">
+          <sc-for list="{{ pipeline }}" as="node" hint-placeholder-count="6">
+            <div style="display:flex;align-items:center;flex:none">
+              <div style="width:182px;border-radius:16px;background:{{ node.bg }};box-shadow:{{ node.shadow }};padding:19px;min-height:134px;display:flex;flex-direction:column;gap:9px">
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:{{ node.kicker }}">{{ node.step }}</span>
+                <span style="font-family:var(--font-display);font-weight:500;font-size:16px;letter-spacing:-.01em;color:var(--text)">{{ node.title }}</span>
+                <span style="font-size:12px;color:var(--text-2);line-height:1.45">{{ node.desc }}</span>
+              </div>
+              <sc-if value="{{ node.arrow }}" hint-placeholder-val="{{ true }}">
+                <span style="color:var(--text-3);padding:0 16px;font-size:18px;flex:none">→</span>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURE: cinematic + import -->
+    <section style="max-width:1240px;margin:0 auto;padding:24px 28px 18px;display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="lift" style="background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);padding:26px;display:flex;flex-direction:column">
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--sodium-text);margin-bottom:12px">the adoption hook · watch</div>
+        <h3 style="font-family:var(--font-display);font-size:24px;letter-spacing:-.01em;font-weight:500">Cinematic by default</h3>
+        <p style="margin-top:10px;font-size:15px;color:var(--text-2);line-height:1.55;max-width:440px">Auto-zoom follows the cursor and clicks — soft in, settled out, one easing curve across the whole product. Backgrounds, padding, device frames. Raw capture looks produced with zero effort.</p>
+        <div style="margin-top:20px;flex:1;min-height:150px;border-radius:18px;background:var(--cinema);display:grid;place-items:center;padding:24px;position:relative;overflow:hidden;box-shadow:var(--clay-in)">
+          <div style="position:absolute;inset:0;background-image:none"></div>
+          <div style="position:relative;background:rgba(255,255,255,.96);border-radius:16px;padding:18px 22px;box-shadow:0 20px 44px -16px rgba(40,24,60,.5),inset 0 2px 1px rgba(255,255,255,.9);animation:floatY 4s ease-in-out infinite">
+            <div style="font-family:var(--font-mono);font-size:11px;color:#666">cursor → auto-zoom 2.4×</div>
+            <div style="margin-top:8px;width:120px;height:8px;border-radius:var(--r-sm);background:#e3e3e6"></div>
+            <div style="margin-top:6px;width:80px;height:8px;border-radius:var(--r-sm);background:#e3e3e6"></div>
+          </div>
+        </div>
+      </div>
+      <div class="lift" style="background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);padding:26px;display:flex;flex-direction:column">
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--signal-text);margin-bottom:12px">fastest path to value · read</div>
+        <h3 style="font-family:var(--font-display);font-size:24px;letter-spacing:-.01em;font-weight:500">Already have Looms? Paste them.</h3>
+        <p style="margin-top:10px;font-size:15px;color:var(--text-2);line-height:1.55;max-width:440px">Drop any Loom, Cap, or video URL → clipxd reads it → same index, same MCP query. No recording required. "Stop sending me Looms I can't pass to an agent" — now you can.</p>
+        <div style="margin-top:20px;flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px">
+          <div style="display:flex;gap:8px">
+            <div style="flex:1;background:var(--panel-2);border-radius:14px;padding:12px 14px;font-family:var(--font-mono);font-size:12.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:var(--clay-in)">loom.com/share/9c2f…</div>
+            <button onClick="{{ goImport }}" style="background:var(--signal);color:var(--on-accent);border:none;border-radius:var(--r-sm);padding:0 16px;font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;box-shadow:var(--pop-signal)">Read it</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)">
+            <span style="color:var(--signal-text)">✓</span> transcript <span style="color:var(--signal-text)">✓</span> OCR <span style="color:var(--signal-text)">✓</span> events <span style="color:var(--signal-text)">✓</span> MCP
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MCP -->
+    <section style="max-width:1240px;margin:0 auto;padding:18px 28px 28px">
+      <div style="border:1px solid var(--border);background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);overflow:hidden;display:grid;grid-template-columns:1fr 1.15fr">
+        <div style="padding:28px;border-right:1px solid var(--border)">
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--signal-text);margin-bottom:12px">exposed over MCP</div>
+          <h3 style="font-family:var(--font-display);font-size:25px;letter-spacing:-.01em;font-weight:500">The link is an API</h3>
+          <p style="margin-top:10px;font-size:15px;color:var(--text-2);line-height:1.55">Claude or any agent reasons over a clip natively — and a per-clip <span style="font-family:var(--font-mono);font-size:13px;color:var(--text)">.json</span> sidecar covers everything else.</p>
+          <div style="margin-top:18px;display:flex;flex-direction:column;gap:9px">
+            <sc-for list="{{ mcpTools }}" as="t" hint-placeholder-count="4">
+              <div style="display:flex;align-items:baseline;gap:10px"><span style="font-family:var(--font-mono);font-size:13px;color:var(--signal-text)">{{ t.fn }}</span><span style="font-size:12.5px;color:var(--text-3)">{{ t.desc }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:var(--panel-2);padding:24px;font-family:var(--font-mono);font-size:12.5px;line-height:1.75;color:var(--text-2);overflow-x:auto;box-shadow:var(--clay-in)">
+<span style="color:var(--text-3)">$ agent query</span>
+&gt; <span style="color:var(--text)">query_clip(</span>
+&gt;   <span style="color:var(--signal-text)">"clipxd.com/c/8fa2e1"</span>,
+&gt;   <span style="color:var(--signal-text)">"what error showed up and what</span>
+&gt;    <span style="color:var(--signal-text)">was the user doing right before?"</span>)
+<span style="color:var(--text-3)">↳ resolving index … (0 frames fetched)</span>
+
+<span style="color:var(--text)">{</span>
+  <span style="color:var(--text-3)">"answer"</span>: <span style="color:var(--signal-text)">"500 at 0:41 — 'card_declined'</span>
+           <span style="color:var(--signal-text)">in a red banner. User clicked</span>
+           <span style="color:var(--signal-text)">Pay $89.00 at 0:40."</span>,
+  <span style="color:var(--text-3)">"grounds"</span>: [<span style="color:var(--signal-text)">"ocr@0:41"</span>,<span style="color:var(--signal-text)">"net@0:41"</span>,
+              <span style="color:var(--signal-text)">"event:click@0:40"</span>],
+  <span style="color:var(--text-3)">"watched_video"</span>: <span style="color:var(--danger)">false</span>
+<span style="color:var(--text)">}</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMPARISON -->
+    <section style="max-width:1240px;margin:0 auto;padding:38px 28px">
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-3);margin-bottom:14px">vs the field</div>
+      <h2 style="font-family:var(--font-display);font-size:clamp(25px,3vw,38px);letter-spacing:-.02em;font-weight:500;margin-bottom:24px">The only one where the index <span style="font-style:italic;color:var(--signal-text)">is</span> the product.</h2>
+      <div style="border-radius:var(--r);overflow:hidden;box-shadow:var(--clay)">
+        <div style="display:grid;grid-template-columns:1.4fr repeat(4,1fr);background:var(--panel-2);font-size:13px;font-weight:600">
+          <div style="padding:14px 18px;color:var(--text-2)"></div>
+          <div style="padding:14px 10px;text-align:center;color:var(--text-2)">Local-first</div>
+          <div style="padding:14px 10px;text-align:center;color:var(--text-2)">Agent index</div>
+          <div style="padding:14px 10px;text-align:center;color:var(--text-2)">On-device codec</div>
+          <div style="padding:14px 10px;text-align:center;color:var(--text-2)">Redaction</div>
+        </div>
+        <sc-for list="{{ competitors }}" as="row" hint-placeholder-count="4">
+          <div style="display:grid;grid-template-columns:1.4fr repeat(4,1fr);border-top:1px solid var(--border);background:{{ row.bg }}">
+            <div style="padding:15px 18px;font-family:var(--font-display);font-weight:500;font-size:16px;letter-spacing:-.01em;color:{{ row.nameColor }}">{{ row.name }}<span style="display:block;font-family:var(--font-ui);font-weight:400;font-size:12px;color:var(--text-3);margin-top:2px">{{ row.note }}</span></div>
+            <div style="padding:15px 10px;text-align:center;font-size:17px;color:{{ row.c0c }}">{{ row.c0 }}</div>
+            <div style="padding:15px 10px;text-align:center;font-size:17px;color:{{ row.c1c }}">{{ row.c1 }}</div>
+            <div style="padding:15px 10px;text-align:center;font-size:17px;color:{{ row.c2c }}">{{ row.c2 }}</div>
+            <div style="padding:15px 10px;text-align:center;font-size:17px;color:{{ row.c3c }}">{{ row.c3 }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section style="max-width:1240px;margin:0 auto;padding:28px 28px 84px">
+      <div style="position:relative;overflow:hidden;border-radius:var(--r-lg);background:var(--panel);padding:54px 40px;text-align:center;box-shadow:var(--clay)">
+        <div style="position:absolute;inset:0;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:40px 40px;opacity:1;mask-image:radial-gradient(60% 60% at 50% 50%,#000,transparent)"></div>
+        <div style="position:relative">
+          <h2 style="font-family:var(--font-display);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.02em;font-weight:500;text-wrap:balance">Record once. <span style="display:inline-block;background:var(--sodium);color:var(--on-accent);padding:1px .2em 3px;border-radius:11px;transform:rotate(-2deg);box-shadow:var(--clay-sodium)">Watch&nbsp;it</span> or <span style="display:inline-block;background:var(--signal);color:var(--on-accent);padding:1px .2em 3px;border-radius:11px;transform:rotate(2deg);box-shadow:var(--clay-signal)">read&nbsp;it</span></h2>
+          <p style="margin-top:14px;font-size:17px;color:var(--text-2);max-width:480px;margin-left:auto;margin-right:auto">Local-first and free to start. Open-core, Apache-2.0. Your pixels never leave your machine.</p>
+          <div style="display:flex;gap:12px;justify-content:center;margin-top:26px;flex-wrap:wrap">
+            <button onClick="{{ goCloud }}" style="background:var(--sodium);color:var(--on-accent);font-weight:600;font-size:15px;font-family:inherit;padding:13px 24px;border-radius:var(--r-sm);border:none;cursor:pointer;box-shadow:var(--pop-sodium)">Open the app</button>
+            <button style="background:var(--panel);color:var(--text);font-weight:600;font-size:15px;font-family:inherit;padding:13px 24px;border-radius:var(--r-sm);border:none;cursor:pointer;box-shadow:var(--clay-sm)">Read the docs</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:32px;background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);padding:36px 40px 26px">
+        <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:28px">
+          <div>
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="font-family:var(--font-display);font-weight:700;font-size:19px;color:var(--text)">Clip<span style="display:inline-flex;background:var(--signal);color:var(--on-accent);font-size:13px;font-weight:700;padding:2px 6px 3px;border-radius:9px;transform:rotate(-5deg);box-shadow:var(--clay-sm);margin-left:2px">XD</span></span>
+            </div>
+            <p style="margin-top:12px;font-size:13px;color:var(--text-3);line-height:1.55;max-width:220px">Record once. Humans watch it. Agents read it. Local-first, open-core.</p>
+          </div>
+          <div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px">Product</div>
+            <div style="display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--text-2)">
+              <span onClick="{{ goCloud }}" style="cursor:pointer">Recorder</span>
+              <span onClick="{{ scrollDemo }}" style="cursor:pointer">Agent index</span>
+              <span onClick="{{ goCloud }}" style="cursor:pointer">Import from URL</span>
+              <span onClick="{{ goCloud }}" style="cursor:pointer">MCP server</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px">Resources</div>
+            <div style="display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--text-2)">
+              <span style="cursor:pointer">Documentation</span>
+              <span style="cursor:pointer">GitHub</span>
+              <span style="cursor:pointer">Changelog</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px">Company</div>
+            <div style="display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--text-2)">
+              <span style="cursor:pointer">About</span>
+              <span style="cursor:pointer">Privacy</span>
+              <span style="cursor:pointer">Security</span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:30px;padding-top:20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;color:var(--text-3);font-size:12.5px;font-family:var(--font-mono)">
+          <span>© 2026 ClipXD · clip + index</span>
+          <span>engine: veyo · CloakPipe redaction · MCP native</span>
+        </div>
+      </div>
+    </section>
+  </div>
+  </sc-if>
+
+  <!-- ============ CLOUD APP ============ -->
+  <sc-if value="{{ isCloud }}" hint-placeholder-val="{{ false }}">
+  <div style="max-width:1440px;margin:0 auto;display:grid;grid-template-columns:228px 1fr;min-height:calc(100vh - 58px)">
+    <!-- sidebar -->
+    <aside style="background:var(--sidebar-bg);border-right:1px solid var(--border);padding:18px 14px 20px;display:flex;flex-direction:column;gap:8px;box-shadow:inset -1px 0 0 rgba(255,255,255,.12),inset 0 1px 0 rgba(255,255,255,.35)">
+      <div onClick="{{ goLanding }}" style="display:flex;align-items:center;gap:9px;cursor:pointer;padding:8px 9px;margin-bottom:6px;border-radius:14px;background:var(--panel-2);box-shadow:var(--clay-in)">
+        <span style="display:inline-flex;line-height:0;filter:drop-shadow(0 4px 6px rgba(60,30,90,.28));border-radius:9px;box-shadow:var(--clay-sm)">
+          <svg width="26" height="26" viewBox="0 0 40 40" fill="none" aria-label="ClipXD logo">
+            <rect x="5" y="8.5" width="30" height="28" rx="11" fill="url(#lx_side)"></rect>
+            <rect x="5" y="4.5" width="30" height="29" rx="11" fill="url(#lx_face)"></rect>
+            <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="#C8432A" transform="translate(0,1.6)" stroke="#C8432A" stroke-width="3" stroke-linejoin="round"></path>
+            <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="url(#lx_play)" stroke="url(#lx_play)" stroke-width="3" stroke-linejoin="round"></path>
+          </svg>
+        </span>
+        <span style="font-family:var(--font-display);font-weight:700;font-size:15px;letter-spacing:-.02em">Clip<span style="display:inline-flex;background:var(--signal);color:var(--on-accent);font-size:11px;font-weight:700;padding:1px 5px 2px;border-radius:7px;transform:rotate(-5deg);box-shadow:var(--clay-sm);margin-left:3px">XD</span></span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);padding:4px 10px 10px;letter-spacing:.06em">WORKSPACE · local</div>
+      <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="5">
+        <div onClick="{{ n.go }}" class="navrow" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:14px;cursor:pointer;font-size:14px;font-weight:{{ n.weight }};color:{{ n.color }};background:{{ n.bg }};box-shadow:{{ n.shadow }};transition:transform .18s var(--ease-clip),background .18s">
+          <span style="display:grid;place-items:center;width:26px;height:26px;border-radius:9px;font-family:var(--font-mono);font-size:12px;background:{{ n.chipBg }};color:{{ n.iconColor }};box-shadow:{{ n.chipShadow }}">{{ n.icon }}</span>{{ n.label }}
+          <sc-if value="{{ n.count }}" hint-placeholder-val="{{ false }}"><span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-3);background:var(--panel-2);border-radius:99px;padding:2px 8px;box-shadow:var(--clay-in)">{{ n.count }}</span></sc-if>
+        </div>
+      </sc-for>
+      <div style="margin-top:auto;border-top:1px solid var(--border);padding-top:14px;display:flex;flex-direction:column;gap:9px">
+        <div style="display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);background:var(--signal-wash);border-radius:12px;padding:9px 11px;box-shadow:var(--clay-in)"><span style="width:8px;height:8px;border-radius:50%;background:var(--signal);box-shadow:0 0 8px var(--signal)"></span>MCP server · connected</div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);padding:0 4px">0 px egress · 18 clips indexed</div>
+      </div>
+    </aside>
+
+    <!-- main -->
+    <main style="padding:0;display:flex;flex-direction:column;min-width:0">
+      <!-- topbar -->
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--border)">
+        <sc-if value="{{ showBack }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ backToLibrary }}" style="background:var(--panel);border:none;color:var(--text-2);border-radius:99px;padding:7px 14px;font-size:13px;font-family:inherit;cursor:pointer;box-shadow:var(--clay-sm)">← Library</button>
+        </sc-if>
+        <div style="position:relative;flex:1;max-width:430px">
+          <input placeholder="Search transcripts, on-screen text, captions…" style="width:100%;background:var(--panel-2);border:none;border-radius:99px;padding:11px 15px 11px 36px;font-size:13.5px;font-family:var(--font-mono);color:var(--text);box-shadow:var(--clay-in)">
+          <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--signal-text);font-family:var(--font-mono);font-size:14px">⌕</span>
+        </div>
+        <div style="flex:1"></div>
+        <button onClick="{{ toggleTheme }}" title="Watch &lt;-&gt; Read surface" style="display:flex;align-items:center;gap:3px;background:var(--panel-2);border:none;border-radius:99px;padding:4px;cursor:pointer;box-shadow:var(--clay-in)">
+          <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;padding:5px 10px;border-radius:99px;background:{{ readBtnBg }};color:{{ readBtnFg }};box-shadow:{{ readBtnShadow }}">R</span>
+          <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;padding:5px 10px;border-radius:99px;background:{{ watchBtnBg }};color:{{ watchBtnFg }};box-shadow:{{ watchBtnShadow }}">W</span>
+        </button>
+        <button onClick="{{ goRecording }}" style="display:inline-flex;align-items:center;gap:8px;background:var(--sodium);color:var(--on-accent);font-weight:600;font-size:13.5px;font-family:inherit;padding:10px 18px;border-radius:99px;border:none;cursor:pointer;box-shadow:var(--pop-sodium)"><span style="width:8px;height:8px;border-radius:50%;background:var(--on-accent)"></span>Record</button>
+      </div>
+
+      <!-- LIBRARY -->
+      <sc-if value="{{ isLibrary }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:26px;overflow-y:auto">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:8px">
+          <div>
+            <h1 style="font-family:var(--font-display);font-size:28px;letter-spacing:-.02em;font-weight:500">Library</h1>
+            <p style="color:var(--text-3);font-size:13.5px;margin-top:4px;font-family:var(--font-mono)">18 clips · every one queryable from its link</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+              <span style="font-size:12.5px;font-family:var(--font-mono);color:{{ f.color }};background:{{ f.bg }};border:none;border-radius:99px;padding:7px 14px;cursor:pointer;box-shadow:{{ f.shadow }}">{{ f.label }}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin:18px 0 24px">
+          <div style="flex:1;display:flex;align-items:center;gap:12px;background:var(--panel-2);border:none;border-radius:99px;padding:10px 10px 10px 20px;box-shadow:var(--clay-in)">
+            <span style="color:var(--signal-text);font-family:var(--font-mono);font-size:12px">paste link ↓</span>
+            <input placeholder="loom.com/share/… · cap.so/… · any video link" style="flex:1;background:transparent;border:none;outline:none;font-size:13.5px;font-family:var(--font-mono);color:var(--text-2)">
+            <button onClick="{{ goImport }}" style="background:var(--signal);color:var(--on-accent);font-weight:600;font-size:13px;font-family:inherit;padding:9px 18px;border-radius:99px;border:none;cursor:pointer;box-shadow:var(--pop-signal)">Read it</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+          <sc-for list="{{ clips }}" as="clip" hint-placeholder-count="6">
+            <div onClick="{{ clip.open }}" class="lift" style="border:1px solid var(--border);background:var(--panel);border-radius:var(--r);box-shadow:var(--clay);overflow:hidden;cursor:pointer">
+              <div style="aspect-ratio:16/10;background:{{ clip.tint }};position:relative;display:grid;place-items:center;overflow:hidden">
+                <div style="position:absolute;inset:0;background-image:none"></div>
+                <div class="lglass" style="position:relative;width:50px;height:50px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:15px;text-shadow:0 1px 3px rgba(0,0,0,.4)">▶</div>
+                <span style="position:absolute;bottom:9px;right:9px;background:rgba(0,0,0,.5);color:#fff;font-family:var(--font-mono);font-size:11px;border-radius:99px;padding:3px 9px;backdrop-filter:blur(6px)">{{ clip.duration }}</span>
+                <span style="position:absolute;top:9px;left:9px;background:rgba(0,0,0,.42);color:#fff;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;border-radius:99px;padding:3px 9px;backdrop-filter:blur(6px)">{{ clip.sourceLabel }}</span>
+              </div>
+              <div style="padding:13px 14px">
+                <div style="font-family:var(--font-display);font-weight:500;font-size:16px;letter-spacing:-.01em;line-height:1.25;text-wrap:pretty">{{ clip.title }}</div>
+                <div style="display:flex;align-items:center;gap:7px;margin-top:9px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-3)">
+                  <span style="color:var(--signal-text)">●</span>indexed<span>·</span><span>{{ clip.when }}</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
+                  <sc-for list="{{ clip.badges }}" as="b" hint-placeholder-count="4">
+                    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-2);background:var(--panel-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px">{{ b }}</span>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- RECORDING -->
+      <sc-if value="{{ isRecording }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:grid;grid-template-columns:1.4fr 1fr;min-height:0">
+        <div style="padding:28px;border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+            <span style="display:inline-flex;align-items:center;gap:8px;background:var(--sodium-wash);border:1px solid var(--sodium);color:var(--sodium-text);font-family:var(--font-mono);font-size:12px;font-weight:500;border-radius:var(--r-sm);padding:6px 11px">
+              <span style="width:8px;height:8px;border-radius:50%;background:var(--sodium);animation:pulseSod 1.4s ease-out infinite"></span>REC
+            </span>
+            <span style="font-family:var(--font-mono);font-size:15px;font-weight:500">00:18</span>
+            <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-3)">screen · 1080p · auto-zoom on</span>
+          </div>
+          <div style="border-radius:var(--r-sm);padding:22px;background:#52333F;position:relative;overflow:hidden">
+            <div style="position:absolute;top:14px;right:14px;font-family:var(--font-mono);font-size:10.5px;color:#fff;background:rgba(0,0,0,.4);border-radius:var(--r-sm);padding:3px 8px;z-index:2">auto-zoom 2.4×</div>
+            <div style="border-radius:var(--r-sm);overflow:hidden;border:1px solid rgba(255,255,255,.15);box-shadow:0 16px 40px -14px rgba(0,0,0,.55);background:#fff">
+              <div style="display:flex;align-items:center;gap:6px;padding:8px 11px;background:#f1f1f3;border-bottom:1px solid #e3e3e6">
+                <span style="width:9px;height:9px;border-radius:50%;background:#ec6a5e"></span>
+                <span style="width:9px;height:9px;border-radius:50%;background:#f4be4f"></span>
+                <span style="width:9px;height:9px;border-radius:50%;background:#61c454"></span>
+                <span style="margin-left:8px;font-family:var(--font-mono);font-size:10px;color:#8a8a90;background:#fff;border:1px solid #e3e3e6;border-radius:var(--r-sm);padding:2px 9px">shop.acme.test/checkout</span>
+              </div>
+              <div style="padding:20px;background:#fff;color:#222">
+                <div style="font-size:14px;font-weight:700;color:#111">Payment</div>
+                <div style="margin-top:12px;height:32px;border:2px solid var(--sodium);border-radius:var(--r-sm);display:flex;align-items:center;padding:0 11px;font-family:var(--font-mono);font-size:11.5px;color:#444;box-shadow:0 0 0 4px var(--sodium-wash)">•••• •••• •••• 4242<span style="margin-left:auto;width:1px;height:16px;background:#222;animation:blink 1s step-end infinite"></span></div>
+                <div style="margin-top:9px;display:flex;gap:9px"><div style="flex:1;height:28px;border:1px solid #ddd;border-radius:var(--r-sm)"></div><div style="width:78px;height:28px;border:1px solid #ddd;border-radius:var(--r-sm)"></div></div>
+                <div style="margin-top:12px;background:#1a1a1a;color:#fff;border-radius:var(--r-sm);padding:10px;text-align:center;font-size:13px;font-weight:700">Pay $89.00</div>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:18px;display:flex;align-items:center;gap:14px">
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);flex:none">mic</span>
+            <div style="flex:1;display:flex;align-items:center;gap:2px;height:46px">
+              <sc-for list="{{ recBars }}" as="b" hint-placeholder-count="40">
+                <span style="flex:1;border-radius:var(--r-sm);background:var(--sodium);height:{{ b.h }}%;animation:floatY 1.1s ease-in-out infinite;animation-delay:{{ b.delay }}s;opacity:.75"></span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="margin-top:22px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button onClick="{{ stopToClip }}" style="display:inline-flex;align-items:center;gap:8px;background:var(--sodium);color:var(--on-accent);font-weight:700;font-size:14px;font-family:inherit;padding:12px 22px;border-radius:var(--r-sm);border:none;cursor:pointer;box-shadow:var(--pop-sodium)">■ Stop &amp; get link</button>
+            <button style="background:var(--panel);border:1px solid var(--border);color:var(--text-2);font-weight:600;font-size:14px;font-family:inherit;padding:12px 18px;border-radius:var(--r-sm);cursor:pointer">Pause</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--signal);box-shadow:0 0 7px var(--signal)"></span>uploading while recording · link live on stop
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;min-height:0">
+          <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--signal)"></span>
+            <span style="font-weight:600;font-size:13px"><span style="color:var(--signal-text)">read</span> · index forming live</span>
+            <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);margin-left:auto">on device · 0 px egress</span>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:2px">
+            <sc-for list="{{ recEvents }}" as="e" hint-placeholder-count="5">
+              <div style="display:flex;gap:11px;padding:9px 0;border-bottom:1px solid var(--border);align-items:baseline">
+                <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text);flex:none;width:42px">{{ e.t }}</span>
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--on-accent);background:var(--signal);border-radius:var(--r-sm);padding:1px 6px;flex:none;font-weight:500">{{ e.type }}</span>
+                <span style="font-family:var(--font-mono);font-size:12.5px;color:{{ e.color }};line-height:1.5">{{ e.detail }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="border-top:1px solid var(--border);background:var(--panel);padding:14px 18px;display:flex;gap:16px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)">
+            <span>frames: <span style="color:var(--text)">1,080</span></span>
+            <span>emitted: <span style="color:var(--signal-text)">4 (0.37%)</span></span>
+            <span>words: <span style="color:var(--text)">31</span></span>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- IMPORT -->
+      <sc-if value="{{ isImport }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow-y:auto;padding:32px;display:flex;justify-content:center">
+        <div style="width:100%;max-width:720px">
+          <h1 style="font-family:var(--font-display);font-size:28px;letter-spacing:-.02em;font-weight:500">Paste a Loom, Cap, or video URL. clipxd reads it.</h1>
+          <p style="color:var(--text-3);font-size:14px;margin-top:6px;font-family:var(--font-mono)">No recording, no download — just the same index and MCP endpoint.</p>
+          <div style="margin-top:22px;display:flex;gap:10px">
+            <div style="flex:1;display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid color-mix(in oklab,var(--signal) 40%,var(--border));border-radius:var(--r-sm);padding:14px 16px;box-shadow:0 0 0 4px var(--signal-wash)">
+              <span style="color:var(--signal-text);font-family:var(--font-mono);font-size:13px">↳</span>
+              <input value="loom.com/share/9c2f8a1e4b" style="flex:1;background:transparent;border:none;outline:none;font-size:14px;font-family:var(--font-mono);color:var(--text)">
+            </div>
+            <button style="background:var(--signal);color:var(--on-accent);font-weight:700;font-size:14px;font-family:inherit;padding:0 22px;border-radius:var(--r-sm);border:none;cursor:pointer">Read it →</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+            <sc-for list="{{ importSources }}" as="s" hint-placeholder-count="4">
+              <span style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-2);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 13px;cursor:pointer">
+                <span style="width:9px;height:9px;border-radius:var(--r-sm);background:{{ s.tint }}"></span>{{ s.label }}
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3)">{{ s.host }}</span>
+              </span>
+            </sc-for>
+          </div>
+          <div style="margin-top:30px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);overflow:hidden">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-2)">design-review.loom → reading</span>
+              <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--signal-text)">video stays on Loom — only the index is built</span>
+            </div>
+            <div style="padding:8px 18px 14px">
+              <sc-for list="{{ importSteps }}" as="st" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--border)">
+                  <span style="width:24px;height:24px;border-radius:50%;flex:none;display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;font-weight:500;background:{{ st.dotBg }};color:{{ st.dotFg }};border:1px solid {{ st.dotBorder }}">{{ st.glyph }}</span>
+                  <div style="flex:1">
+                    <div style="font-size:14px;font-weight:600;color:{{ st.titleColor }}">{{ st.label }}</div>
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3);margin-top:2px">{{ st.detail }}</div>
+                  </div>
+                  <span style="font-family:var(--font-mono);font-size:11px;color:{{ st.stateColor }}">{{ st.stateLabel }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <button onClick="{{ goChat }}" style="margin-top:20px;width:100%;background:var(--panel);border:1px solid var(--border);color:var(--text-2);font-weight:600;font-size:14px;font-family:inherit;padding:13px;border-radius:var(--r-sm);cursor:pointer">When it's done, ask the agent about it →</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- AGENT CHAT -->
+      <sc-if value="{{ isChat }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+        <div style="padding:16px 26px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <span style="width:24px;height:24px;border-radius:var(--r-sm);background:var(--signal);display:grid;place-items:center;color:var(--on-accent);font-size:12px;font-family:var(--font-mono)">◈</span>
+          <div><div style="font-weight:700;font-size:15px">Ask an agent</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3)">querying the whole library over MCP · no video fetched</div></div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px;max-width:840px;width:100%;margin:0 auto">
+          <sc-for list="{{ chatThread }}" as="m" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;align-items:{{ m.align }};gap:6px">
+              <div style="max-width:78%;font-size:14.5px;line-height:1.55;padding:12px 16px;border-radius:16px;background:{{ m.bg }};color:{{ m.fg }};box-shadow:{{ m.shadow }}">{{ m.text }}</div>
+              <sc-if value="{{ m.showCites }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                  <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3)">grounded in:</span>
+                  <sc-for list="{{ m.cites }}" as="c" hint-placeholder-count="2">
+                    <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--signal-text);border:1px solid color-mix(in oklab,var(--signal) 40%,transparent);border-radius:var(--r-sm);padding:1px 6px">{{ c }}</span>
+                  </sc-for>
+                  <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);margin-left:4px">watched_video: <span style="color:var(--danger)">false</span></span>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <div style="border-top:1px solid var(--border);background:var(--panel);padding:16px 26px">
+          <div style="max-width:840px;margin:0 auto;display:flex;gap:10px">
+            <input placeholder="Ask across every clip in your library…" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 15px;font-size:14px;font-family:inherit;color:var(--text)">
+            <button style="background:var(--signal);color:var(--on-accent);border:none;border-radius:var(--r-sm);padding:0 22px;font-weight:700;font-size:14px;font-family:inherit;cursor:pointer;box-shadow:var(--pop-signal)">Ask</button>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ============ CLIP — the signature dual-body page ============ -->
+      <sc-if value="{{ isClip }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <!-- title + seam bar -->
+        <div style="padding:16px 26px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <h1 style="font-family:var(--font-display);font-size:21px;letter-spacing:-.01em;font-weight:500">{{ activeClip.title }}</h1>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-2);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:3px 8px">clipxd.com/c/{{ activeClip.slug }}</span>
+          <!-- SEAM TOGGLE -->
+          <div style="margin:0 auto;display:flex;align-items:center;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:3px">
+            <button onClick="{{ setWatch }}" style="display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;font-weight:500;padding:6px 13px;border-radius:var(--r-sm);border:none;cursor:pointer;background:{{ watchSeamBg }};color:{{ watchSeamFg }}"><span style="width:7px;height:7px;border-radius:50%;background:var(--sodium)"></span>Watch</button>
+            <button onClick="{{ setSplit }}" style="font-family:var(--font-mono);font-size:12px;font-weight:500;padding:6px 13px;border-radius:var(--r-sm);border:none;cursor:pointer;background:{{ splitSeamBg }};color:{{ splitSeamFg }}">⟷</button>
+            <button onClick="{{ setRead }}" style="display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;font-weight:500;padding:6px 13px;border-radius:var(--r-sm);border:none;cursor:pointer;background:{{ readSeamBg }};color:{{ readSeamFg }}"><span style="width:7px;height:7px;border-radius:50%;background:var(--signal)"></span>Read</button>
+          </div>
+          <button onClick="{{ shareLink }}" style="background:var(--sodium);border:none;color:var(--on-accent);font-size:13px;font-weight:600;font-family:inherit;border-radius:var(--r-sm);padding:8px 14px;cursor:pointer;box-shadow:var(--pop-sodium)">Share link</button>
+        </div>
+
+        <!-- dual body -->
+        <div style="display:grid;grid-template-columns:{{ clipGridCols }};flex:1;min-height:0;transition:grid-template-columns .45s var(--ease-clip)">
+          <!-- WATCH body -->
+          <div style="padding:24px;border-right:1px solid var(--border);overflow-y:auto;background:var(--sodium-wash)">
+            <div style="border-radius:var(--r);padding:22px;background:var(--cinema);position:relative;overflow:hidden;box-shadow:var(--clay)">
+              <!-- the develop: scan sweep -->
+              <sc-if value="{{ developing }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;inset:0;z-index:3;pointer-events:none;overflow:hidden">
+                  <div style="position:absolute;top:0;bottom:0;width:36%;background:linear-gradient(90deg,transparent,rgba(51,224,194,.35),rgba(51,224,194,.85),rgba(51,224,194,.35),transparent);box-shadow:0 0 28px var(--signal);animation:scanX 1.4s var(--ease-clip) 1"></div>
+                </div>
+              </sc-if>
+              <div style="border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.4);box-shadow:0 22px 50px -16px rgba(40,24,60,.5),0 4px 10px -6px rgba(40,24,60,.35);background:#fff">
+                <div style="display:flex;align-items:center;gap:6px;padding:8px 11px;background:#f1f1f3;border-bottom:1px solid #e3e3e6">
+                  <span style="width:9px;height:9px;border-radius:50%;background:#ec6a5e"></span>
+                  <span style="width:9px;height:9px;border-radius:50%;background:#f4be4f"></span>
+                  <span style="width:9px;height:9px;border-radius:50%;background:#61c454"></span>
+                  <span style="margin-left:8px;font-family:var(--font-mono);font-size:10px;color:#8a8a90;background:#fff;border:1px solid #e3e3e6;border-radius:var(--r-sm);padding:2px 9px">shop.acme.test/checkout</span>
+                </div>
+                <div style="padding:20px;background:#fff;color:#222">
+                  <div style="font-size:14px;font-weight:700;color:#111">Payment</div>
+                  <div style="margin-top:12px;height:32px;border:1px solid #ddd;border-radius:var(--r-sm);display:flex;align-items:center;padding:0 11px;font-family:var(--font-mono);font-size:11.5px;color:#888">4242 4242 4242 4242</div>
+                  <div style="margin-top:9px;display:flex;gap:9px"><div style="flex:1;height:28px;border:1px solid #ddd;border-radius:var(--r-sm)"></div><div style="width:78px;height:28px;border:1px solid #ddd;border-radius:var(--r-sm)"></div></div>
+                  <div style="margin-top:12px;background:#1a1a1a;color:#fff;border-radius:var(--r-sm);padding:10px;text-align:center;font-size:13px;font-weight:700">Pay $89.00</div>
+                  <div style="margin-top:11px;background:#fdecec;border:1px solid #f5b5b5;color:#c0392b;border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;border-radius:50%;background:#c0392b"></span>Payment failed: card_declined</div>
+                </div>
+              </div>
+            </div>
+            <!-- scrubber -->
+            <div style="margin-top:16px;display:flex;align-items:center;gap:12px">
+              <span class="lglass" style="width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--text);font-size:13px;cursor:pointer;flex:none;text-shadow:0 1px 2px rgba(255,255,255,.5)">▶</span>
+              <div style="position:relative;flex:1;height:9px;border-radius:99px;background:var(--panel-3);box-shadow:var(--clay-in)">
+                <div style="position:absolute;left:0;top:0;height:100%;width:64%;background:var(--sodium);border-radius:99px"></div>
+                <sc-for list="{{ clipMarkers }}" as="m" hint-placeholder-count="5">
+                  <span title="{{ m.label }}" style="position:absolute;top:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;left:{{ m.left }};background:var(--signal);border:2px solid var(--bg);box-shadow:0 0 6px var(--signal)"></span>
+                </sc-for>
+              </div>
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-3);flex:none">0:41 / 1:04</span>
+            </div>
+            <div style="margin-top:7px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-3)"><span style="color:var(--signal-text)">●</span> salient markers — veyo emitted 5 of 1,920 frames (0.26%)</div>
+            <!-- chapters -->
+            <div style="margin-top:20px;display:flex;flex-direction:column;gap:8px">
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-3)">CHAPTERS</div>
+              <sc-for list="{{ chapters }}" as="ch" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--panel);cursor:pointer">
+                  <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--sodium-text);flex:none">{{ ch.t }}</span>
+                  <span style="font-size:13.5px;color:var(--text)">{{ ch.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- READ body -->
+          <div style="display:flex;flex-direction:column;min-height:0;background:var(--signal-wash)">
+            <div style="display:flex;align-items:center;gap:8px;padding:14px 18px 0">
+              <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text)">INDEX</span>
+              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);margin-left:auto">veyo · whisper.cpp · CloakPipe</span>
+            </div>
+            <div style="display:flex;gap:2px;padding:10px 18px 0;border-bottom:1px solid var(--border)">
+              <sc-for list="{{ clipTabs }}" as="tab" hint-placeholder-count="4">
+                <div onClick="{{ tab.go }}" style="font-family:var(--font-mono);font-size:12.5px;font-weight:500;padding:9px 12px;cursor:pointer;border-bottom:2px solid {{ tab.border }};color:{{ tab.color }}">{{ tab.label }}</div>
+              </sc-for>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:16px 18px">
+              <sc-if value="{{ tabTranscript }}" hint-placeholder-val="{{ true }}">
+                <sc-for list="{{ transcript }}" as="l" hint-placeholder-count="5">
+                  <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text);flex:none;width:34px">{{ l.t }}</span>
+                    <div><span style="font-family:var(--font-mono);font-size:11.5px;font-weight:500;color:var(--text-3)">{{ l.who }}</span><div style="font-size:14px;color:var(--text);line-height:1.5;margin-top:2px">{{ l.text }}</div></div>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ tabOcr }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ onscreen }}" as="o" hint-placeholder-count="5">
+                  <div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);align-items:baseline">
+                    <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text);flex:none;width:34px">{{ o.t }}</span>
+                    <span style="font-family:var(--font-mono);font-size:13px;color:{{ o.color }};line-height:1.5">{{ o.text }}</span>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ tabEvents }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ events }}" as="e" hint-placeholder-count="6">
+                  <div style="display:flex;gap:11px;padding:8px 0;border-bottom:1px solid var(--border);align-items:baseline">
+                    <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--signal-text);flex:none;width:34px">{{ e.t }}</span>
+                    <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--on-accent);background:var(--signal);border-radius:var(--r-sm);padding:1px 6px;flex:none;font-weight:500">{{ e.type }}</span>
+                    <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-2);line-height:1.5">{{ e.detail }}</span>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ tabSummary }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size:14.5px;color:var(--text);line-height:1.6">{{ summaryText }}</div>
+                <div style="margin-top:16px;display:flex;flex-direction:column;gap:7px">
+                  <sc-for list="{{ summaryPoints }}" as="s" hint-placeholder-count="3">
+                    <div style="display:flex;gap:9px;font-size:13.5px;color:var(--text-2);line-height:1.5"><span style="color:var(--signal-text);flex:none">→</span>{{ s }}</div>
+                  </sc-for>
+                </div>
+                <div style="margin-top:18px;display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3);background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px">
+                  <span style="width:7px;height:7px;border-radius:50%;background:var(--signal)"></span>CloakPipe: 3 secrets removed before this index was shared.
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+
+        <!-- AGENT BOTTOM RAIL -->
+        <div style="border-top:1px solid var(--border);background:var(--panel);padding:14px 26px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--signal);flex:none"></span>
+          <div style="flex:1;min-width:240px;display:flex;gap:8px">
+            <input placeholder="Ask an agent about this clip…" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 13px;font-size:13.5px;font-family:inherit;color:var(--text)">
+            <button onClick="{{ goChat }}" style="background:var(--signal);color:var(--on-accent);border:none;border-radius:var(--r-sm);padding:0 16px;font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;box-shadow:var(--pop-signal)">Ask</button>
+          </div>
+          <button onClick="{{ copyIndex }}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:12px;border-radius:var(--r-sm);padding:9px 13px;cursor:pointer">Copy index</button>
+          <button onClick="{{ copyMcp }}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:12px;border-radius:var(--r-sm);padding:9px 13px;cursor:pointer">MCP url</button>
+          <button onClick="{{ copyJson }}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text-2);font-family:var(--font-mono);font-size:12px;border-radius:var(--r-sm);padding:9px 13px;cursor:pointer">⤓ clip.json</button>
+        </div>
+      </div>
+      </sc-if>
+    </main>
+  </div>
+  </sc-if>
+
+  <!-- TOAST -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;left:50%;bottom:28px;z-index:80;background:var(--text);color:var(--bg);font-family:var(--font-mono);font-size:12.5px;font-weight:500;padding:10px 16px;border-radius:var(--r-sm);box-shadow:0 12px 30px -10px rgba(0,0,0,.5);animation:toastIn .3s var(--ease-clip)">{{ toast }}</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:&quot;100%&quot;}}">
+class Component extends DCLogic {
+  state = {
+    theme: 'light',
+    view: 'landing',
+    cloudView: 'library',
+    activeClip: 0,
+    clipTab: 'transcript',
+    seam: 'split',
+    developing: false,
+    toast: null,
+    demo: { asked: null, phase: 'idle', typed: '' },
+    highlight: null,
+    wipe: 50,
+    autoSweep: true,
+  };
+
+  answers = {
+    error: { label: 'What error showed up?',
+      text: 'A 500 hit at 0:41 — the on-screen text read "Payment failed: card_declined" in a red banner. OCR caught it, so there\'s no need to watch the frame.',
+      cites: ['ocr@0:41', 'net@0:41'], marker: 'err' },
+    before: { label: 'What was the user doing right before?',
+      text: 'From 0:33–0:40 the event track shows the user typed a card number, then clicked "Pay $89.00". The click and the failed POST /api/charge are 0.4s apart.',
+      cites: ['event:click@0:40', 'keys@0:33'], marker: 'before' },
+    net: { label: 'Show the failing network call',
+      text: '0:41 — POST /api/charge → 500 (1240ms). Body: {"error":"card_declined"}. Pulled from the network trace, not the pixels.',
+      cites: ['net@0:41', 'console@0:41'], marker: 'net' },
+  };
+
+  componentDidMount() {
+    this._mounted = true;
+    this.t0 = setTimeout(() => { if (this._mounted) this.ask('error'); }, 1100);
+    this.sweepDir = 1;
+    this.sweep = setInterval(() => {
+      if (!this._mounted) return;
+      if (!this.state.autoSweep) return;
+      let w = this.state.wipe + this.sweepDir * 0.55;
+      if (w >= 82) { w = 82; this.sweepDir = -1; }
+      if (w <= 16) { w = 16; this.sweepDir = 1; }
+      this.setState({ wipe: w });
+    }, 26);
+  }
+  componentWillUnmount() { this._mounted = false; this.clearTimers(); clearTimeout(this.devT); clearTimeout(this.toastT); clearInterval(this.sweep); }
+
+  setWipe(clientX, el) {
+    const r = el.getBoundingClientRect();
+    let pct = ((clientX - r.left) / r.width) * 100;
+    pct = Math.max(4, Math.min(96, pct));
+    this.setState({ wipe: pct, autoSweep: false });
+  }
+  startDrag(e) {
+    const frame = e.currentTarget;
+    const move = (ev) => { const x = ev.touches ? ev.touches[0].clientX : ev.clientX; this.setWipe(x, frame); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    const x = e.touches ? e.touches[0].clientX : e.clientX; this.setWipe(x, frame);
+  }
+  clearTimers() { clearTimeout(this.t0); clearTimeout(this.t1); clearInterval(this.typer); }
+
+  ask(key) {
+    const a = this.answers[key]; if (!a) return;
+    this.clearTimers();
+    this.setState({ demo: { asked: key, phase: 'reading', typed: '' }, highlight: null });
+    this.t1 = setTimeout(() => {
+      if (!this._mounted) return;
+      this.setState({ highlight: a.marker });
+      this.typeOut(a.text);
+    }, 850);
+  }
+  typeOut(text) {
+    let i = 0;
+    this.setState(s => ({ demo: { ...s.demo, phase: 'typing', typed: '' } }));
+    this.typer = setInterval(() => {
+      if (!this._mounted) { clearInterval(this.typer); return; }
+      i += 2;
+      this.setState(s => ({ demo: { ...s.demo, typed: text.slice(0, i) } }));
+      if (i >= text.length) { clearInterval(this.typer); this.setState(s => ({ demo: { ...s.demo, typed: text, phase: 'done' } })); }
+    }, 18);
+  }
+
+  openClip(i) {
+    clearTimeout(this.devT);
+    this.setState({ cloudView: 'clip', activeClip: i, clipTab: 'transcript', developing: true });
+    this.devT = setTimeout(() => { if (this._mounted) this.setState({ developing: false }); }, 1500);
+  }
+  showToast(msg) {
+    clearTimeout(this.toastT);
+    this.setState({ toast: msg });
+    this.toastT = setTimeout(() => { if (this._mounted) this.setState({ toast: null }); }, 1700);
+  }
+
+  renderVals() {
+    const { theme, view, cloudView, clipTab, seam, developing, toast, demo, highlight, wipe, autoSweep } = this.state;
+    const isDark = theme === 'dark';
+    const a = demo.asked ? this.answers[demo.asked] : null;
+
+    const demoMarkers = [
+      { id: 'start', left: '8%', size: '8px', color: 'var(--text-3)', label: 'start' },
+      { id: 'before', left: '52%', size: '10px', color: 'var(--signal)', label: 'user clicks Pay' },
+      { id: 'err', left: '64%', size: '10px', color: 'var(--danger)', label: '500 error' },
+      { id: 'net', left: '66%', size: '8px', color: 'var(--signal)', label: 'POST /charge' },
+    ].map(m => ({ ...m, anim: highlight === m.id ? 'pulseSig 1.2s ease-out infinite' : 'none', size: highlight === m.id ? '13px' : m.size }));
+
+    const clips = [
+      { title: 'Checkout 500 — card_declined repro', sourceLabel: 'BROWSER', duration: '1:04', when: '2h ago', tint: 'linear-gradient(135deg,#FF9E7D,#C9618A)', badges: ['transcript', 'ocr·6', 'events·41', 'net'] },
+      { title: 'Onboarding walkthrough v3', sourceLabel: 'SCREEN', duration: '3:48', when: 'Yesterday', tint: 'linear-gradient(135deg,#5FD3B2,#2E8C8A)', badges: ['transcript', 'ocr·22', 'auto-zoom'] },
+      { title: 'Imported: design review (Loom)', sourceLabel: 'IMPORT', duration: '12:10', when: '2d ago', tint: 'linear-gradient(135deg,#FFB38A,#B86E9A)', badges: ['transcript', 'ocr·48', 'chapters·7'] },
+      { title: 'Mobile nav jank — QA flow', sourceLabel: 'BROWSER', duration: '0:52', when: '3d ago', tint: 'linear-gradient(135deg,#A99BFF,#6E6FB0)', badges: ['a11y', 'events·30', 'console·4'] },
+      { title: 'Feature demo: bulk export', sourceLabel: 'SCREEN', duration: '2:21', when: '4d ago', tint: 'linear-gradient(135deg,#9BE08A,#3E9A72)', badges: ['transcript', 'ocr·14'] },
+      { title: 'Imported: standup recap (Cap)', sourceLabel: 'IMPORT', duration: '5:36', when: '1w ago', tint: 'linear-gradient(135deg,#C9A0FF,#7E4F9A)', badges: ['transcript', 'summary'] },
+    ].map((c, i) => ({ ...c, open: () => this.openClip(i) }));
+
+    const navMk = (icon, label, key, count, target, accent) => {
+      const active = (key === 'library' && (cloudView === 'library' || cloudView === 'clip')) || cloudView === key;
+      return { icon, label, count: count || '', weight: active ? '600' : '500',
+        color: active ? 'var(--text)' : 'var(--text-2)',
+        bg: active ? 'var(--panel)' : 'transparent',
+        shadow: active ? 'var(--clay-sm)' : 'var(--clay-in)',
+        chipBg: active ? accent : 'var(--panel-2)',
+        chipShadow: active ? 'var(--clay-in)' : 'var(--clay-in)',
+        iconColor: active ? 'var(--on-accent)' : accent,
+        go: () => this.setState({ cloudView: target }) };
+    };
+    const navItems = [
+      navMk('▦', 'Library', 'library', '18', 'library', 'var(--grape)'),
+      navMk('●', 'Recording', 'recording', '', 'recording', 'var(--sodium)'),
+      navMk('↧', 'Import', 'import', '', 'import', 'var(--signal)'),
+      navMk('◈', 'Ask agent', 'chat', '', 'chat', 'var(--signal)'),
+      navMk('⚙', 'Settings', 'settings', '', 'library', 'var(--text-3)'),
+    ];
+
+    const filterMk = (label, on) => ({ label, color: on ? 'var(--on-accent)' : 'var(--text-2)',
+      bg: on ? 'var(--signal)' : 'var(--panel)', border: on ? 'var(--signal)' : 'var(--border)',
+      shadow: on ? 'var(--pop-signal)' : 'var(--clay-sm)' });
+    const filters = [ filterMk('All', true), filterMk('Browser', false), filterMk('Screen', false), filterMk('Imported', false) ];
+
+    const tabMk = (label, key) => ({ label, go: () => this.setState({ clipTab: key }),
+      border: clipTab === key ? 'var(--signal)' : 'transparent',
+      color: clipTab === key ? 'var(--text)' : 'var(--text-3)' });
+    const clipTabs = [ tabMk('Transcript', 'transcript'), tabMk('On-screen', 'ocr'), tabMk('Events', 'events'), tabMk('Summary', 'summary') ];
+
+    // seam
+    const seamBg = (on, who) => on ? (who === 'watch' ? 'var(--sodium-wash)' : who === 'read' ? 'var(--signal-wash)' : 'var(--panel-3)') : 'transparent';
+    const seamFg = (on, who) => on ? (who === 'watch' ? 'var(--sodium-text)' : who === 'read' ? 'var(--signal-text)' : 'var(--text)') : 'var(--text-3)';
+    const gridCols = seam === 'watch' ? '2fr 0.82fr' : seam === 'read' ? '0.72fr 1.5fr' : '1.25fr 1fr';
+
+    const withDelay = (arr) => arr.map((x, i) => ({ ...x, d: (i * 0.06).toFixed(2) + 's' }));
+
+    return {
+      theme, isDark,
+      toggleTheme: () => this.setState(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+      wipe, wipePct: wipe + '%', revealClip: 'inset(0 0 0 ' + wipe + '%)',
+      autoSweep,
+      startDrag: (e) => this.startDrag(e),
+      resumeSweep: () => this.setState({ autoSweep: true }),
+      sweepLabel: autoSweep ? 'auto' : 'drag',
+      parseBoxes: [
+        { top: '19%', left: '8%', w: '26%', h: '9%', label: 'ocr · "Payment"', color: 'var(--signal)', ink: 'var(--on-accent)' },
+        { top: '31%', left: '8%', w: '84%', h: '11%', label: 'ocr · "4242 4242 4242 4242"', color: 'var(--signal)', ink: 'var(--on-accent)' },
+        { top: '61%', left: '8%', w: '84%', h: '11%', label: 'event · click "Pay $89.00" @0:40', color: 'var(--sodium)', ink: 'var(--on-accent)' },
+        { top: '76%', left: '8%', w: '84%', h: '13%', label: 'ocr · "Payment failed: card_declined"', color: 'var(--danger)', ink: '#fff' },
+      ],
+      readBtnBg: isDark ? 'var(--signal)' : 'transparent', readBtnFg: isDark ? 'var(--on-accent)' : 'var(--text-3)',
+      watchBtnBg: !isDark ? 'var(--sodium)' : 'transparent', watchBtnFg: !isDark ? 'var(--on-accent)' : 'var(--text-3)',
+      readBtnShadow: isDark ? 'var(--clay-signal)' : 'none', watchBtnShadow: !isDark ? 'var(--clay-sodium)' : 'none',
+      sunRay: !isDark ? '#FFFFFF' : '#FF9036', moonStar: isDark ? '#FFFFFF' : '#B5A4E6',
+
+      isLanding: view === 'landing', isCloud: view === 'cloud',
+      goLanding: () => this.setState({ view: 'landing' }),
+      goCloud: () => this.setState({ view: 'cloud', cloudView: 'library' }),
+      scrollDemo: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+
+      isLibrary: cloudView === 'library', isClip: cloudView === 'clip',
+      isRecording: cloudView === 'recording', isImport: cloudView === 'import', isChat: cloudView === 'chat',
+      showBack: cloudView !== 'library',
+      backToLibrary: () => this.setState({ cloudView: 'library' }),
+      goRecording: () => this.setState({ cloudView: 'recording' }),
+      goImport: () => this.setState({ cloudView: 'import' }),
+      goChat: () => this.setState({ cloudView: 'chat' }),
+      stopToClip: () => this.openClip(0),
+
+      // seam
+      seam,
+      setWatch: () => this.setState({ seam: 'watch' }),
+      setSplit: () => this.setState({ seam: 'split' }),
+      setRead: () => this.setState({ seam: 'read' }),
+      watchSeamBg: seamBg(seam === 'watch', 'watch'), watchSeamFg: seamFg(seam === 'watch', 'watch'),
+      splitSeamBg: seamBg(seam === 'split', 'split'), splitSeamFg: seamFg(seam === 'split', 'split'),
+      readSeamBg: seamBg(seam === 'read', 'read'), readSeamFg: seamFg(seam === 'read', 'read'),
+      clipGridCols: gridCols,
+      developing,
+      toast,
+      shareLink: () => this.showToast('Link copied'),
+      copyIndex: () => this.showToast('Index copied for agent'),
+      copyMcp: () => this.showToast('MCP url copied'),
+      copyJson: () => this.showToast('clip.json downloaded'),
+
+      // demo
+      demo, askedLabel: a ? a.label : '',
+      demoReading: demo.phase === 'reading',
+      demoAnswering: demo.phase === 'typing' || demo.phase === 'done',
+      demoDone: demo.phase === 'done',
+      caretDisplay: demo.phase === 'typing' ? 'inline' : 'none',
+      demoCites: a ? a.cites : [],
+      demoMarkers,
+      chips: Object.keys(this.answers).map(k => ({ label: this.answers[k].label, go: () => this.ask(k) })),
+
+      indexParts: [
+        { tag: 'txt', title: 'Transcript', desc: 'Time-aligned, speaker-tagged where possible. whisper.cpp, on device.', sample: '0:12 [host] "watch the\\n  checkout when I hit pay"', span: 'span 3' },
+        { tag: 'cap', title: 'Visual timeline', desc: 'Captions for salient moments only — veyo-gated, each timestamped.', sample: '0:41  red error banner\\n      appears over form', span: 'span 3' },
+        { tag: 'ocr', title: 'On-screen text', desc: 'OCR\'d, searchable, timestamped — errors, code, labels, URLs.', sample: '0:41  "Payment failed:\\n      card_declined"', span: 'span 2' },
+        { tag: 'evt', title: 'Event track', desc: 'Cursor, clicks, keys, scroll. In browser mode: DOM, a11y, console, network.', sample: '0:40  click "Pay $89.00"\\n0:41  POST /charge → 500', span: 'span 2' },
+        { tag: 'sum', title: 'Summary + metadata', desc: 'Chapters, duration, app focus, redaction manifest. Derived, not source.', sample: 'chapters: 4 · pii: 2 redacted\\nfocus: shop.acme.test', span: 'span 2' },
+      ],
+      pipeline: [
+        { step: '01 · capture', title: 'Thin recorder', desc: 'Pixels + audio + cursor/click/key. Rust.', arrow: true, bg: 'var(--panel)', shadow: 'var(--clay-sm)', kicker: 'var(--sodium-text)' },
+        { step: '02 · gate', title: 'veyo-core', desc: 'Salience gate, CPU. Emits a delta only when the scene changes.', arrow: true, bg: 'var(--panel)', shadow: 'var(--clay-sm)', kicker: 'var(--signal-text)' },
+        { step: '03 · enrich', title: 'veyo-enrich', desc: 'Transcript · caption salient frames · OCR · structure events.', arrow: true, bg: 'var(--panel)', shadow: 'var(--clay-sm)', kicker: 'var(--signal-text)' },
+        { step: '04 · clean', title: 'CloakPipe', desc: 'Strip PII / secrets from frames + transcript.', arrow: true, bg: 'var(--panel)', shadow: 'var(--clay-sm)', kicker: 'var(--signal-text)' },
+        { step: '05 · store', title: 'The artifact', desc: 'Video file + structured index, side by side.', arrow: true, bg: 'var(--panel)', shadow: 'var(--clay-sm)', kicker: 'var(--text-3)' },
+        { step: '06 · serve', title: 'MCP + JSON', desc: 'The link an agent queries. The moat.', arrow: false, bg: 'var(--signal-wash)', shadow: 'var(--clay-signal)', kicker: 'var(--signal-text)' },
+      ],
+      mcpTools: [
+        { fn: 'query_clip(url, q)', desc: 'natural-language Q&A over the index' },
+        { fn: 'get_frame_context(t)', desc: 'everything known at timestamp t' },
+        { fn: 'search_text(q)', desc: 'transcript + OCR full-text' },
+        { fn: 'get_events(range)', desc: 'clicks, keys, network in a window' },
+      ],
+      competitors: [
+        { name: 'Loom', note: 'human-only, closed', cells: ['✕','✕','✕','✕'], bg: 'var(--panel)', nameColor: 'var(--text)' },
+        { name: 'Cap', note: 'great recorder, AGPL', cells: ['✓','✕','✕','✕'], bg: 'var(--panel)', nameColor: 'var(--text)' },
+        { name: "Builder's Clips", note: 'cloud template, agent-native', cells: ['✕','✓','✕','✕'], bg: 'var(--panel)', nameColor: 'var(--text)' },
+        { name: 'clipxd', note: 'the index is the product', cells: ['✓','✓','✓','✓'], bg: 'var(--signal-wash)', nameColor: 'var(--signal-text)' },
+      ].map(r => {
+        const o = { name: r.name, note: r.note, bg: r.bg, nameColor: r.nameColor };
+        r.cells.forEach((v, i) => { o['c' + i] = v; o['c' + i + 'c'] = v === '✓' ? 'var(--signal-text)' : 'var(--text-3)'; });
+        return o;
+      }),
+
+      navItems, filters, clips, clipTabs,
+      activeClip: { ...clips[this.state.activeClip], slug: '8fa2e1' },
+      clipMarkers: [ { left: '12%', label: 'open checkout' }, { left: '40%', label: 'enter card' }, { left: '52%', label: 'click Pay' }, { left: '64%', label: '500 error' }, { left: '78%', label: 'retry' } ],
+      chapters: [ { t: '0:00', label: 'Open checkout page' }, { t: '0:33', label: 'Enter card details' }, { t: '0:40', label: 'Click Pay $89.00' }, { t: '0:41', label: 'Payment fails — 500' } ],
+      tabTranscript: clipTab === 'transcript', tabOcr: clipTab === 'ocr', tabEvents: clipTab === 'events', tabSummary: clipTab === 'summary',
+      transcript: withDelay([
+        { t: '0:05', who: 'host', text: "Okay, I'm recording the checkout bug now." },
+        { t: '0:12', who: 'host', text: 'Watch the form when I hit pay with this test card.' },
+        { t: '0:33', who: 'host', text: "I'll fill in the card number, expiry, and CVC." },
+        { t: '0:40', who: 'host', text: 'And clicking Pay — eighty-nine dollars.' },
+        { t: '0:42', who: 'host', text: "There it is. It just fails with card declined." },
+      ]),
+      onscreen: withDelay([
+        { t: '0:00', text: 'shop.acme.test/checkout', color: 'var(--text-2)' },
+        { t: '0:08', text: 'Payment', color: 'var(--text-2)' },
+        { t: '0:33', text: '4242 4242 4242 4242', color: 'var(--text-2)' },
+        { t: '0:40', text: 'Pay $89.00', color: 'var(--text-2)' },
+        { t: '0:41', text: 'Payment failed: card_declined', color: 'var(--danger)' },
+      ]),
+      events: withDelay([
+        { t: '0:00', type: 'nav', detail: 'GET /checkout → 200' },
+        { t: '0:33', type: 'keys', detail: 'input#card ← "4242 4242 4242 4242"' },
+        { t: '0:39', type: 'focus', detail: 'button "Pay $89.00"' },
+        { t: '0:40', type: 'click', detail: 'button "Pay $89.00" @ (412, 596)' },
+        { t: '0:41', type: 'net', detail: 'POST /api/charge → 500 (1240ms)' },
+        { t: '0:41', type: 'console', detail: 'Error: charge failed — card_declined' },
+      ]),
+      summaryText: 'A reproducible checkout failure. The host walks through the payment form with a test card and submits an $89.00 charge, which the server rejects with a 500 and a "card_declined" message surfaced in a red banner.',
+      summaryPoints: [
+        'Root signal: POST /api/charge returns 500, not a client validation error.',
+        'On-screen "card_declined" appears 0.4s after the Pay click — server-side decline.',
+        'No PII left the device; the card number was redacted by CloakPipe before indexing.',
+      ],
+
+      recBars: Array.from({ length: 56 }, (_, i) => ({ id: i, h: 14 + Math.round(Math.abs(Math.sin(i * 0.7) * Math.cos(i * 0.3)) * 40), delay: (i % 12) * 0.08 })),
+      recEvents: [
+        { t: '00:18', type: 'gate', detail: 'veyo: scene delta — emit frame #4', color: 'var(--signal-text)' },
+        { t: '00:16', type: 'click', detail: 'button "Pay $89.00" @ (412, 596)', color: 'var(--text-2)' },
+        { t: '00:14', type: 'zoom', detail: 'auto-zoom 2.4× → cursor cluster', color: 'var(--text-2)' },
+        { t: '00:09', type: 'keys', detail: 'input#card ← •••• •••• •••• 4242', color: 'var(--text-2)' },
+        { t: '00:03', type: 'nav', detail: 'GET /checkout → 200', color: 'var(--text-2)' },
+      ],
+
+      importSources: [
+        { label: 'Loom', host: 'loom.com/share/…', tint: 'oklch(0.6 0.18 280)' },
+        { label: 'Cap', host: 'cap.so/s/…', tint: 'oklch(0.62 0.16 200)' },
+        { label: 'YouTube', host: 'youtube.com/watch…', tint: 'oklch(0.62 0.2 25)' },
+        { label: 'Any MP4', host: 'https://…/clip.mp4', tint: 'oklch(0.6 0.14 160)' },
+      ],
+      importSteps: [
+        { n: '1', label: 'Fetch & decode', detail: '12:10 · 1080p · 17,460 frames', st: 'done' },
+        { n: '2', label: 'veyo salience gate', detail: 'emitted 38 frames (0.22%)', st: 'done' },
+        { n: '3', label: 'Transcript · OCR · captions', detail: 'whisper.cpp + frame captions', st: 'active' },
+        { n: '4', label: 'CloakPipe redaction', detail: 'queued — 2 candidate secrets', st: 'pending' },
+        { n: '5', label: 'Publish index + MCP', detail: 'clipxd.com/c/ + .json sidecar', st: 'pending' },
+      ].map(x => ({ ...x,
+        glyph: x.st === 'done' ? '✓' : (x.st === 'active' ? '●' : x.n),
+        dotBg: x.st === 'done' ? 'var(--signal)' : (x.st === 'active' ? 'var(--signal-wash)' : 'var(--panel-3)'),
+        dotFg: x.st === 'done' ? 'var(--on-accent)' : (x.st === 'active' ? 'var(--signal-text)' : 'var(--text-3)'),
+        dotBorder: x.st === 'pending' ? 'var(--border)' : 'var(--signal)',
+        titleColor: x.st === 'pending' ? 'var(--text-3)' : 'var(--text)',
+        stateColor: x.st === 'active' ? 'var(--signal-text)' : 'var(--text-3)',
+        stateLabel: x.st === 'done' ? 'done' : (x.st === 'active' ? 'reading…' : 'queued'),
+      })),
+
+      chatThread: [
+        { who: 'user', text: 'Across all my clips, where did a payment or checkout fail?' },
+        { who: 'agent', text: 'One clip matches: "Checkout 500 — card_declined repro". A POST /api/charge returned 500 at 0:41 with "card_declined" shown on screen.', cites: ['clip:8fa2e1', 'net@0:41', 'ocr@0:41'] },
+        { who: 'user', text: 'What was the user doing in the 10 seconds before it failed?' },
+        { who: 'agent', text: 'They typed a card number into input#card (0:33), focused the Pay button (0:39), then clicked "Pay $89.00" (0:40). The failed charge fired 0.4s later.', cites: ['keys@0:33', 'event:click@0:40'] },
+      ].map(m => ({ ...m,
+        align: m.who === 'user' ? 'flex-end' : 'flex-start',
+        bg: m.who === 'user' ? 'var(--sodium)' : 'var(--panel)',
+        fg: m.who === 'user' ? 'var(--on-accent)' : 'var(--text)',
+        shadow: m.who === 'user' ? 'var(--clay-sodium)' : 'var(--clay-sm)',
+        showCites: m.who === 'agent', cites: m.cites || [],
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>
