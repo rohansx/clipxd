@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  clipxd OG image — 1200x630 SVG.  Most social platforms accept SVG OG images
+  and the file is a few KB; the few that don't (Twitter historically) fall back
+  to the page's first H1.  The composition mirrors the landing hero so the
+  shared card is recognisable when seen next to the app.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="clipxd — a screen recording an agent can read">
+  <defs>
+    <linearGradient id="og_bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFD3B0" />
+      <stop offset="0.36" stop-color="#FFAFC2" />
+      <stop offset="0.68" stop-color="#C9B6FF" />
+      <stop offset="1" stop-color="#A6E6CF" />
+    </linearGradient>
+    <radialGradient id="og_signal" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#16C79A" />
+      <stop offset="1" stop-color="#0C8E6C" />
+    </radialGradient>
+    <radialGradient id="og_sodium" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFB48F" />
+      <stop offset="0.45" stop-color="#FF7A59" />
+      <stop offset="1" stop-color="#EF5A39" />
+    </radialGradient>
+    <linearGradient id="og_face" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" />
+      <stop offset="0.55" stop-color="#F6EEFA" />
+      <stop offset="1" stop-color="#E4D6F0" />
+    </linearGradient>
+    <linearGradient id="og_side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#19D7A6" />
+      <stop offset="1" stop-color="#0B7E5F" />
+    </linearGradient>
+    <radialGradient id="og_spec" cx="0.32" cy="0.26" r="0.55">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="630" fill="url(#og_bg)" />
+  <circle cx="120" cy="60" r="220" fill="rgba(255,255,255,0.18)" />
+  <circle cx="1080" cy="540" r="280" fill="rgba(255,255,255,0.14)" />
+
+  <!-- brand wordmark + clay mark on the left -->
+  <g transform="translate(72,118)">
+    <!-- clay tablet mark, scaled up -->
+    <g transform="translate(0,0) scale(2.2)">
+      <rect x="5" y="8.5" width="30" height="28" rx="11" fill="url(#og_side)" />
+      <rect x="5" y="4.5" width="30" height="29" rx="11" fill="url(#og_face)" />
+      <path d="M11 6.5 H29 C32 6.5 33.5 8 33.5 11 V15 C29 12 11 12 6.5 15 V11 C6.5 8 8 6.5 11 6.5 Z" fill="url(#og_spec)" opacity="0.7" />
+      <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="#C8432A" transform="translate(0,1.6)" stroke="#C8432A" stroke-width="3" stroke-linejoin="round" />
+      <path d="M16.5 13.6 L16.5 25.4 L26.6 19.9 Z" fill="url(#og_sodium)" stroke="url(#og_sodium)" stroke-width="3" stroke-linejoin="round" />
+    </g>
+    <!-- wordmark -->
+    <text x="100" y="44" font-family="Space Grotesk, system-ui, sans-serif" font-weight="700" font-size="56" fill="#211B2B" letter-spacing="-2">Clip</text>
+    <g transform="translate(212,18) rotate(-5)">
+      <rect x="0" y="0" width="92" height="46" rx="14" fill="url(#og_signal)" />
+      <text x="46" y="32" text-anchor="middle" font-family="Space Grotesk, system-ui, sans-serif" font-weight="700" font-size="28" fill="#06231B">XD</text>
+    </g>
+  </g>
+
+  <!-- hero text -->
+  <g transform="translate(72,288)">
+    <text font-family="Space Grotesk, system-ui, sans-serif" font-weight="700" font-size="68" fill="#211B2B" letter-spacing="-2">
+      <tspan x="0" y="0">A screen recording</tspan>
+      <tspan x="0" y="80">an agent can <tspan fill="url(#og_signal)">read</tspan>.</tspan>
+    </text>
+    <text font-family="Space Grotesk, system-ui, sans-serif" font-weight="400" font-size="24" fill="#5F586E" y="200">
+      Local-first. Open-core. Apache-2.0. The pixels never leave your device.
+    </text>
+  </g>
+
+  <!-- bottom-right MCP card mock -->
+  <g transform="translate(740,360)">
+    <rect x="0" y="0" width="380" height="200" rx="22" fill="rgba(255,255,255,0.78)" />
+    <text x="22" y="36" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14" fill="#928BA1" letter-spacing="2">INDEX · 5 TRACKS</text>
+    <g transform="translate(22,52)" font-family="JetBrains Mono, ui-monospace, monospace" font-size="16" fill="#5F586E">
+      <text y="18"><tspan fill="#0C8E6C">●</tspan> transcript · whisper.cpp</text>
+      <text y="42"><tspan fill="#0C8E6C">●</tspan> on-screen text · ocr</text>
+      <text y="66"><tspan fill="#D6461F">●</tspan> events · click / key / scroll</text>
+      <text y="90"><tspan fill="#9B8CFF">●</tspan> network · DOM · a11y</text>
+      <text y="114"><tspan fill="#928BA1">●</tspan> summary · chapters</text>
+    </g>
+    <text x="22" y="184" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14" fill="#0C8E6C">~340 tokens · queryable over MCP</text>
+  </g>
+
+  <!-- CTA pill, bottom-left -->
+  <g transform="translate(72,540)">
+    <rect x="0" y="0" width="220" height="56" rx="28" fill="url(#og_signal)" />
+    <text x="110" y="36" text-anchor="middle" font-family="Space Grotesk, system-ui, sans-serif" font-weight="600" font-size="20" fill="#06231B">Open clipxd →</text>
+  </g>
+  <text x="304" y="574" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14" fill="#5F586E">github.com/rohansx/clipxd</text>
+</svg>

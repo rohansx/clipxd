@@ -8,6 +8,7 @@ interface LandingProps {
   theme: Theme;
   toggleTheme: () => void;
   onOpenApp: () => void;
+  onImport: () => void;
   onLogin?: () => void;
 }
 
@@ -48,7 +49,7 @@ const WIPE_MAX = 96;
 const WIPE_AUTO_MIN = 16;
 const WIPE_AUTO_MAX = 82;
 
-export function Landing({ theme, toggleTheme, onOpenApp, onLogin }: LandingProps) {
+export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: LandingProps) {
   const reduced = usePrefersReducedMotion();
   const [wipe, setWipe] = useState(50);
   const [autoSweep, setAutoSweep] = useState(true);
@@ -186,7 +187,7 @@ export function Landing({ theme, toggleTheme, onOpenApp, onLogin }: LandingProps
                 <span className="dot" style={{ background: "var(--on-accent)" }} />
                 Record a clip
               </button>
-              <button className="btn" onClick={onOpenApp} style={{ borderRadius: 13, fontSize: 15, padding: "13px 22px" }}>
+              <button className="btn" onClick={onImport} style={{ borderRadius: 13, fontSize: 15, padding: "13px 22px" }}>
                 Paste a Loom instead
               </button>
               <span
@@ -412,21 +413,52 @@ export function Landing({ theme, toggleTheme, onOpenApp, onLogin }: LandingProps
             </div>
           </div>
           <pre className="mcp-code">
-{`$ agent query
-> query_clip(
->   <span className="sig">"clipxd.com/c/8fa2e1"</span>,
->   <span className="sig">"what error showed up and what</span>
->    <span className="sig">was the user doing right before?"</span>)
-<span className="c3">↳ resolving index … (0 frames fetched)</span>
-
-<span className="name">{</span>
-  <span className="c3">"answer"</span>: <span className="sig">"500 at 0:41 — 'card_declined'</span>
-           <span className="sig">in a red banner. User clicked</span>
-           <span className="sig">Pay $89.00 at 0:40."</span>,
-  <span className="c3">"grounds"</span>: [<span className="sig">"ocr@0:41"</span>,<span className="sig">"net@0:41"</span>,
-              <span className="sig">"event:click@0:40"</span>],
-  <span className="c3">"watched_video"</span>: <span className="warn">false</span>
-<span className="name">}</span>`}
+            <span className="c3">$ agent query</span>
+{"\n"}
+            <span className="name">&gt; query_clip(</span>
+{"\n"}
+            <span className="name">&gt;&nbsp;&nbsp;</span>
+            <span className="sig">"clipxd.com/c/8fa2e1"</span>
+            <span className="name">,</span>
+{"\n"}
+            <span className="name">&gt;&nbsp;&nbsp;</span>
+            <span className="sig">"what error showed up and what was the</span>
+{"\n"}
+            <span className="name">&gt;&nbsp;&nbsp;&nbsp;</span>
+            <span className="sig">user doing right before?"</span>
+            <span className="name">)</span>
+{"\n"}
+            <span className="c3">↳ resolving index … (0 frames fetched)</span>
+{"\n\n"}
+            <span className="name">{"{"}</span>
+{"\n"}
+            <span>&nbsp;&nbsp;</span>
+            <span className="c3">"answer"</span>
+            <span className="name">: </span>
+            <span className="sig">"500 at 0:41 — 'card_declined' in a red</span>
+{"\n"}
+            <span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+            <span className="sig">banner. User clicked Pay $89.00 at 0:40."</span>
+            <span className="name">,</span>
+{"\n"}
+            <span>&nbsp;&nbsp;</span>
+            <span className="c3">"grounds"</span>
+            <span className="name">: [</span>
+            <span className="sig">"ocr@0:41"</span>
+            <span className="name">,</span>
+            <span className="sig">"net@0:41"</span>
+            <span className="name">,</span>
+{"\n"}
+            <span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+            <span className="sig">"event:click@0:40"</span>
+            <span className="name">],</span>
+{"\n"}
+            <span>&nbsp;&nbsp;</span>
+            <span className="c3">"watched_video"</span>
+            <span className="name">: </span>
+            <span className="warn">false</span>
+{"\n"}
+            <span className="name">{"}"}</span>
           </pre>
         </motion.div>
       </section>
@@ -504,7 +536,8 @@ export function Landing({ theme, toggleTheme, onOpenApp, onLogin }: LandingProps
               </button>
               <button
                 className="btn"
-                style={{ borderRadius: 13, fontSize: 15, padding: "13px 24px" }}
+                onClick={() => window.open("https://github.com/rohansx/clipxd", "_blank", "noopener,noreferrer")}
+                style={{ borderRadius: 13, fontSize: 15, padding: "13px 22px" }}
               >
                 Read the docs
               </button>
@@ -602,13 +635,15 @@ function Wipe({
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
 }) {
   // Boxes are absolute-positioned on the read overlay; coords are mirrored
-  // from the design (16:9.5 viewport + centered card).
+  // from the design (16:9.5 viewport + centered card).  Labels live INSIDE
+  // the box (left:8px) instead of at left:-1px so they stay readable when
+  // the box straddles the seam and gets clipped by `revealClip`.
   const boxes = [
-    { id: "url", top: "9%", left: "12%", w: "32%", h: "10%", label: 'ocr · url', color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "title", top: "22%", left: "16%", w: "26%", h: "9%", label: 'ocr · "Payment"', color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "card", top: "37%", left: "16%", w: "68%", h: "11%", label: 'ocr · "4242 4242 4242 4242" · pii?', color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "click", top: "61%", left: "16%", w: "68%", h: "11%", label: 'event · click "Pay $89.00" @0:40', color: "var(--sodium)", ink: "var(--on-accent)", danger: false },
-    { id: "err", top: "76%", left: "16%", w: "68%", h: "13%", label: 'ocr+net · 500 "card_declined"', color: "var(--danger)", ink: "#fff", danger: true },
+    { id: "url",    top: "13%", left: "16%", w: "30%", h: "10%", label: 'ocr · url',          color: "var(--signal)", ink: "var(--on-accent)", danger: false },
+    { id: "title",  top: "25%", left: "18%", w: "26%", h: "9%",  label: 'ocr · "Payment"',    color: "var(--signal)", ink: "var(--on-accent)", danger: false },
+    { id: "card",   top: "38%", left: "18%", w: "64%", h: "11%", label: 'ocr · card · pii',   color: "var(--signal)", ink: "var(--on-accent)", danger: false },
+    { id: "click",  top: "62%", left: "18%", w: "64%", h: "11%", label: 'event · click',      color: "var(--sodium)", ink: "var(--on-accent)", danger: false },
+    { id: "err",    top: "78%", left: "18%", w: "64%", h: "13%", label: 'ocr+net · 500',      color: "var(--danger)", ink: "#fff",            danger: true  },
   ];
 
   // The seam position is driven by parent state; we just need its % to render

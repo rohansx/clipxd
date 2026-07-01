@@ -14,6 +14,7 @@ import { useClips } from "./useClipData";
 import { useAuth } from "./useAuth";
 import { initialClipId } from "./api";
 import { vMount, usePrefersReducedMotion } from "./motion";
+import { Seo, SEO_VIEWS } from "./seo";
 
 export type View = "landing" | "auth" | "cloud";
 export type CloudView = "library" | "recording" | "import" | "chat" | "clip";
@@ -75,6 +76,10 @@ export default function App() {
 
   const goAuth = useCallback(() => setView("auth"), []);
   const goLanding = useCallback(() => setView("landing"), []);
+  const goImport = useCallback(
+    () => goCloud("import"),
+    [goCloud],
+  );
 
   const afterCreate = useCallback(
     (id: string) => {
@@ -126,6 +131,12 @@ export default function App() {
   if (view === "auth") {
     return (
       <div data-theme={theme}>
+        <Seo
+          title={SEO_VIEWS.auth.title}
+          description={SEO_VIEWS.auth.description}
+          path={SEO_VIEWS.auth.path}
+          noindex
+        />
         <div className="auth-screen">
           <div className="auth-card" style={{ position: "relative" }}>
             <button
@@ -154,10 +165,16 @@ export default function App() {
             animate="shown"
             exit={{ opacity: 0, transition: { duration: 0.18 } }}
           >
+            <Seo
+              title={SEO_VIEWS.landing.title}
+              description={SEO_VIEWS.landing.description}
+              path={SEO_VIEWS.landing.path}
+            />
             <Landing
               theme={theme}
               toggleTheme={toggleTheme}
               onOpenApp={() => goCloud("library")}
+              onImport={goImport}
               onLogin={goAuth}
             />
           </motion.div>
@@ -170,6 +187,16 @@ export default function App() {
             exit={{ opacity: 0, transition: { duration: 0.18 } }}
             className="cloud"
           >
+            <Seo
+              title={cloudView === "clip" ? "Clip" : SEO_VIEWS[cloudView].title}
+              description={
+                cloudView === "clip"
+                  ? SEO_VIEWS.clip.description
+                  : SEO_VIEWS[cloudView].description
+              }
+              path={cloudView === "clip" ? "/clip" : SEO_VIEWS[cloudView].path}
+              noindex={cloudView === "clip" || cloudView === "chat"}
+            />
             <Sidebar
               cloudView={cloudView}
               clipCount={clips?.length ?? 0}

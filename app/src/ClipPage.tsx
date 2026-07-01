@@ -3,6 +3,7 @@ import { useClip } from "./useClipData";
 import { queryClip, renderClip, downloadBlob, shareLink, apiBase, reEnrichClip } from "./api";
 import { fmt, type QueryAnswer, type Index } from "./types";
 import { editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
+import { Seo } from "./seo";
 
 /** The clip's phase-2 enrich produced no semantic annotations. The cap/OCR/transcriber
  *  was offline at recording time — surface a re-enrich CTA instead of looking "done". */
@@ -166,6 +167,27 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
 
   return (
     <div className="clip-page">
+      {index && (
+        <Seo
+          title={index.metadata.title || "Clip"}
+          description={`Watch the recording and ask the agent about it. clip: ${id}.`}
+          path={`/clip/${id}`}
+          noindex
+          jsonLd={{
+            "@context": "https://schema.org",
+            "@type": "VideoObject",
+            name: index.metadata.title || "Clip",
+            description: index.summary.tldr || "A clip on clipxd",
+            uploadDate: index.metadata.created_at,
+            duration: `PT${Math.max(1, Math.round(index.metadata.duration))}S`,
+            thumbnailUrl: `/clip/${id}/frames/00001.png`,
+            contentUrl: `/clip/${id}/video`,
+            encodingFormat: "video/webm",
+            isAccessibleForFree: true,
+            publisher: { "@type": "Organization", name: "clipxd", url: "https://clipxd.com/" },
+          }}
+        />
+      )}
       <div className="clip-titlebar">
         <h1>{index.metadata.title || id}</h1>
         <span className="clip-url mono">/clip/{id}</span>

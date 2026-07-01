@@ -373,14 +373,19 @@ h2.section-title{
 /* the parse "boxes" on the read overlay */
 .wipe-box{
   position:absolute;border:1.5px solid var(--signal);border-radius:9px;animation:boxIn .3s var(--ease-clip);
+  z-index:2;
 }
 .wipe-box.sodium{border-color:var(--sodium)}
 .wipe-box.danger{border-color:var(--danger)}
 .wipe-box-label{
-  position:absolute;top:-9px;left:-1px;font-family:var(--font-mono);font-size:9px;
+  position:absolute;top:6px;left:8px;font-family:var(--font-mono);font-size:9px;
   font-weight:600;color:var(--on-accent);padding:2px 5px;border-radius:3px;
   white-space:nowrap;box-shadow:var(--clay-sm);
+  background:var(--signal);
+  z-index:3;
 }
+.wipe-box.sodium .wipe-box-label{background:var(--sodium)}
+.wipe-box.danger .wipe-box-label{background:var(--danger);color:#fff}
 
 /* HUD chips welded onto the wipe */
 .wipe-hud{
@@ -406,19 +411,20 @@ h2.section-title{
 
 /* the seam handle — drag knob with glass + lens filter */
 .wipe-seam{
-  position:absolute;top:0;bottom:0;width:2.5px;
-  background:linear-gradient(180deg,rgba(255,255,255,.6),var(--signal),rgba(255,255,255,.6));
-  box-shadow:0 0 16px rgba(22,199,154,.6);pointer-events:none;
+  position:absolute;top:0;bottom:0;width:3px;z-index:6;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(255,255,255,.85) 8%,var(--signal) 50%,rgba(255,255,255,.85) 92%,transparent);
+  box-shadow:0 0 18px rgba(22,199,154,.65), inset 0 0 0 1px rgba(255,255,255,.4);
 }
 .wipe-seam-knob{
   position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   width:54px;height:54px;border-radius:50%;display:grid;place-items:center;
   font-family:var(--font-mono);font-size:17px;color:var(--text);
   text-shadow:0 1px 2px rgba(255,255,255,.6);
+  z-index:7;cursor:ew-resize;
 }
 .wipe-seam-lens{
   position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:54px;height:54px;border-radius:50%;
+  width:54px;height:54px;border-radius:50%;z-index:5;
   background:radial-gradient(circle at 32% 26%, rgba(255,255,255,.45), transparent 55%);
   pointer-events:none;
 }
@@ -1217,10 +1223,10 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   margin:0 0 14px;font-size:26px;line-height:1.5;font-weight:600;color:var(--text);
 }
 
-.auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--env),var(--bg)}
+.auth-screen{min-height:100vh;display:grid;align-content:center;justify-items:center;padding:24px;background:var(--env),var(--bg)}
 .auth-card{
   width:min(400px,94vw);background:var(--panel);border:1px solid var(--border);
-  box-shadow:var(--clay);padding:30px 28px;display:flex;flex-direction:column;gap:12px;
+  box-shadow:var(--clay);padding:24px 22px;display:flex;flex-direction:column;gap:10px;
   position:relative;border-radius:var(--r-lg);
 }
 .auth-back{
@@ -1228,7 +1234,7 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   padding:4px 10px;font-size:12px;color:var(--text-3);cursor:pointer;border-radius:99px;
 }
 .auth-back:hover{color:var(--text);border-color:var(--border-2)}
-.auth-head{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:6px;text-align:center}
+.auth-head{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:2px;text-align:center}
 .auth-tag{font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)}
 .auth-github{
   width:100%;height:42px;border-radius:99px;justify-content:center;gap:9px;
@@ -1240,7 +1246,7 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 }
 .auth-or::before,.auth-or::after{content:"";flex:1;height:1px;background:var(--border)}
 .auth-err{font-size:12.5px;color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger);padding:8px 10px;border-radius:var(--r-sm)}
-.auth-switch{text-align:center;font-size:12.5px;color:var(--text-3);margin-top:4px}
+.auth-switch{text-align:center;font-size:12.5px;color:var(--text-3);margin-top:2px}
 .auth-link{background:none;border:none;color:var(--signal-text);font-size:inherit;font-family:inherit;cursor:pointer;padding:0;text-decoration:underline}
 
 /* ============================================================================
