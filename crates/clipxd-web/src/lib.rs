@@ -1595,6 +1595,8 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
     href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
     rel="stylesheet" />
   <style>{css}</style>
+  <!-- Umami analytics (privacy-friendly, self-hosted) -->
+  <script defer src="https://analytics.rohan.sh/script.js" data-website-id="f0180529-adb3-4603-b5fa-8bc5bd19b4d5"></script>
 </head>
 <body>
   {topbar}
