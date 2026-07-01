@@ -12,6 +12,7 @@
 
 pub mod autofocus;
 pub mod capture;
+pub mod incremental;
 pub mod index_map;
 pub mod pipeline;
 pub mod redact;
@@ -21,6 +22,7 @@ pub mod types;
 
 pub use autofocus::focus_track_from_deltas;
 pub use capture::{FramesDirCapture, LiveCapture};
+pub use incremental::IncrementalIndexer;
 pub use index_map::to_index_events;
 pub use transcribe::transcribe;
 pub use pipeline::{enrich_clip, record_from_capture, record_from_video, stub_clip, RecordOutput};

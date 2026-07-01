@@ -12,12 +12,20 @@ use axum::{
     Router,
 };
 use clipxd_index::{query, Index};
-use clipxd_recorder::EventTrack;
+use clipxd_recorder::{EventTrack, IncrementalIndexer};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex as AsyncMutex;
 use tower_http::cors::CorsLayer;
+
+/// One streaming-upload session's incremental indexer, keyed by its `stg_...` session id.
+/// The outer map is locked only briefly (get/insert/remove); the inner `StdMutex` guards the
+/// actual `add_increment`/`finalize` calls, which run on blocking threads (ffmpeg + OCR work).
+/// `Option` so `finalize` can `.take()` an owned `IncrementalIndexer` out of the slot.
+type StageSessions = Arc<AsyncMutex<HashMap<String, Arc<StdMutex<Option<IncrementalIndexer>>>>>>;
 
 pub mod auth;
 pub mod storage;
@@ -40,6 +48,10 @@ pub struct AppState {
     pub public_base: Option<Arc<String>>,
     /// Multi-tenant auth (accounts + per-user clip ownership). `None` = local/LAN mode (no auth).
     pub auth: Option<AuthState>,
+    /// Live incremental indexers for in-progress streaming-upload sessions, keyed by session
+    /// id. Populated at `/ingest/stage`, fed at each `/ingest/stage/:s` chunk, consumed at
+    /// `/ingest/stage/:s/commit`.
+    pub stage_sessions: StageSessions,
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -55,7 +67,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     };
     let has_auth = auth.is_some();
     let storage = Arc::new(storage::StorageKind::from_env(&clips_dir));
-    let state = AppState { storage, clips_dir: Arc::new(clips_dir), public, public_base, auth };
+    let stage_sessions: StageSessions = Arc::new(AsyncMutex::new(HashMap::new()));
+    let state = AppState { storage, clips_dir: Arc::new(clips_dir), public, public_base, auth, stage_sessions };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
         .route("/clip/:id", get(share_page))
@@ -525,13 +538,15 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
     if body.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "empty body".into()));
     }
-    ingest_bytes(s, user, body).await
+    ingest_bytes(s, user, body, None).await
 }
 
 /// Shared ingest core — called by both `/ingest` (full blob) and `/ingest/stage/:s/commit`
-/// (reassembled chunks). Two-phase: Phase 1 persists + stubs immediately, Phase 2 enriches
-/// in the background.
-async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+/// (reassembled chunks). Two-phase: Phase 1 persists + stubs immediately, Phase 2 enriches in
+/// the background. `incremental`, when the staged-upload path already accumulated one, replaces
+/// Phase 2's from-scratch `enrich_clip` with one final pass over the already-mostly-indexed
+/// session — see `clipxd_recorder::incremental` for why that's usually much faster.
+async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremental: Option<IncrementalIndexer>) -> Result<Json<serde_json::Value>, WebErr> {
     let dir = s.clips_dir.clone();
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let id = format!("clp_{:08x}", stamp as u32);
@@ -575,7 +590,11 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes) -> Resul
     let storage_arc = s.storage.clone();
     tokio::spawn(async move {
         let _ = tokio::task::spawn_blocking(move || {
-            if let Err(e) = clipxd_recorder::enrich_clip(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0) {
+            let result = match incremental {
+                Some(indexer) => indexer.finalize(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
+                None => clipxd_recorder::enrich_clip(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0).map(|_| ()),
+            };
+            if let Err(e) = result {
                 eprintln!("background enrich failed for {bg_id}: {e:#}");
                 if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
                     if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
@@ -597,7 +616,17 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes) -> Resul
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
-/// `POST /ingest/stage` — begin a streaming upload session.
+/// Where a stage session's incrementally-extracted frames live while recording is in
+/// progress — separate from the chunks dir (`clipxd-stage-{session}`) so the indexer's
+/// `finalize` can move them into `clip_dir/frames` regardless of when the chunks dir itself
+/// gets cleaned up at commit.
+fn stage_frames_dir(session: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("clipxd-stage-frames-{session}"))
+}
+
+/// `POST /ingest/stage` — begin a streaming upload session. Also registers a fresh
+/// [`IncrementalIndexer`] so `/ingest/stage/:session` chunks can start indexing immediately
+/// as they land, instead of only after `commit`.
 /// Returns `{"session": "<id>"}` immediately; the client then PUTs 15-second chunks.
 async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
     require_user(&s, &headers)?;
@@ -606,11 +635,14 @@ async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> R
     let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
     tokio::fs::create_dir_all(&dir).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let indexer = IncrementalIndexer::new(stage_frames_dir(&session), 4.0);
+    s.stage_sessions.lock().await.insert(session.clone(), Arc::new(StdMutex::new(Some(indexer))));
     Ok(Json(serde_json::json!({ "session": session })))
 }
 
-/// `PUT /ingest/stage/:session` — store one MediaRecorder timeslice chunk (?seq=N).
-/// Fire-and-forget from the client; the server writes it to disk instantly.
+/// `PUT /ingest/stage/:session` — store one MediaRecorder timeslice chunk (?seq=N), then
+/// rebuild the session's video-so-far and kick off (detached, non-blocking) an incremental
+/// indexing pass over it — so most of a recording is already indexed before `commit`.
 async fn ingest_stage_append(
     State(s): State<AppState>,
     Path(session): Path<String>,
@@ -630,15 +662,56 @@ async fn ingest_stage_append(
         return Err((StatusCode::NOT_FOUND, "session not found".into()));
     }
     let chunk_path = dir.join(format!("chunk-{:06}.bin", q.seq));
-    tokio::task::spawn_blocking(move || std::fs::write(&chunk_path, &body))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let video_so_far = dir.join("video-so-far.webm");
+    tokio::task::spawn_blocking({
+        let dir = dir.clone();
+        let video_so_far = video_so_far.clone();
+        move || -> anyhow::Result<()> {
+            std::fs::write(&chunk_path, &body)?;
+            concat_chunks(&dir, &video_so_far)?;
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Fire-and-forget: index the growing video in the background so the PUT response (and
+    // therefore the client's next chunk) never waits on ffmpeg/OCR work.
+    if let Some(slot) = s.stage_sessions.lock().await.get(&session).cloned() {
+        tokio::task::spawn_blocking(move || {
+            if let Ok(mut guard) = slot.lock() {
+                if let Some(indexer) = guard.as_mut() {
+                    if let Err(e) = indexer.add_increment(&video_so_far, "Screen recording") {
+                        eprintln!("incremental add_increment failed for session {session}: {e:#} (continuing)");
+                    }
+                }
+            }
+        });
+    }
     Ok(StatusCode::OK)
 }
 
-/// `POST /ingest/stage/:session/commit` — concatenate all uploaded chunks in order and
-/// create the clip. Chunks are valid WebM segments; concatenation produces a valid WebM.
+/// Concatenate all `chunk-*.bin` files in `dir` (sorted) into `out`. WebM segments from
+/// `MediaRecorder` are ordered byte streams, so raw concatenation produces a valid WebM.
+fn concat_chunks(dir: &std::path::Path, out: &std::path::Path) -> anyhow::Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("chunk-"))
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    anyhow::ensure!(!entries.is_empty(), "no chunks in stage session");
+    let mut all = Vec::new();
+    for entry in entries {
+        all.extend(std::fs::read(entry.path())?);
+    }
+    std::fs::write(out, all)?;
+    Ok(())
+}
+
+/// `POST /ingest/stage/:session/commit` — concatenate all uploaded chunks in order and create
+/// the clip. If the session accumulated an [`IncrementalIndexer`], Phase 2 finishes it off
+/// (one final pass over the tail) instead of re-enriching the whole clip from scratch.
 async fn ingest_stage_commit(
     State(s): State<AppState>,
     Path(session): Path<String>,
@@ -655,27 +728,28 @@ async fn ingest_stage_commit(
     let video_bytes = tokio::task::spawn_blocking({
         let dir = dir.clone();
         move || -> anyhow::Result<Vec<u8>> {
-            let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_string_lossy().starts_with("chunk-"))
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            if entries.is_empty() {
-                return Err(anyhow::anyhow!("no chunks in stage session"));
-            }
-            let mut all = Vec::new();
-            for entry in entries {
-                all.extend(std::fs::read(entry.path())?);
-            }
+            let out = dir.join("commit.webm");
+            concat_chunks(&dir, &out)?;
+            let bytes = std::fs::read(&out)?;
             let _ = std::fs::remove_dir_all(&dir);
-            Ok(all)
+            Ok(bytes)
         }
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
 
-    ingest_bytes(s, user, Bytes::from(video_bytes)).await
+    // Take the accumulated indexer out of the registry. The std Mutex lock blocks until any
+    // in-flight background `add_increment` from the last chunk's PUT finishes -- exactly the
+    // ordering we want (never finalize while an increment is still writing to it) -- so it's
+    // done on a blocking-pool thread rather than tying up an async worker while it waits.
+    let stage_slot = s.stage_sessions.lock().await.remove(&session);
+    let incremental = match stage_slot {
+        Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
+        None => None,
+    };
+
+    ingest_bytes(s, user, Bytes::from(video_bytes), incremental).await
 }
 
 /// `POST /clip/:id/cursor` — the browser recorder captured a cursor track (pointer moves +
