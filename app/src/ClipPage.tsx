@@ -159,6 +159,26 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
     showToast("clip.json downloaded");
   };
 
+  // Track "is this the clip you just made?" so the indexing banner can
+  // show across the watch body.  Three signals count:
+  //   1. Localstorage has an unsaved entry (`pending_*`) — server hasn't
+  //      committed yet, so `id` won't match.  We trust the local status.
+  //   2. Localstorage has a saved id matching the URL — server committed.
+  //   3. The server says the clip is still enriching.
+  // The banner mounts if ANY of these hold.
+  //
+  // ⚠️  Hooks must be called in the same order on every render — do NOT
+  // put them after the conditional `return`s below.  Previously the
+  // `useState`/`useEffect` for `lastClip` lived after these returns, and
+  // they skipped on the first render (when the URL+id was set but
+  // `loading && !index` short-circuited the JSX) then re-ran on the second
+  // render (`loading` became false).  React's Strict Mode sees the
+  // out-of-order calls and refuses to render the component at all.  Both
+  // `useState` for `lastClip` and `useEffect` for the listener belong up
+  // here, above the returns.
+  const [lastClip, setLastClip] = useState<LastClip | null>(getLastClip);
+  useEffect(() => onLastClipChange(setLastClip), []);
+
   if (!id) return <div className="view"><div className="empty">No clip selected.</div></div>;
   if (loading && !index) return <div className="view"><div className="empty"><span className="spin" /> developing the index…</div></div>;
   if (error || !index) return <div className="view"><div className="empty">Couldn't load this clip — {error ?? "unknown error"}.</div></div>;
@@ -166,12 +186,11 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const manual = regionAt(regions, t);
   const speed = editAt(edits, t, "speed");
 
-  // Track "is this the clip you just made?" so the indexing banner can show
-  // alongside the small titlebar pill.  Both signals come from the same
-  // localStorage key, so a hard refresh keeps both in sync.
-  const [lastClip, setLastClip] = useState<LastClip | null>(getLastClip);
-  useEffect(() => onLastClipChange(setLastClip), []);
-  const justRecorded = !!lastClip && lastClip.id === id && index.status === "enriching";
+  const justRecorded =
+    !!lastClip && (
+      lastClip.status === "saving" ||
+      (lastClip.id === id && index.status === "enriching")
+    );
 
   return (
     <div className="clip-page">
