@@ -4,39 +4,20 @@
 //! that way. This pass exists to synthesize what per-frame enrichment can't: a narrative
 //! title, a real tl;dr, and timestamped chapters. It runs on the **text** the pipeline
 //! already produced — timestamped OCR spans, scene captions, and transcript — not the raw
-//! video. (An earlier version uploaded the whole video to Gemini's Files API; that worked
-//! but cost a second video transfer + a 300s upload-and-poll cycle for information the index
-//! had *already extracted*. Measured: text-context calls land in 5-20s vs. video-upload's
-//! 17-39s, and the JSON output was equivalent quality on the recording it was tested against.)
-//! It never runs on the request path: `spawn_phase2` fires it after enrichment, and every
-//! failure is logged-and-swallowed (the clip is already complete without it).
-//!
-//! **Two backends, primary + fallback — not a choice you make:**
-//! 1. **NVIDIA NIM** (`NVIDIA_API_KEY`) — free-tier hosted inference (Kimi K2 by default; see
-//!    `CLIPXD_NVIDIA_MODEL`). No published per-token price as of 2026-07 (confirmed against
-//!    `docs.nvidia.com/nim` — no pricing page exists for the hosted endpoint), so it is
-//!    explicitly *not* the thing to depend on for guaranteed uptime or cost. Tried first
-//!    because it's free right now and was faster/equal quality in testing.
-//! 2. **Gemini** (`GEMINI_API_KEY`, model `CLIPXD_GEMINI_MODEL`, default
-//!    `gemini-3.1-flash-lite`) — a real, published, stable price
-//!    ($0.25/M in, $1.50/M out — ai.google.dev/gemini-api/docs/pricing, confirmed 2026-07).
-//!    Used whenever NVIDIA is unset, or fails for *any* reason (down, rate-limited, pricing
-//!    changed, model retired) — the fallback exists so a free tier disappearing overnight
-//!    doesn't silently turn this feature off.
+//! video, via the shared [`crate::llm`] NVIDIA/Gemini-fallback primitive. It never runs on the
+//! request path: `spawn_phase2` fires it after enrichment, and every failure is
+//! logged-and-swallowed (the clip is already complete without it).
 //!
 //! Enable with `CLIPXD_DEEP_PASS=1` and at least one of `NVIDIA_API_KEY` / `GEMINI_API_KEY`.
 
-use anyhow::{anyhow, bail, Context, Result};
+use crate::llm;
+use anyhow::{bail, Context, Result};
 use clipxd_index::Index;
 use std::path::Path;
 
 pub fn enabled() -> bool {
     let on = std::env::var("CLIPXD_DEEP_PASS").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-    on && (has_env("NVIDIA_API_KEY") || has_env("GEMINI_API_KEY"))
-}
-
-fn has_env(key: &str) -> bool {
-    std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false)
+    on && llm::any_backend_configured()
 }
 
 /// What the deep pass asks for — matches the fields it is allowed to merge into the index.
@@ -68,9 +49,8 @@ what happens in order, naming visible apps, actions, and any errors verbatim. `c
 `start` is the chapter's first moment in seconds from the beginning.\n\nINDEX DATA:\n";
 
 /// Run the deep pass for the clip in `clip_dir` and merge the result into its `index.json`.
-/// Tries NVIDIA first (if configured), then Gemini on any NVIDIA failure or absence. Merge
-/// rules are conservative: the title is only set while it's still the recorder's default
-/// (never stomp a user edit), tl;dr/chapters only when the model returned something.
+/// Merge rules are conservative: the title is only set while it's still the recorder's
+/// default (never stomp a user edit), tl;dr/chapters only when the model returned something.
 pub async fn run(clip_dir: &Path, id: &str) -> Result<()> {
     let index_path = clip_dir.join("index.json");
     let idx: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
@@ -80,27 +60,8 @@ pub async fn run(clip_dir: &Path, id: &str) -> Result<()> {
     }
     let prompt = format!("{PROMPT_PREFIX}{context}");
 
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
-
-    let mut used = "none";
-    let mut result: Option<Result<DeepResult>> = None;
-    if has_env("NVIDIA_API_KEY") {
-        let r = call_nvidia(&client, &prompt).await;
-        if let Err(e) = &r {
-            eprintln!("deep pass: NVIDIA backend failed for {id}, falling back to Gemini: {e:#}");
-        } else {
-            used = "nvidia";
-        }
-        result = Some(r);
-    }
-    if result.as_ref().is_none_or(|r| r.is_err()) && has_env("GEMINI_API_KEY") {
-        let r = call_gemini(&client, &prompt).await;
-        if r.is_ok() {
-            used = "gemini";
-        }
-        result = Some(r);
-    }
-    let deep = result.ok_or_else(|| anyhow!("no deep-pass backend configured"))??;
+    let (text, used) = llm::complete(&prompt, true).await?;
+    let deep = parse_deep_json(&text)?;
 
     merge_into_index(clip_dir, &deep)?;
     eprintln!("deep pass ({used}): merged title/tldr/{} chapters for {id}", deep.chapters.len());
@@ -108,10 +69,10 @@ pub async fn run(clip_dir: &Path, id: &str) -> Result<()> {
 }
 
 /// Flatten the index's transcript + scene captions + OCR spans into one timestamp-ordered
-/// text block — the same shape proved out in manual testing (transcript/captions/OCR
-/// interleaved by `t`, one line each). Deliberately excludes raw event_track/search fields:
-/// those are noisy relative to their token cost for this specific synthesis task.
-fn build_context(idx: &Index) -> String {
+/// text block — the shared input every LLM-over-the-index feature (deep pass, doc generation)
+/// builds its prompt from. Deliberately excludes raw event_track/search fields: those are
+/// noisy relative to their token cost for text-synthesis tasks.
+pub(crate) fn build_context(idx: &Index) -> String {
     let mut lines: Vec<(f64, String)> = Vec::new();
     for seg in &idx.transcript {
         lines.push((seg.start, format!("[{:.1}s] speech: {}", seg.start, seg.text)));
@@ -126,66 +87,8 @@ fn build_context(idx: &Index) -> String {
     lines.into_iter().map(|(_, l)| l).collect::<Vec<_>>().join("\n")
 }
 
-fn nvidia_model() -> String {
-    // kimi-k2.6 was fastest and highest quality of the three NVIDIA-hosted Chinese frontier
-    // models tested (kimi-k2.6, minimax-m3, qwen3.5-122b-a10b) on this task — see project memory.
-    std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "moonshotai/kimi-k2.6".into())
-}
-
-async fn call_nvidia(client: &reqwest::Client, prompt: &str) -> Result<DeepResult> {
-    let key = std::env::var("NVIDIA_API_KEY").context("NVIDIA_API_KEY")?;
-    let body = serde_json::json!({
-        "model": nvidia_model(),
-        "messages": [{ "role": "user", "content": prompt }],
-        "temperature": 0.3,
-        "max_tokens": 1024,
-    });
-    let resp = client
-        .post("https://integrate.api.nvidia.com/v1/chat/completions")
-        .bearer_auth(&key)
-        .json(&body)
-        .send()
-        .await
-        .context("nvidia request")?;
-    let status = resp.status();
-    let out: serde_json::Value = resp.json().await.context("nvidia response")?;
-    if !status.is_success() {
-        bail!("nvidia {status}: {}", out["error"]["message"].as_str().or_else(|| out["detail"].as_str()).unwrap_or("?"));
-    }
-    let text = out["choices"][0]["message"]["content"].as_str().ok_or_else(|| anyhow!("nvidia response had no message content"))?;
-    parse_deep_json(text)
-}
-
-fn gemini_model() -> String {
-    // gemini-2.5-flash-lite returned repeated 503 "high demand" errors in testing (2026-07) --
-    // likely deprioritized capacity now that newer generations exist. gemini-3.1-flash-lite is
-    // the current stable cheap/fast tier and has a real published price.
-    std::env::var("CLIPXD_GEMINI_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "gemini-3.1-flash-lite".into())
-}
-
-async fn call_gemini(client: &reqwest::Client, prompt: &str) -> Result<DeepResult> {
-    let key = std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY")?;
-    let body = serde_json::json!({
-        "contents": [{ "parts": [{ "text": prompt }] }],
-        "generationConfig": { "responseMimeType": "application/json" },
-    });
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", gemini_model());
-    let resp = client.post(&url).header("x-goog-api-key", &key).json(&body).send().await.context("gemini request")?;
-    let status = resp.status();
-    let out: serde_json::Value = resp.json().await.context("gemini response")?;
-    if !status.is_success() {
-        bail!("gemini {status}: {}", out["error"]["message"].as_str().unwrap_or("?"));
-    }
-    let text = out["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .ok_or_else(|| anyhow!("gemini response had no text part"))?;
-    parse_deep_json(text)
-}
-
-/// Both backends are asked for JSON-only output, but chat-completion-style models sometimes
-/// wrap it in a ```json fence anyway — strip that before parsing rather than failing on it.
 fn parse_deep_json(text: &str) -> Result<DeepResult> {
-    let cleaned = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let cleaned = llm::strip_fence(text);
     serde_json::from_str(cleaned).with_context(|| format!("deep-pass JSON parse: {cleaned:.200}"))
 }
 
