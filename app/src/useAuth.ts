@@ -21,13 +21,22 @@ export interface Auth {
   refresh: () => void;
 }
 
-export function useAuth(): Auth {
-  const [loading, setLoading] = useState(true);
+export function useAuth(enabled = true): Auth {
+  const [loading, setLoading] = useState(enabled);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [n, setN] = useState(0);
 
   useEffect(() => {
+    // Lazy mode: until `enabled` flips true, we don't even hit /auth/me.
+    // This keeps the landing page console-clean — /auth/me returns 401
+    // when no session is present, which surfaces as a console error and
+    // tanks the Lighthouse "errors-in-console" audit. The auth check
+    // only matters once the user navigates into the cloud view.
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     let live = true;
     setLoading(true);
     fetchAuthStatus().then((s) => {
@@ -39,7 +48,7 @@ export function useAuth(): Auth {
     return () => {
       live = false;
     };
-  }, [n]);
+  }, [n, enabled]);
 
   const login = useCallback(async (email: string, password: string) => {
     setUser(await apiLogin(email, password));

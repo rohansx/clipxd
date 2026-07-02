@@ -145,7 +145,7 @@ export function Brand({ size = 40, withWord = false }: BrandProps) {
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "var(--signal)",
+            background: "var(--signal-strong)",
             color: "var(--on-accent)",
             fontSize: size * 0.32,
             fontWeight: 700,
