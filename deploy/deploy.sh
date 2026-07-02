@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Ship clipxd to the provisioned Hetzner box: build the SPA + static musl binaries locally,
-# ship them, install the Caddyfile, restart the services. Idempotent.
+# Ship clipxd to the provisioned Hetzner box: build the SPA + binaries locally, ship them,
+# install the Caddyfile, restart the services. Idempotent.
+#
+# TARGET defaults to glibc (x86_64-unknown-linux-gnu), not musl: oar-ocr's ONNX Runtime
+# backend has no prebuilt binary for musl (confirmed — `cargo build --target
+# x86_64-unknown-linux-musl` fails at the ort-sys build script, not just at runtime) and
+# ONNX Runtime has no source-built-for-musl path worth the complexity here. The glibc build
+# still ships as a single self-contained binary in practice: ONNX Runtime links statically,
+# so `ldd` shows only libc/libstdc++/libgcc/libm — present on every Linux box, including this
+# one. Override with TARGET=x86_64-unknown-linux-musl if you ever drop the oar-ocr backend.
 #
 # Prereqs (one-time, on the deploy target):
 #   - deploy/provision.sh has run
@@ -32,7 +40,7 @@ else
 fi
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/clipxd_deploy}"
-TARGET="${TARGET:-x86_64-unknown-linux-musl}"
+TARGET="${TARGET:-x86_64-unknown-linux-gnu}"
 
 # ── helpers ───────────────────────────────────────────────────────────────
 # For localhost: sudo -n the perms. For remote: ssh.
@@ -72,15 +80,17 @@ if [ ! -d "$ROOT/app/node_modules" ]; then
 fi
 ( cd "$ROOT/app" && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build )
 
-# ── 2. static binaries ─────────────────────────────────────────────────────
-echo "==> 2/4 build static binaries ($TARGET)"
+# ── 2. binaries ────────────────────────────────────────────────────────────
+echo "==> 2/4 build binaries ($TARGET)"
 if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed 2>/dev/null | grep -q "$TARGET"; then
   rustup target add "$TARGET"
 fi
-export CC_x86_64_unknown_linux_musl="${CC_x86_64_unknown_linux_musl:-musl-gcc}"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER:-musl-gcc}"
-# Truly-static link flags — see commit history for why each one is needed.
-export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-self-contained=yes -C relocation-model=static -C link-arg=-static -C link-arg=-no-pie"
+if [[ "$TARGET" == *-musl ]]; then
+  # Truly-static link flags — only meaningful (and only linkable) against musl's libc.
+  export CC_x86_64_unknown_linux_musl="${CC_x86_64_unknown_linux_musl:-musl-gcc}"
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER:-musl-gcc}"
+  export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-self-contained=yes -C relocation-model=static -C link-arg=-static -C link-arg=-no-pie"
+fi
 ( cd "$ROOT" && cargo build --release --target "$TARGET" -p clipxd-web -p clipxd-cli )
 BIN_DIR="$ROOT/target/$TARGET/release"
 
