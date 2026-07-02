@@ -26,7 +26,7 @@ export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }
     { icon: "●", label: "Recording", view: "recording", accent: "var(--sodium)" },
     { icon: "↧", label: "Import", view: "import", accent: "var(--signal)" },
     { icon: "◈", label: "Ask agent", view: "chat", accent: "var(--signal)" },
-    { icon: "⚙", label: "Settings", view: "library", accent: "var(--text-3)" },
+    { icon: "⚙", label: "Settings", view: "settings", accent: "var(--text-3)" },
   ];
   // "Library" stays highlighted while viewing a clip (clips live under the library).
   const isActive = (v: CloudView) =>

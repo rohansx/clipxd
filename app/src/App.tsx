@@ -8,16 +8,17 @@ import { ClipPage } from "./ClipPage";
 import { Recording } from "./Recording";
 import { ImportView } from "./Import";
 import { Chat } from "./Chat";
+import { Settings } from "./Settings";
 import { SearchBox } from "./SearchBox";
 import { Login } from "./Login";
 import { useClips } from "./useClipData";
-import { useAuth } from "./useAuth";
+import { useAuth, type Auth } from "./useAuth";
 import { initialClipId } from "./api";
 import { vMount, usePrefersReducedMotion } from "./motion";
 import { Seo, SEO_VIEWS } from "./seo";
 
 export type View = "landing" | "auth" | "cloud";
-export type CloudView = "library" | "recording" | "import" | "chat" | "clip";
+export type CloudView = "library" | "recording" | "import" | "chat" | "clip" | "settings";
 export type Theme = "light" | "dark";
 
 /** A seek request from the topbar search → consumed by the open ClipPage (nonce forces re-fire). */
@@ -254,6 +255,9 @@ export default function App() {
                 showToast={showToast}
                 afterCreate={afterCreate}
                 onClipInCloudView={openClip}
+                auth={auth}
+                theme={theme}
+                toggleTheme={toggleTheme}
               />
             </main>
           </motion.div>
@@ -296,6 +300,9 @@ function ViewBody(p: {
   showToast: (m: string) => void;
   afterCreate: (id: string) => void;
   onClipInCloudView: (id: string) => void;
+  auth: Auth;
+  theme: Theme;
+  toggleTheme: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const baseProps = {
@@ -345,6 +352,20 @@ function ViewBody(p: {
       {p.cloudView === "chat" && (
         <motion.div key="chat" {...baseProps}>
           <Chat clips={p.clips} onOpen={p.openClip} />
+        </motion.div>
+      )}
+      {p.cloudView === "settings" && (
+        <motion.div key="settings" {...baseProps}>
+          <Settings
+            authEnabled={p.auth.authEnabled}
+            user={p.auth.user}
+            clipCount={p.clips?.length ?? 0}
+            theme={p.theme}
+            toggleTheme={p.toggleTheme}
+            onSetUsername={(u) => p.auth.setUsername(u)}
+            onLogout={p.auth.logout}
+            showToast={p.showToast}
+          />
         </motion.div>
       )}
     </AnimatePresence>

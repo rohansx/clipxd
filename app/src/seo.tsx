@@ -108,6 +108,12 @@ export const SEO_VIEWS = {
     path: "/clip",
     noindex: true,
   },
+  settings: {
+    title: "Settings",
+    description: "Manage your clipxd account, username, and appearance.",
+    path: "/settings",
+    noindex: true,
+  },
   auth: {
     title: "Sign in",
     description: "Sign in or create a clipxd account.",
