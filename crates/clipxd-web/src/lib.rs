@@ -76,6 +76,7 @@ pub mod deeppass;
 pub mod docgen;
 pub mod llm;
 pub mod mcp;
+pub mod preview_gif;
 pub mod storage;
 use auth::{AuthState, AuthUser};
 
@@ -136,6 +137,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id", get(share_page))
         .route("/clip/:id/agent.md", get(get_agent_md))
         .route("/clip/:id/doc/:kind", get(get_doc))
+        .route("/clip/:id/preview.gif", get(get_preview_gif))
         .route("/clip/:id/index.json", get(get_index))
         .route("/clip/:id/zoom.json", get(get_zoom))
         .route("/clip/:id/query", get(get_query))
@@ -148,6 +150,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/u/:username/clip/:id", get(share_page_for_user))
         .route("/u/:username/clip/:id/agent.md", get(get_agent_md_for_user))
         .route("/u/:username/clip/:id/doc/:kind", get(get_doc_for_user))
+        .route("/u/:username/clip/:id/preview.gif", get(get_preview_gif_for_user))
         .route("/u/:username/clip/:id/index.json", get(get_index_for_user))
         .route("/u/:username/clip/:id/zoom.json", get(get_zoom_for_user))
         .route("/u/:username/clip/:id/query", get(get_query_for_user))
@@ -742,6 +745,25 @@ async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<i
     }
     let bytes = read_object_or_local(&s, &format!("{id}/zoom.json")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no zoom track".into()))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// `GET /clip/:id/preview.gif` — an animated GIF built from salient frames, for pasting into
+/// email/Slack/Notion where an animated thumbnail is the highest-converting share surface
+/// (Loom's "wave at the camera" GIF pattern). Generated once, cached to storage at
+/// `<id>/preview.gif`; subsequent requests just serve the cached bytes.
+async fn get_preview_gif(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let key = format!("{id}/preview.gif");
+    if let Some(cached) = read_object_or_local(&s, &key).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))? {
+        return Ok(([(header::CONTENT_TYPE, "image/gif")], cached));
+    }
+    let idx = load_index(&s, &id).await?;
+    let storage = s.storage.make_storage().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?;
+    let gif = preview_gif::generate(storage.as_ref(), &id, &idx).await.map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")))?;
+    write_object_best_effort(&s, &key, gif.clone(), "image/gif").await;
+    Ok(([(header::CONTENT_TYPE, "image/gif")], gif))
 }
 
 async fn get_video(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, WebErr> {
@@ -1867,6 +1889,14 @@ async fn get_zoom_for_user(
     get_zoom(State(s), Path(id)).await
 }
 
+async fn get_preview_gif_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_preview_gif(State(s), Path(id)).await
+}
+
 async fn get_video_for_user(
     State(s): State<AppState>,
     Path((username, id)): Path<(String, String)>,
@@ -2009,10 +2039,21 @@ fn html_escape(s: &str) -> String {
 fn share_html(id: &str, idx: &Index, url: &str) -> String {
     let title = html_escape(&idx.metadata.title);
     let qr = qr_svg(url);
-    let og_desc = format!(
-        "Watch \"{}\" on clipxd. {} on-screen text spans, {} event(s). Indexed and agent-queryable.",
-        title, idx.on_screen_text.len(), idx.event_track.len()
-    );
+    // Prefer the deep pass's real tl;dr (content-aware — "what happens in this recording")
+    // over the generic stream-count line, so a Slack/Notion/Twitter unfurl actually describes
+    // the clip instead of just proving it was indexed.
+    let og_desc = if !idx.summary.tldr.trim().is_empty() {
+        html_escape(idx.summary.tldr.trim())
+    } else {
+        format!(
+            "Watch \"{}\" on clipxd. {} on-screen text spans, {} event(s). Indexed and agent-queryable.",
+            title, idx.on_screen_text.len(), idx.event_track.len()
+        )
+    };
+    // First salient frame beats a hardcoded "00001.png": that's whatever was on screen at
+    // t=0 (often a blank/loading state), while the earliest visual_timeline entry with a
+    // frame_ref is the first moment the codec actually judged worth keeping a frame for.
+    let og_image_path = idx.visual_timeline.iter().find_map(|m| m.frame_ref.as_deref()).unwrap_or("frames/00001.png");
     let dur = idx.metadata.duration;
 
     let main = share_main(id, idx);
@@ -2031,7 +2072,7 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
   <meta property="og:title" content="{title}" />
   <meta property="og:description" content="{og_desc}" />
   <meta property="og:url" content="{url}" />
-  <meta property="og:image" content="{url}/frames/00001.png" />
+  <meta property="og:image" content="{url}/{og_image_path}" />
   <meta name="twitter:card" content="player" />
   <meta name="twitter:title" content="{title}" />
   <meta name="twitter:description" content="{og_desc}" />
@@ -2274,11 +2315,16 @@ fn capitalize(s: &str) -> &str {
 
 /// ---------------- aside column ----------------
 fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
-    let mcp_url = format!("{url}/index.json");
+    let title = html_escape(&idx.metadata.title);
+    let agent_md_url = format!("{url}/agent.md");
+    let gif_url = format!("{url}/preview.gif");
     let embed = format!(
         r#"<iframe src="{url}" width="960" height="600" frameborder="0" allow="autoplay; fullscreen" title="clipxd clip"></iframe>"#,
         url = url,
     );
+    // Loom's "copy a hyperlinked animated thumbnail" pattern — the pasted <a><img></a> plays
+    // inline in email clients (which render animated GIFs, unlike most og:image consumers).
+    let gif_embed = format!(r#"<a href="{url}"><img src="{gif_url}" alt="{title} — clipxd" width="480" /></a>"#);
 
     format!(
         r##"<div class="ask-card">
@@ -2307,17 +2353,40 @@ fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
     <span class="share-lbl">Copy link</span>
     <span class="share-hint">{short_url}</span>
   </button>
+  <button class="share-btn" data-copy="{gif_embed}" type="button">
+    <span class="share-lbl">Copy GIF</span>
+    <span class="share-hint">for email — plays inline</span>
+  </button>
   <button class="share-btn" data-copy="{embed}" type="button">
     <span class="share-lbl">Copy embed</span>
     <span class="share-hint">&lt;iframe …&gt;</span>
   </button>
-  <button class="share-btn" data-copy="{mcp_url}" type="button">
-    <span class="share-lbl">Copy MCP url</span>
-    <span class="share-hint">agent-queryable</span>
+  <button class="share-btn" data-copy="{agent_md_url}" type="button">
+    <span class="share-lbl">Copy agent link</span>
+    <span class="share-hint">paste into any agent</span>
   </button>
   <a class="share-btn" href="/clip/{id}/index.json" target="_blank" rel="noopener">
     <span class="share-lbl">Download index.json</span>
     <span class="share-hint">.json · sidecar</span>
+  </a>
+</div>
+
+<div class="share-card">
+  <div class="share-head">
+    <span class="share-dot"></span>
+    <b>Generate a doc</b>
+  </div>
+  <a class="share-btn" href="/clip/{id}/doc/pr-description" target="_blank" rel="noopener">
+    <span class="share-lbl">PR description</span>
+    <span class="share-hint">summary + test plan</span>
+  </a>
+  <a class="share-btn" href="/clip/{id}/doc/sop" target="_blank" rel="noopener">
+    <span class="share-lbl">SOP</span>
+    <span class="share-hint">numbered repro steps</span>
+  </a>
+  <a class="share-btn" href="/clip/{id}/doc/qa-steps" target="_blank" rel="noopener">
+    <span class="share-lbl">QA steps</span>
+    <span class="share-hint">test checklist</span>
   </a>
 </div>
 
@@ -2329,7 +2398,8 @@ fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
   </div>
 </div>"##,
         url        = url,
-        mcp_url    = mcp_url,
+        agent_md_url = agent_md_url,
+        gif_embed  = html_escape(&gif_embed),
         embed      = embed,
         qr         = qr,
         id         = id,
