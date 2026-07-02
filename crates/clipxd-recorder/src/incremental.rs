@@ -16,10 +16,20 @@ use crate::{autofocus, cinematic_track, pipeline::unix_secs, to_index_events, Ev
 use anyhow::Result;
 use clipxd_cinematic::ZoomConfig;
 use clipxd_import::{gate, map, media};
-use clipxd_index::{Index, Source};
+use clipxd_index::{Index, Source, TranscriptSegment};
 use std::path::{Path, PathBuf};
 use veyo_core::{CodecConfig, Delta};
 use veyo_enrich::{EnrichInput, Enricher, Enrichment};
+
+/// How much of the newest audio each incremental pass leaves untouched. Whisper is given a
+/// `[watermark, boundary - HOLDBACK)` slice, never the raw tail — an utterance can still be
+/// mid-word right at a pass's boundary (which only exists because that's where a 15s
+/// MediaRecorder chunk happened to end, not because anyone stopped talking), and the next
+/// pass sees more of it. Coarser than real streaming-ASR chunking (VAD-based segmentation,
+/// overlapping windows) would do, but proportionate to what a single-speaker screen-recording
+/// narration needs, and it never loses audio — a word only shows up a few seconds later than
+/// it was spoken, in the same slice-boundary tradeoff the frame holdback above already makes.
+const TRANSCRIBE_HOLDBACK_MS: u64 = 3_000;
 
 /// Per-session accumulator, alive for the lifetime of one staged recording upload.
 ///
@@ -48,6 +58,11 @@ pub struct IncrementalIndexer {
     /// this, a delta committed in an earlier pass and a floor mark landing on that same instant
     /// in a later pass (once it's no longer that pass's own boundary) would double up.
     covered_ms: std::collections::HashSet<u64>,
+    /// Transcript segments committed so far, timestamps already offset to be video-relative
+    /// (whisper itself only ever sees one slice at a time and reports slice-relative times).
+    transcript: Vec<TranscriptSegment>,
+    /// How far (video-relative ms) audio has been transcribed. `None` = nothing yet.
+    max_transcript_ms: Option<u64>,
 }
 
 impl IncrementalIndexer {
@@ -60,35 +75,75 @@ impl IncrementalIndexer {
             max_delta_ms: None,
             max_frame_ms: None,
             covered_ms: std::collections::HashSet::new(),
+            transcript: Vec::new(),
+            max_transcript_ms: None,
         }
     }
 
     /// Re-decode + re-gate `video_so_far`, enriching only what's new since the last call. Safe
-    /// to call repeatedly as the video grows (idempotent on already-processed frames).
+    /// to call repeatedly as the video grows (idempotent on already-processed frames). Also
+    /// transcribes any newly-arrived audio (holdback applies — see [`TRANSCRIBE_HOLDBACK_MS`])
+    /// so speech is searchable while the recording is still running, not just after Stop.
     pub fn add_increment(&mut self, video_so_far: &Path, title: &str) -> Result<()> {
-        self.run_pass(video_so_far, title, true)
+        self.run_pass(video_so_far, title, true)?;
+        self.transcribe_pass(video_so_far, true);
+        Ok(())
+    }
+
+    /// Transcribe the `[max_transcript_ms, boundary)` audio slice (minus holdback on a
+    /// mid-recording pass) and append it. Extracting only the *new* slice — not the whole
+    /// growing recording — is what keeps this cheap every ~15s chunk instead of O(n²) over a
+    /// long recording; whisper on a 15s slice is itself well under a second of new work on a
+    /// tiny/base model. Best-effort: no audio track, ffmpeg failure, or no whisper binary
+    /// installed all just mean this pass contributes nothing, same as `transcribe::transcribe`'s
+    /// existing empty-on-failure contract — never fatal to the recording.
+    fn transcribe_pass(&mut self, video_so_far: &Path, holdback: bool) {
+        let Ok(info) = media::probe(video_so_far) else { return };
+        let boundary_ms = (info.duration_s * 1000.0).round() as u64;
+        let start_ms = self.max_transcript_ms.unwrap_or(0);
+        let end_ms = if holdback {
+            match boundary_ms.checked_sub(TRANSCRIBE_HOLDBACK_MS) {
+                Some(e) if e > start_ms => e,
+                _ => return, // not enough new audio past the holdback yet -- try next pass
+            }
+        } else {
+            boundary_ms
+        };
+        if end_ms <= start_ms {
+            return;
+        }
+        let start_s = start_ms as f64 / 1000.0;
+        let slice_wav = self.frames_dir.join("transcribe-slice.wav");
+        let Some(wav) = media::extract_audio_range(video_so_far, &slice_wav, start_s, Some((end_ms - start_ms) as f64 / 1000.0)) else {
+            return; // no audio track (yet) or extraction failed -- retry next pass
+        };
+        let mut segs = crate::transcribe::transcribe(&wav);
+        let _ = std::fs::remove_file(&wav);
+        for seg in &mut segs {
+            seg.start += start_s;
+            seg.end += start_s;
+        }
+        self.transcript.extend(segs);
+        // Advance regardless of whether this slice held speech -- a silent slice has still
+        // been "looked at" and must not be re-transcribed forever waiting for it to speak.
+        self.max_transcript_ms = Some(end_ms);
     }
 
     /// One final pass over `video` (the fully-committed recording, no holdback — this really
     /// is the end), then build + write the completed `Index` + zoom track into `clip_dir`,
     /// moving the incrementally-populated frames directory into place. Consumes `self` — a
     /// session's indexer is used exactly once.
+    ///
+    /// Unlike `pipeline::enrich_clip`'s from-scratch finalize (which overlaps a whole-file
+    /// transcribe against the enrich pass in a scoped thread, since it has no prior transcript
+    /// and whisper-over-everything is the long pole), this finalize doesn't need that: most of
+    /// the transcript already accumulated during recording via `add_increment`'s per-chunk
+    /// `transcribe_pass`, so all that's left is one small no-holdback tail slice — cheap enough
+    /// to just run inline after the visual pass rather than fight `self`'s split-borrow to
+    /// parallelize two `&mut self` calls.
     pub fn finalize(mut self, video: &Path, clip_dir: &Path, id: &str, title: &str, events: &EventTrack) -> Result<Index> {
-        // The final tail pass (frames → gate → OCR/caption calls) and the audio transcript
-        // share no data — overlap them; whisper on CPU is often the longest post-stop stage.
-        let (pass, tx) = std::thread::scope(|scope| {
-            let tx_handle = scope.spawn(|| {
-                let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
-                audio.as_deref().map(crate::transcribe::transcribe).unwrap_or_default()
-            });
-            let pass = self.run_pass(video, title, false);
-            let tx = tx_handle.join().unwrap_or_else(|e| {
-                eprintln!("transcribe thread panicked: {e:?} (continuing without a transcript)");
-                Vec::new()
-            });
-            (pass, tx)
-        });
-        pass?;
+        self.run_pass(video, title, false)?;
+        self.transcribe_pass(video, false);
         let info = media::probe(video)?;
 
         let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &self.enrichment);
@@ -100,8 +155,8 @@ impl IncrementalIndexer {
         };
         index.event_track = to_index_events(&track);
 
-        if !tx.is_empty() {
-            index.transcript = tx;
+        if !self.transcript.is_empty() {
+            index.transcript = self.transcript;
         }
 
         let focus = if track.is_empty() { autofocus::focus_track_from_deltas(&self.all_deltas, info.width, info.height) } else { track };
@@ -217,6 +272,102 @@ mod tests {
 
         assert!(!src.exists());
         assert!(dst.join("a.png").exists());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    }
+
+    /// A short video WITH an audio track (silence is fine — whisper isn't installed in this
+    /// environment either, so every real test run exercises the "extraction succeeds,
+    /// transcribe() finds nothing" branch; that branch is exactly what needs covering: the
+    /// watermark must still advance on empty results, or a silent recording would spin
+    /// re-transcribing the same dead air every single chunk forever).
+    fn make_video_with_audio(path: &Path, duration_s: u32) {
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", &format!("testsrc=duration={duration_s}:size=320x240:rate=10")])
+            .args(["-f", "lavfi", "-i", &format!("anullsrc=r=16000:cl=mono:d={duration_s}")])
+            .args(["-c:v", "libvpx", "-c:a", "libvorbis", "-f", "webm"])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("ffmpeg should run");
+        assert!(status.success(), "audio+video fixture generation failed");
+    }
+
+    #[test]
+    fn transcribe_pass_holdback_advances_watermark_without_reaching_the_live_edge() {
+        if !have_ffmpeg() {
+            eprintln!("skipping: ffmpeg not on PATH");
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!("clipxd-incr-tx-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let video = tmp.join("video.webm");
+        make_video_with_audio(&video, 10);
+
+        // ffmpeg's own output duration for a "10s" testsrc/anullsrc pair isn't exactly
+        // 10.000s (frame-rate rounding on the video side vs. the audio side) -- probe the
+        // real value rather than assume a round number the fixture doesn't actually produce.
+        let boundary_ms = (media::probe(&video).unwrap().duration_s * 1000.0).round() as u64;
+
+        let frames_dir = tmp.join("frames");
+        // transcribe_pass writes its scratch slice into frames_dir; in the real add_increment/
+        // finalize call sequence run_pass (via extract_frames) always creates it first. This
+        // test isolates transcribe_pass alone, so create it explicitly to match that invariant.
+        std::fs::create_dir_all(&frames_dir).unwrap();
+        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+        indexer.transcribe_pass(&video, true);
+        let after_holdback = indexer.max_transcript_ms.expect("a 10s clip minus the 3s holdback should commit some watermark");
+        assert_eq!(
+            after_holdback,
+            boundary_ms - TRANSCRIBE_HOLDBACK_MS,
+            "a holdback pass with no prior watermark should commit exactly [0, boundary - HOLDBACK)"
+        );
+
+        // A second holdback pass over the SAME (unchanged) video must not regress or spin --
+        // there's no new audio since the first pass already consumed everything short of the
+        // live edge, so the watermark should hold steady rather than re-processing.
+        let before = indexer.max_transcript_ms;
+        indexer.transcribe_pass(&video, true);
+        assert_eq!(indexer.max_transcript_ms, before, "no new audio available -> watermark must not move");
+
+        // The final (no-holdback) pass must reach all the way to the true end.
+        indexer.transcribe_pass(&video, false);
+        assert_eq!(indexer.max_transcript_ms, Some(boundary_ms), "final pass should commit through the true end, holdback lifted");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn transcribe_pass_on_video_with_no_audio_track_is_a_harmless_noop() {
+        if !have_ffmpeg() {
+            eprintln!("skipping: ffmpeg not on PATH");
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!("clipxd-incr-tx-noaudio-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let video = tmp.join("video.webm");
+        // testsrc alone -- no -f lavfi audio input -- produces a video-only file.
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=10"])
+            .args(["-c:v", "libvpx", "-f", "webm"])
+            .arg(&video)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("ffmpeg should run");
+        assert!(status.success());
+
+        let frames_dir = tmp.join("frames");
+        std::fs::create_dir_all(&frames_dir).unwrap();
+        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+        indexer.transcribe_pass(&video, true);
+        assert_eq!(indexer.max_transcript_ms, None, "no audio track -> watermark stays unset, never fails/panics");
+        assert!(indexer.transcript.is_empty());
+
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
