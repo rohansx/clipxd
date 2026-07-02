@@ -1381,20 +1381,22 @@ async fn ingest_tunneled(
         .unwrap_or("mp4")
         .to_string();
 
-    // Write the raw bytes to a temp file, then run stub_clip + clipxd import in a worker
-    // thread. The clip_id is computed deterministically (timestamp nanos) so the foreground
-    // can return it without waiting.
+    // Write the raw bytes to a temp file, then run stub_clip in a worker thread. The clip id
+    // is minted up front so the foreground can return it without waiting.
     let dir = s.clips_dir.clone();
     let body = body.clone();
     let owner_email = s.auth.as_ref().and_then(|_| headers.get("x-clipxd-owner-email").and_then(|v| v.to_str().ok()).map(String::from));
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let id = mint_clip_id();
+    // Claimed for the whole finalization (Phase 1 stub through Phase 2 completion) — same
+    // protection the staged-upload/reuse paths get, so a sweeper pass or a retried tunnel
+    // POST for this id can never write clip_dir concurrently with this request.
+    let claim = try_claim(&s.clip_claims, &id)
+        .ok_or((StatusCode::CONFLICT, "clip is already being finalized".into()))?;
     let tmp = std::env::temp_dir().join(format!("clipxd-tunnel-{stamp}.{ext}"));
     let tmp_clone = tmp.clone();
-    let body_for_thread = body.clone();
     let dir_thread = dir.clone();
     let id_thread = id.clone();
-    let storage = s.storage.clone();
 
     // Phase 1: write the body to a tmp file in this thread (sync — it's just a few MB).
     // We do this in the foreground so the tmp path is ready for the background worker.
@@ -1409,63 +1411,40 @@ async fn ingest_tunneled(
         return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("tunneled ingest failed: {e}")));
     }
 
-    // Persist the body and ownership BEFORE we respond, so the SPA can read the clip
-    // immediately. The full indexing + captioning run in a background task.
     let db = s.auth.as_ref().map(|a| a.db.clone());
+    let ext_clone = ext.clone();
 
-    // Background worker: stub_clip + clipxd import + enrich + mirror-to-S3.
-    tokio::task::spawn_blocking(move || {
-        // -- stub_clip (fast, ~1s) --
-        if let Err(e) = clipxd_recorder::stub_clip(&tmp_clone, dir_thread.as_path(), &id_thread, "Imported via tunnel") {
-            eprintln!("tunneled stub_clip failed for {id_thread}: {e:#}");
-            return;
-        }
-        let clip_dir = dir_thread.join(&id_thread);
-
-        // -- mirror the stub to S3 immediately (no-op on local) --
-        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage.make_storage()) {
-            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &id_thread, &clip_dir)) {
-                eprintln!("tunneled stub mirror: {e}");
-            }
-        }
-
-        // -- bind ownership if we got an owner-email header --
+    // Phase 1b: stub_clip (fast, ~1s) + ownership binding, on a blocking thread.
+    let stub_result = tokio::task::spawn_blocking(move || -> anyhow::Result<std::path::PathBuf> {
+        let clip_dir = clipxd_recorder::stub_clip(&tmp_clone, dir_thread.as_path(), &id_thread, "Imported via tunnel")?;
         if let (Some(db), Some(email)) = (db.as_ref(), owner_email.as_ref()) {
             if let Ok(Some(u)) = db.find_by_email(email) {
                 let _ = db.set_clip_owner(&id_thread, u.id);
             }
         }
-
-        // -- the SLOW part: full clipxd import (captioning + OCR + enrichment) --
-        // This is the part that takes minutes for a long Loom/YouTube video.
-        // The forwarder already has the clip_id and isn't blocking on this.
-        if let Err(e) = clipxd_recorder::enrich_clip(
-            &clip_dir.join("video.webm"),
-            &clip_dir,
-            &id_thread,
-            "Imported via tunnel",
-            &EventTrack::default(),
-            4.0,
-        ) {
-            eprintln!("tunneled enrich failed for {id_thread}: {e:#}");
-            if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
-                if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
-                    idx.status = clipxd_index::Status::Partial;
-                    let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
-                }
-            }
-        }
-
-        // -- re-mirror to S3 so the captions/OST/zoom land --
-        if let Ok(st) = tokio::runtime::Handle::current().block_on(storage.make_storage()) {
-            if let Err(e) = tokio::runtime::Handle::current().block_on(mirror_dir_to_storage(st.as_ref(), &id_thread, &clip_dir)) {
-                eprintln!("tunneled post-enrich mirror: {e}");
-            }
-        }
-
-        // -- clean up the tmp file --
         let _ = std::fs::remove_file(&tmp_clone);
-    });
+        // stub_clip preserves the source's own extension (video.mp4/video.webm/...), not
+        // always .webm — a prior hardcoded ".webm" here meant enrich_clip was pointed at a
+        // file that didn't exist for any non-webm tunneled source (most yt-dlp downloads are
+        // mp4), silently landing every such clip at status: partial with zero enrichment.
+        Ok(clip_dir.join(format!("video.{ext_clone}")))
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let video = match stub_result {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("tunneled stub_clip failed for {id}: {e:#}");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("tunneled ingest failed: {e:#}")));
+        }
+    };
+
+    // Phase 2 (background): mirror stub → enrich (full clipxd_recorder::enrich_clip, since
+    // there's no partial-file streaming protocol to index incrementally against here — the
+    // forwarder only POSTs once yt-dlp's download is complete) → deep pass → re-mirror. This
+    // is the same path /ingest and staged commits use, so it already carries every enrich_clip
+    // speedup (oar-ocr, phash dedup, concurrent captions, parallel transcript) automatically.
+    spawn_phase2(&s, id.clone(), dir.join(&id), video, None, claim);
 
     Ok(Response::builder()
         .status(StatusCode::ACCEPTED)

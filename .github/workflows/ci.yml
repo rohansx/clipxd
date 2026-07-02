@@ -82,3 +82,8 @@ jobs:
         # recorder/import enrich + clean_index write paths, not just the shipped
         # binaries.
         run: cargo check --workspace --all-targets
+
+      - name: cargo test
+        # Type-checking alone doesn't run the regression tests (e.g. the instant-link
+        # claim/id-collision tests, phash dedup, deeppass JSON parsing) — actually run them.
+        run: cargo test --workspace
