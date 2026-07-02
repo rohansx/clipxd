@@ -155,6 +155,32 @@ pub fn extract_frames(video: &Path, frames_dir: &Path, sample_fps: f32) -> Resul
         .collect())
 }
 
+/// Best-effort: extract a `[start_s, start_s+duration_s)` mono 16 kHz WAV slice for
+/// transcription, timestamps still relative to the *original* video (the caller offsets
+/// segment starts/ends by `start_s` itself, since whisper's own output is relative to the
+/// slice it was given). Used by [`extract_audio`] (whole file) and by incremental
+/// transcription (only the newly-arrived audio each pass, not the whole growing recording —
+/// re-transcribing from t=0 on every ~15s chunk would be O(n²) over a long recording).
+/// `-ss` after `-i` is deliberately slower-but-frame-accurate: transcription quality is more
+/// sensitive to a word being cut in half at a slice boundary than to seek speed here.
+pub fn extract_audio_range(video: &Path, out_wav: &Path, start_s: f64, duration_s: Option<f64>) -> Option<PathBuf> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-i").arg(video);
+    if start_s > 0.0 {
+        cmd.args(["-ss", &start_s.to_string()]);
+    }
+    if let Some(d) = duration_s {
+        cmd.args(["-t", &d.to_string()]);
+    }
+    cmd.args(["-ar", "16000", "-ac", "1", "-vn", "-y"]).arg(out_wav);
+    let status = cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().ok()?;
+    if status.success() && out_wav.exists() {
+        Some(out_wav.to_path_buf())
+    } else {
+        None
+    }
+}
+
 /// Best-effort: extract mono 16 kHz WAV for transcription. Returns `None` when the video
 /// has no audio (or extraction fails) — a transcript-less index is still valid.
 pub fn extract_audio(video: &Path, out_wav: &Path) -> Option<PathBuf> {
