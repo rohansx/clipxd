@@ -29,6 +29,9 @@ pub enum Status {
     Complete,
     Partial,
     Enriching,
+    /// Instant-link staged upload: the share URL already resolves but the user is still
+    /// recording — chunks are landing and the video/metadata aren't final yet.
+    Recording,
 }
 
 /// The top-level clip index — the artifact an agent queries.

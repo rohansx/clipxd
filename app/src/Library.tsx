@@ -65,7 +65,12 @@ const ClipCard = memo(function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen:
       <div className="clip-body">
         <div className="clip-name">{c.metadata.title || c.id}</div>
         <div className="clip-meta">
-          {c.status === "enriching" ? (
+          {c.status === "recording" ? (
+            <>
+              <span className="spin" style={{ width: 9, height: 9 }} />
+              <span style={{ color: "var(--sodium-text)" }}>recording…</span>
+            </>
+          ) : c.status === "enriching" ? (
             <>
               <span className="spin" style={{ width: 9, height: 9 }} />
               <span style={{ color: "var(--sodium-text)" }}>indexing…</span>
@@ -202,11 +207,14 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
   // doesn't keep nagging.  We only clear when the SPECIFIC clip in
   // localStorage matches what's no longer enriching — never silently drop
   // a "saving" / "failed" record.
+  // "recording" is deliberately included: after a mid-recording refresh the local record
+  // sticks at "recording" while the sweeper salvages the clip server-side — once the clip
+  // reaches complete/partial the stale record must clear like any other.
   useEffect(() => {
     const lc = getLastClip();
     if (!lc || lc.status === "saving" || lc.status === "failed") return;
     const live = (clips ?? []).find((c) => c.id === lc.id);
-    if (live && live.status !== "enriching") recordLastClipDone();
+    if (live && (live.status === "complete" || live.status === "partial")) recordLastClipDone();
   }, [clips]);
 
   return (

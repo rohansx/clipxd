@@ -21,13 +21,58 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
 use tower_http::cors::CorsLayer;
 
-/// One streaming-upload session's incremental indexer, keyed by its `stg_...` session id.
-/// The outer map is locked only briefly (get/insert/remove); the inner `StdMutex` guards the
-/// actual `add_increment`/`finalize` calls, which run on blocking threads (ffmpeg + OCR work).
-/// `Option` so `finalize` can `.take()` an owned `IncrementalIndexer` out of the slot.
+/// One streaming-upload session's incremental indexer, keyed by its session id (== the clip
+/// id for instant-link sessions). The outer map is locked only briefly (get/insert/remove);
+/// the inner `StdMutex` guards the actual `add_increment`/`finalize` calls, which run on
+/// blocking threads (ffmpeg + OCR work). `Option` so `finalize` can `.take()` an owned
+/// `IncrementalIndexer` out of the slot.
 type StageSessions = Arc<AsyncMutex<HashMap<String, Arc<StdMutex<Option<IncrementalIndexer>>>>>>;
 
+/// Clip ids currently being finalized (Phase 1 + Phase 2). Three actors can try to write the
+/// same `clip_dir` — a staged commit, the `/ingest?reuse=` fallback, and the abandoned-session
+/// sweeper — and none of them may overlap: concurrent `promote_staged`/`enrich` runs on one
+/// dir interleave `video.webm`/`index.json`/`frames/` writes with no ordering. A finalizer
+/// must hold the id's [`ClaimGuard`] for the whole job; whoever loses the claim backs off
+/// (HTTP 409 for requests, skip-this-tick for the sweeper).
+type ClipClaims = Arc<StdMutex<std::collections::HashSet<String>>>;
+
+/// RAII release for a [`ClipClaims`] entry — dropped (and thus released) wherever the
+/// finalization ends, including every early-error path.
+struct ClaimGuard {
+    claims: ClipClaims,
+    id: String,
+}
+
+impl Drop for ClaimGuard {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.claims.lock() {
+            g.remove(&self.id);
+        }
+    }
+}
+
+/// Claim `id` for exclusive finalization; `None` when another finalizer holds it.
+fn try_claim(claims: &ClipClaims, id: &str) -> Option<ClaimGuard> {
+    let mut g = claims.lock().ok()?;
+    g.insert(id.to_string()).then(|| ClaimGuard { claims: claims.clone(), id: id.to_string() })
+}
+
+/// Mint a fresh clip id: 64 bits of wall-clock nanoseconds folded with 32 bits of randomness,
+/// rendered as 24 hex chars. A bare 32-bit truncated timestamp (the old scheme) collides with
+/// 50% probability after ~65K clips (birthday bound) — on a busy box that's days, not never —
+/// and a collision here means silently overwriting a stranger's `index.json`/video. This is
+/// generated *before* any content exists (unlike the timestamp ids `clipxd-import`/the tunnel
+/// path derive from bytes already in hand), so it has no content to disambiguate on collision;
+/// the entropy has to carry the whole guarantee.
+fn mint_clip_id() -> String {
+    use rand::RngCore;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let salt = rand::thread_rng().next_u32();
+    format!("clp_{stamp:016x}{salt:08x}")
+}
+
 pub mod auth;
+pub mod deeppass;
 pub mod storage;
 use auth::{AuthState, AuthUser};
 
@@ -52,6 +97,11 @@ pub struct AppState {
     /// id. Populated at `/ingest/stage`, fed at each `/ingest/stage/:s` chunk, consumed at
     /// `/ingest/stage/:s/commit`.
     pub stage_sessions: StageSessions,
+    /// Clip ids being finalized right now — see [`ClipClaims`].
+    pub clip_claims: ClipClaims,
+    /// Caps how many Phase-2 enrichments run at once. Every ingest detaches one; unbounded,
+    /// a burst of recordings would stack ffmpeg+OCR jobs until the 4 GB box falls over.
+    pub phase2_permits: Arc<tokio::sync::Semaphore>,
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -68,10 +118,20 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     let has_auth = auth.is_some();
     let storage = Arc::new(storage::StorageKind::from_env(&clips_dir));
     let stage_sessions: StageSessions = Arc::new(AsyncMutex::new(HashMap::new()));
-    let state = AppState { storage, clips_dir: Arc::new(clips_dir), public, public_base, auth, stage_sessions };
+    let state = AppState {
+        storage,
+        clips_dir: Arc::new(clips_dir),
+        public,
+        public_base,
+        auth,
+        stage_sessions,
+        clip_claims: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+        phase2_permits: Arc::new(tokio::sync::Semaphore::new(2)),
+    };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
         .route("/clip/:id", get(share_page))
+        .route("/clip/:id/agent.md", get(get_agent_md))
         .route("/clip/:id/index.json", get(get_index))
         .route("/clip/:id/zoom.json", get(get_zoom))
         .route("/clip/:id/query", get(get_query))
@@ -82,6 +142,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         // Username-canonical share-link form: /u/:username/clip/:id and all the same
         // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
         .route("/u/:username/clip/:id", get(share_page_for_user))
+        .route("/u/:username/clip/:id/agent.md", get(get_agent_md_for_user))
         .route("/u/:username/clip/:id/index.json", get(get_index_for_user))
         .route("/u/:username/clip/:id/zoom.json", get(get_zoom_for_user))
         .route("/u/:username/clip/:id/query", get(get_query_for_user))
@@ -124,10 +185,88 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     // auth is the `?token=<shared-secret>` query param matching CLIPXD_YT_TUNNEL_URL.
     router = router
         .route("/ingest/tunneled", post(ingest_tunneled));
+    // Reap abandoned instant-link sessions (tab closed mid-recording → a `recording` stub +
+    // stage dir that will never see a commit). Guarded: `app()` is also built in tests with
+    // no runtime.
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let sweep_state = state.clone();
+        handle.spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                sweep_abandoned_stages(&sweep_state).await;
+            }
+        });
+    }
     router
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// Salvage or drop stage sessions whose tab died mid-recording. Stage-dir mtime refreshes on
+/// every ~15s chunk PUT, so >30 min of stillness means abandoned — no commit is coming. If
+/// chunks landed, promote them into a normal enriching clip (the user's recording is not
+/// lost — it shows up in their library like any other); if nothing landed, drop the empty
+/// `recording` stub so the library doesn't accumulate ghosts.
+async fn sweep_abandoned_stages(s: &AppState) {
+    const STALE_SECS: u64 = 30 * 60;
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(suffix) = name.strip_prefix("clipxd-stage-clp_") else { continue };
+        let id = format!("clp_{suffix}");
+        if !safe(&id) {
+            continue;
+        }
+        let stale = e.metadata().and_then(|m| m.modified()).ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|el| el.as_secs() > STALE_SECS);
+        if !stale {
+            continue;
+        }
+        // Claim the id before touching stage_dir/clip_dir at all. A staged commit or a
+        // reuse-fallback ingest may be finalizing this exact id right now (its stage-dir mtime
+        // can look stale if it's been blocked awaiting a slow in-flight add_increment) — losing
+        // this race means skip this tick entirely rather than run promote_staged/delete
+        // concurrently with whoever's holding it (two finalizers writing clip_dir at once was
+        // the CRITICAL bug this claim exists to prevent).
+        let Some(claim) = try_claim(&s.clip_claims, &id) else {
+            continue;
+        };
+        let slot = s.stage_sessions.lock().await.remove(&id);
+        let incremental = match slot {
+            Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
+            None => None,
+        };
+        let stage_dir = e.path();
+        let clip_dir = s.clips_dir.join(&id);
+        let has_chunks = std::fs::read_dir(&stage_dir)
+            .map(|mut it| it.any(|c| c.is_ok_and(|c| c.file_name().to_string_lossy().starts_with("chunk-"))))
+            .unwrap_or(false);
+        if has_chunks {
+            eprintln!("sweeper: salvaging abandoned recording {id}");
+            let promoted = tokio::task::spawn_blocking({
+                let (stage_dir, clip_dir, id) = (stage_dir.clone(), clip_dir.clone(), id.clone());
+                move || promote_staged(&stage_dir, &clip_dir, &id)
+            })
+            .await;
+            match promoted {
+                Ok(Ok(video)) => spawn_phase2(s, id, clip_dir, video, incremental, claim),
+                Ok(Err(e)) => eprintln!("sweeper: salvage failed for {id}: {e:#}"),
+                Err(e) => eprintln!("sweeper: salvage task died for {id}: {e}"),
+            }
+        } else {
+            let _ = std::fs::remove_dir_all(&stage_dir);
+            let _ = std::fs::remove_dir_all(stage_frames_dir(&id));
+            let is_empty_recording_stub = std::fs::read_to_string(clip_dir.join("index.json")).ok()
+                .and_then(|s| serde_json::from_str::<Index>(&s).ok())
+                .is_some_and(|i| i.status == clipxd_index::Status::Recording)
+                && !clip_dir.join("video.webm").exists();
+            if is_empty_recording_stub {
+                let _ = std::fs::remove_dir_all(&clip_dir);
+            }
+        }
+    }
 }
 
 // ---- auth helpers shared by the editor handlers ----
@@ -353,18 +492,27 @@ async fn load_index(state: &AppState, id: &str) -> Result<Index, WebErr> {
         return Err((StatusCode::BAD_REQUEST, "bad clip id".into()));
     }
     let key = format!("{id}/index.json");
-    let storage = state_storage(state).await?;
-    let bytes = storage.read_object(&key).await
+    let bytes = read_object_or_local(state, &key).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read {key}: {e}")))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no clip {id}")))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bad index: {e}")))
 }
 
-/// Build a `Box<dyn Storage>` for an AppState. Wraps the boilerplate of error mapping.
-async fn state_storage(state: &AppState) -> Result<Box<dyn storage::Storage>, WebErr> {
-    state.storage.make_storage().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))
+/// Read `key` from the configured storage, falling back to the local clips dir. Every clip
+/// file is written locally *first* and mirrored to S3 in the background (the mirror is off
+/// the request path since the instant-link work), so a just-created clip must stay readable
+/// from local disk while its S3 copy is still uploading. `key` components are `safe()`-checked
+/// by every caller before reaching here.
+async fn read_object_or_local(state: &AppState, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    if let Some(bytes) = state.storage.make_storage().await?.read_object(key).await? {
+        return Ok(Some(bytes));
+    }
+    let local = state.clips_dir.join(key);
+    if local.exists() {
+        return Ok(Some(tokio::fs::read(&local).await?));
+    }
+    Ok(None)
 }
 
 /// Write a single key to S3, swallowing errors (best-effort). Use this for "I just
@@ -421,6 +569,103 @@ async fn get_index(State(s): State<AppState>, Path(id): Path<String>) -> Result<
     Ok(Json(load_index(&s, &id).await?))
 }
 
+/// `GET /clip/:id/agent.md` — the whole index rendered as agent-readable markdown. This is
+/// the "paste a clip link into your agent" surface: one plain-text fetch returns everything
+/// an agent needs (transcript, captions, on-screen text, events, chapters) plus pointers to
+/// the query endpoints for anything deeper — no video ever watched.
+async fn get_agent_md(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
+    let idx = load_index(&s, &id).await?;
+    Ok(([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], agent_markdown(&idx, &id)))
+}
+
+async fn get_agent_md_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_agent_md(State(s), Path(id)).await
+}
+
+/// Render an [`Index`] as markdown for agent consumption. Long streams are capped (with an
+/// explicit truncation note) so the document stays a sane single fetch; `index.json` is the
+/// lossless fallback.
+fn agent_markdown(idx: &Index, id: &str) -> String {
+    use std::fmt::Write;
+    const CAP: usize = 800;
+    let ts = |secs: f64| -> String {
+        let t = secs.max(0.0) as u64;
+        let (h, m, s) = (t / 3600, (t % 3600) / 60, t % 60);
+        if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+    };
+    let mut md = String::with_capacity(16 * 1024);
+    let title = if idx.metadata.title.is_empty() { id } else { &idx.metadata.title };
+    let _ = writeln!(md, "# {title}\n");
+    if !idx.summary.tldr.is_empty() {
+        let _ = writeln!(md, "{}\n", idx.summary.tldr);
+    }
+    let status = serde_json::to_value(idx.status).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+    let source = serde_json::to_value(idx.source).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+    let _ = writeln!(
+        md,
+        "- id: `{id}` · source: {source} · status: {status}\n- duration: {} · resolution: {}x{}\n",
+        ts(idx.metadata.duration),
+        idx.metadata.resolution[0],
+        idx.metadata.resolution[1],
+    );
+    let _ = writeln!(
+        md,
+        "## Query API\n\n- `GET /clip/{id}/query?q=<question>` → answer with timestamp citations\n- `GET /clip/{id}/search?q=<text>` → matching moments\n- `GET /clip/{id}/index.json` → the full structured index (lossless)\n- `GET /clip/{id}/video` → the video itself (you should not need it)\n"
+    );
+    if !idx.summary.chapters.is_empty() {
+        let _ = writeln!(md, "## Chapters ({})\n", idx.summary.chapters.len());
+        for c in &idx.summary.chapters {
+            let _ = writeln!(md, "- [{}] {}", ts(c.start), c.title);
+        }
+        let _ = writeln!(md);
+    }
+    if !idx.transcript.is_empty() {
+        let _ = writeln!(md, "## Transcript ({} segments)\n", idx.transcript.len());
+        for seg in idx.transcript.iter().take(CAP) {
+            let _ = writeln!(md, "- [{}–{}] {}", ts(seg.start), ts(seg.end), seg.text);
+        }
+        if idx.transcript.len() > CAP {
+            let _ = writeln!(md, "- … {} more segments in `index.json`", idx.transcript.len() - CAP);
+        }
+        let _ = writeln!(md);
+    }
+    if !idx.visual_timeline.is_empty() {
+        let _ = writeln!(md, "## Salient moments ({})\n", idx.visual_timeline.len());
+        for m in idx.visual_timeline.iter().take(CAP) {
+            let _ = writeln!(md, "- [{}] {} _(delta: {})_", ts(m.t), m.caption, m.delta);
+        }
+        if idx.visual_timeline.len() > CAP {
+            let _ = writeln!(md, "- … {} more moments in `index.json`", idx.visual_timeline.len() - CAP);
+        }
+        let _ = writeln!(md);
+    }
+    if !idx.on_screen_text.is_empty() {
+        let _ = writeln!(md, "## On-screen text ({} spans, OCR)\n", idx.on_screen_text.len());
+        for t in idx.on_screen_text.iter().take(CAP) {
+            let _ = writeln!(md, "- [{}] {}", ts(t.start), t.text);
+        }
+        if idx.on_screen_text.len() > CAP {
+            let _ = writeln!(md, "- … {} more spans in `index.json`", idx.on_screen_text.len() - CAP);
+        }
+        let _ = writeln!(md);
+    }
+    if !idx.event_track.is_empty() {
+        let _ = writeln!(md, "## Events ({})\n", idx.event_track.len());
+        for e in idx.event_track.iter().take(CAP) {
+            let _ = writeln!(md, "- [{}] {} {}", ts(e.t), e.kind, e.text.as_deref().unwrap_or(""));
+        }
+        if idx.event_track.len() > CAP {
+            let _ = writeln!(md, "- … {} more events in `index.json`", idx.event_track.len() - CAP);
+        }
+        let _ = writeln!(md);
+    }
+    md
+}
+
 #[derive(Deserialize)]
 struct Qs {
     q: Option<String>,
@@ -460,7 +705,7 @@ async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<i
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
-    let bytes = state_storage(&s).await?.read_object(&format!("{id}/zoom.json")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no zoom track".into()))?;
+    let bytes = read_object_or_local(&s, &format!("{id}/zoom.json")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no zoom track".into()))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
 }
 
@@ -468,21 +713,25 @@ async fn get_video(State(s): State<AppState>, Path(id): Path<String>, headers: H
     if !safe(&id) {
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
-    let storage = state_storage(&s).await?;
-    let mut video_key: Option<String> = None;
+    let mut found: Option<(String, Vec<u8>)> = None;
     for n in ["video.mp4", "video.webm", "source.mp4"] {
-        if storage.read_object(&format!("{id}/{n}")).await
-            .map(|o| o.is_some())
-            .unwrap_or(false) {
-            video_key = Some(n.to_string());
+        if let Some(bytes) = read_object_or_local(&s, &format!("{id}/{n}")).await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read video: {e}")))? {
+            found = Some((n.to_string(), bytes));
             break;
         }
     }
-    let video_key = video_key.ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
+    // Instant-link recording in progress: no committed video yet, but the stage session's
+    // growing video-so-far is a valid WebM prefix — serve it so the share page can play a
+    // live preview (and so playback works in the stop→commit gap).
+    if found.is_none() {
+        let staged = std::env::temp_dir().join(format!("clipxd-stage-{id}")).join("video-so-far.webm");
+        if let Ok(bytes) = tokio::fs::read(&staged).await {
+            found = Some(("video.webm".to_string(), bytes));
+        }
+    }
+    let (video_key, bytes) = found.ok_or((StatusCode::NOT_FOUND, "no video".into()))?;
     let ct = if video_key.ends_with(".webm") { "video/webm" } else { "video/mp4" };
-    let bytes: Vec<u8> = storage.read_object(&format!("{id}/{video_key}")).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read video: {e}")))?
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "read video: missing".to_string()))?;
     let len = bytes.len() as u64;
 
     // Honor a Range request so the editor can seek/scrub (browsers won't seek a <video>
@@ -523,9 +772,38 @@ async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, St
     if !safe(&id) || !safe(&name) {
         return Err((StatusCode::BAD_REQUEST, "bad path".into()));
     }
-    let bytes = state_storage(&s).await?.read_object(&format!("{id}/frames/{name}")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no frame".into()))?;
-    let ct = if name.ends_with(".jpg") || name.ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
+    // Extension-agnostic: frames used to be PNG and are now JPEG, and several consumers
+    // (og:image, poster, thumbnails) hardcode `00001.png` — resolve across both so old
+    // links keep working on new clips and vice versa.
+    let mut resolved = name.clone();
+    let mut bytes = read_object_or_local(&s, &format!("{id}/frames/{name}")).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?;
+    if bytes.is_none() {
+        let alt = match name.rsplit_once('.') {
+            Some((stem, "png")) => Some(format!("{stem}.jpg")),
+            Some((stem, "jpg")) | Some((stem, "jpeg")) => Some(format!("{stem}.png")),
+            _ => None,
+        };
+        if let Some(alt) = alt {
+            bytes = read_object_or_local(&s, &format!("{id}/frames/{alt}")).await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?;
+            if bytes.is_some() {
+                resolved = alt;
+            }
+        }
+    }
+    let bytes = bytes.ok_or((StatusCode::NOT_FOUND, "no frame".into()))?;
+    let ct = if resolved.ends_with(".jpg") || resolved.ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
     Ok(([(header::CONTENT_TYPE, ct)], bytes))
+}
+
+#[derive(Deserialize)]
+struct IngestQuery {
+    /// Instant-link fallback: commit under this already-minted `clp_` id instead of minting a
+    /// new one. The client sends it when a staged commit failed after the id (and its share
+    /// URL) already existed — possibly already copied and shared mid-recording — so the
+    /// recording must land under the *same* URL, never a fresh one.
+    reuse: Option<String>,
 }
 
 /// `POST /ingest` — accept a screen-recording (webm bytes from the browser's MediaRecorder).
@@ -533,12 +811,32 @@ async fn get_frame(State(s): State<AppState>, Path((id, name)): Path<(String, St
 /// index and returns the clip id *immediately* — so the clip is instantly watchable, listable,
 /// and shareable. Phase 2 (the slow OCR/captioning) runs in a background task and rewrites the
 /// index to `complete` when done. A recording is therefore never lost to slow/failed enrichment.
-async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+async fn ingest(State(s): State<AppState>, Query(q): Query<IngestQuery>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
     let user = require_user(&s, &headers)?;
     if body.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "empty body".into()));
     }
-    ingest_bytes(s, user, body, None).await
+    // A reuse id is honored only for an *unfinished* stub (recording/enriching — a complete
+    // clip can never be overwritten through this door) owned by the caller in auth mode.
+    let reuse = q.reuse
+        .filter(|rid| safe(rid) && rid.starts_with("clp_"))
+        .filter(|rid| {
+            let unfinished = std::fs::read_to_string(s.clips_dir.join(rid).join("index.json")).ok()
+                .and_then(|j| serde_json::from_str::<Index>(&j).ok())
+                .is_some_and(|i| matches!(i.status, clipxd_index::Status::Recording | clipxd_index::Status::Enriching));
+            let owned = match (&s.auth, &user) {
+                (Some(a), Some(u)) => a.db.clip_owner(rid).ok().flatten().map_or(true, |o| o == u.id),
+                (Some(_), None) => false,
+                _ => true,
+            };
+            unfinished && owned
+        });
+    if let Some(rid) = &reuse {
+        // The full-blob body supersedes whatever the failed staged session left behind.
+        s.stage_sessions.lock().await.remove(rid);
+        let _ = tokio::fs::remove_dir_all(std::env::temp_dir().join(format!("clipxd-stage-{rid}"))).await;
+    }
+    ingest_bytes(s, user, body, None, reuse).await
 }
 
 /// Shared ingest core — called by both `/ingest` (full blob) and `/ingest/stage/:s/commit`
@@ -546,10 +844,18 @@ async fn ingest(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
 /// the background. `incremental`, when the staged-upload path already accumulated one, replaces
 /// Phase 2's from-scratch `enrich_clip` with one final pass over the already-mostly-indexed
 /// session — see `clipxd_recorder::incremental` for why that's usually much faster.
-async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremental: Option<IncrementalIndexer>) -> Result<Json<serde_json::Value>, WebErr> {
+/// `reuse` (pre-validated by the caller) commits under an existing instant-link id whose share
+/// URL is already out in the world, instead of minting a fresh one.
+async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremental: Option<IncrementalIndexer>, reuse: Option<String>) -> Result<Json<serde_json::Value>, WebErr> {
     let dir = s.clips_dir.clone();
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let id = format!("clp_{:08x}", stamp as u32);
+    let id = reuse.unwrap_or_else(mint_clip_id);
+
+    // Claim the id for the *whole* finalization — Phase 1 below through Phase 2's background
+    // completion — so a concurrent staged-commit, reuse-fallback, or sweeper pass for the
+    // same id can never write clip_dir at the same time. Held past this function's return by
+    // handing it into `spawn_phase2`, which drops it when the background job finishes.
+    let claim = try_claim(&s.clip_claims, &id)
+        .ok_or((StatusCode::CONFLICT, "clip is already being finalized".into()))?;
 
     // Phase 1 — persist the video + a stub index, fast. Returns the clip dir + saved video path.
     let (id, video) = {
@@ -567,53 +873,73 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremen
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("ingest failed: {e:#}")))?
     };
 
-    // Mirror the stub to S3 (no-op on local mode) so the SPA can read the index.json
-    // immediately, before Phase 2 finishes.
-    if let Ok(st) = s.storage.make_storage().await {
-        let stub_dir = dir.join(&id);
-        if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &stub_dir).await {
-            eprintln!("ingest stub mirror: {e} (continuing)");
-        }
-    }
-
     // Record ownership so this clip shows up only in its creator's library (auth mode).
     if let (Some(a), Some(u)) = (&s.auth, &user) {
         let _ = a.db.set_clip_owner(&id, u.id);
     }
 
-    // Phase 2 — enrich in the background; the clip is already usable. On failure, mark the index
-    // `partial` (still watchable) rather than leaving it stuck on `enriching`.
-    let clip_dir = dir.join(&id);
-    let bg_id = id.clone();
-    let bg_id_for_post = bg_id.clone();
-    let clip_dir_for_post = clip_dir.clone();
+    spawn_phase2(&s, id.clone(), dir.join(&id), video, incremental, claim);
+
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// Spawn the background tail of an ingest: mirror the Phase-1 stub to S3 (previously this
+/// blocked the response — the full video upload was the single largest post-Stop latency in
+/// hosted mode; `read_object_or_local` covers the gap), run Phase 2 enrichment, then re-mirror
+/// so the captions/OST/zoom land in S3 too. On enrich failure the index is marked `partial`
+/// (still watchable) rather than left stuck on `enriching`. `claim` — this id's [`ClaimGuard`]
+/// — is held for the entire background job and only drops (releasing the id) once every write
+/// to `clip_dir` here is done, so no other finalizer for the same id can start until this one
+/// truly finishes. `permits` bounds how many of these run at once on the box.
+fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard) {
     let storage_arc = s.storage.clone();
+    let permits = s.phase2_permits.clone();
     tokio::spawn(async move {
+        let _claim = claim; // held until this async block ends
+        let _permit = permits.acquire_owned().await.ok();
+        if let Ok(st) = storage_arc.make_storage().await {
+            if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &clip_dir).await {
+                eprintln!("ingest stub mirror: {e} (continuing)");
+            }
+        }
+        let bg_id = id.clone();
+        let bg_dir = clip_dir.clone();
         let _ = tokio::task::spawn_blocking(move || {
             let result = match incremental {
-                Some(indexer) => indexer.finalize(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
-                None => clipxd_recorder::enrich_clip(&video, &clip_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0).map(|_| ()),
+                Some(indexer) => indexer.finalize(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
+                None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0).map(|_| ()),
             };
             if let Err(e) = result {
                 eprintln!("background enrich failed for {bg_id}: {e:#}");
-                if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
-                    if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
-                        idx.status = clipxd_index::Status::Partial;
-                        let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
-                    }
-                }
+                mark_partial(&bg_dir);
             }
         })
         .await;
-        // Re-mirror after Phase 2 so the captions/OST/zoom land in S3 too.
+        // Optional Tier-2 deep pass (Gemini whole-video → title/tldr/chapters). Off unless
+        // CLIPXD_DEEP_PASS=gemini + GEMINI_API_KEY are set — the local-first default sends
+        // nothing anywhere. Runs before the final mirror so the merged index lands in S3.
+        if deeppass::enabled() {
+            if let Err(e) = deeppass::run(&clip_dir, &id).await {
+                eprintln!("deep pass for {id}: {e:#} (continuing)");
+            }
+        }
         if let Ok(st) = storage_arc.make_storage().await {
-            if let Err(e) = mirror_dir_to_storage(st.as_ref(), &bg_id_for_post, &clip_dir_for_post).await {
+            if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &clip_dir).await {
                 eprintln!("post-enrich mirror: {e} (continuing)");
             }
         }
     });
+}
 
-    Ok(Json(serde_json::json!({ "id": id })))
+/// Flip a clip's index to `status: partial` on disk — the honest "enrichment died but the
+/// video is fine" signal.
+fn mark_partial(clip_dir: &std::path::Path) {
+    if let Ok(s) = std::fs::read_to_string(clip_dir.join("index.json")) {
+        if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+            idx.status = clipxd_index::Status::Partial;
+            let _ = std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+        }
+    }
 }
 
 /// Where a stage session's incrementally-extracted frames live while recording is in
@@ -624,20 +950,66 @@ fn stage_frames_dir(session: &str) -> PathBuf {
     std::env::temp_dir().join(format!("clipxd-stage-frames-{session}"))
 }
 
-/// `POST /ingest/stage` — begin a streaming upload session. Also registers a fresh
-/// [`IncrementalIndexer`] so `/ingest/stage/:session` chunks can start indexing immediately
-/// as they land, instead of only after `commit`.
-/// Returns `{"session": "<id>"}` immediately; the client then PUTs 15-second chunks.
+/// `POST /ingest/stage` — begin a streaming upload session. **The session IS the clip**: the
+/// `clp_` id is minted here, at record start — not at commit — so the share URL exists (and
+/// resolves, via a `status: recording` stub) the moment recording begins. This is the
+/// instant-link mechanic (Cap pre-creates its `/s/{id}` link the same way); the roadmap gate
+/// is "record-to-shareable-link < 1s". Also registers a fresh [`IncrementalIndexer`] so
+/// chunks start indexing as they land.
+/// Returns `{"id": "<clp_…>", "session": "<same>"}`; the client then PUTs 15-second chunks.
+/// (`session` is kept as an alias so older clients keep working.)
 async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, WebErr> {
-    require_user(&s, &headers)?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let session = format!("stg_{:016x}", stamp as u64);
-    let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
+    let user = require_user(&s, &headers)?;
+    let id = mint_clip_id();
+    let dir = std::env::temp_dir().join(format!("clipxd-stage-{id}"));
     tokio::fs::create_dir_all(&dir).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let indexer = IncrementalIndexer::new(stage_frames_dir(&session), 4.0);
-    s.stage_sessions.lock().await.insert(session.clone(), Arc::new(StdMutex::new(Some(indexer))));
-    Ok(Json(serde_json::json!({ "session": session })))
+
+    // Share-URL-resolves-now stub: metadata is zeroed (nothing to probe yet) and status is
+    // `recording` — commit fills in the real numbers via `promote_recording_stub`.
+    let index_json = {
+        let (clip_dir, id) = (s.clips_dir.join(&id), id.clone());
+        tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            std::fs::create_dir_all(&clip_dir)?;
+            let mut index = Index::new(
+                &id,
+                clipxd_index::Source::Screen,
+                clipxd_index::Metadata {
+                    duration: 0.0,
+                    resolution: [0, 0],
+                    fps: 0.0,
+                    created_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs().to_string()).unwrap_or_else(|_| "0".into()),
+                    title: "Screen recording".to_string(),
+                    app_focus: Vec::new(),
+                    url_context: None,
+                    has_video: true,
+                },
+            );
+            index.status = clipxd_index::Status::Recording;
+            index.summary.tldr = "Recording in progress — this link is live; the video and index fill in as it happens.".into();
+            let j = serde_json::to_string_pretty(&index)?;
+            std::fs::write(clip_dir.join("index.json"), &j)?;
+            Ok(j)
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stage stub: {e:#}")))?
+    };
+    // Ownership now, so the canonical /u/<slug>/clip/<id> form resolves during recording.
+    if let (Some(a), Some(u)) = (&s.auth, &user) {
+        let _ = a.db.set_clip_owner(&id, u.id);
+    }
+    // Keep hosted-mode S3 in sync so the stub resolves there too — off the response path
+    // (an S3 round trip here would undercut "record-to-shareable-link < 1s"). Any reader
+    // hitting S3 before this lands still resolves via `read_object_or_local`'s disk fallback.
+    tokio::spawn({
+        let (s, key) = (s.clone(), format!("{id}/index.json"));
+        async move { write_object_best_effort(&s, &key, index_json.into_bytes(), "application/json").await }
+    });
+
+    let indexer = IncrementalIndexer::new(stage_frames_dir(&id), 4.0);
+    s.stage_sessions.lock().await.insert(id.clone(), Arc::new(StdMutex::new(Some(indexer))));
+    Ok(Json(serde_json::json!({ "id": id, "session": id })))
 }
 
 /// `PUT /ingest/stage/:session` — store one MediaRecorder timeslice chunk (?seq=N), then
@@ -709,9 +1081,12 @@ fn concat_chunks(dir: &std::path::Path, out: &std::path::Path) -> anyhow::Result
     Ok(())
 }
 
-/// `POST /ingest/stage/:session/commit` — concatenate all uploaded chunks in order and create
-/// the clip. If the session accumulated an [`IncrementalIndexer`], Phase 2 finishes it off
-/// (one final pass over the tail) instead of re-enriching the whole clip from scratch.
+/// `POST /ingest/stage/:session/commit` — assemble the uploaded chunks into the final clip.
+/// For instant-link sessions (session == `clp_` id, minted at stage-open) Phase 1 is *cheap*:
+/// one on-disk concat + a rename into the clip dir + a probe — never the old
+/// read-the-whole-video-into-RAM → temp-file → copy round trip, and no synchronous S3 upload.
+/// If the session accumulated an [`IncrementalIndexer`], Phase 2 finishes it off (one final
+/// pass over the tail) instead of re-enriching the whole clip from scratch.
 async fn ingest_stage_commit(
     State(s): State<AppState>,
     Path(session): Path<String>,
@@ -725,31 +1100,91 @@ async fn ingest_stage_commit(
     if !dir.exists() {
         return Err((StatusCode::NOT_FOUND, "session not found; call POST /ingest/stage first".into()));
     }
-    let video_bytes = tokio::task::spawn_blocking({
-        let dir = dir.clone();
-        move || -> anyhow::Result<Vec<u8>> {
-            let out = dir.join("commit.webm");
-            concat_chunks(&dir, &out)?;
-            let bytes = std::fs::read(&out)?;
-            let _ = std::fs::remove_dir_all(&dir);
-            Ok(bytes)
-        }
-    })
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
 
-    // Take the accumulated indexer out of the registry. The std Mutex lock blocks until any
-    // in-flight background `add_increment` from the last chunk's PUT finishes -- exactly the
-    // ordering we want (never finalize while an increment is still writing to it) -- so it's
-    // done on a blocking-pool thread rather than tying up an async worker while it waits.
+    // Take the accumulated indexer out of the registry *first*. The std Mutex lock blocks
+    // until any in-flight background `add_increment` from the last chunk's PUT finishes --
+    // exactly the ordering we want (never assemble/delete the stage dir while an increment is
+    // still reading from it) -- so it's done on a blocking-pool thread rather than tying up an
+    // async worker while it waits.
     let stage_slot = s.stage_sessions.lock().await.remove(&session);
     let incremental = match stage_slot {
         Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
         None => None,
     };
 
-    ingest_bytes(s, user, Bytes::from(video_bytes), incremental).await
+    // Legacy `stg_` sessions (older clients): the clip id doesn't exist yet — fall back to the
+    // original mint-at-commit path.
+    if !session.starts_with("clp_") {
+        let video_bytes = tokio::task::spawn_blocking({
+            let dir = dir.clone();
+            move || -> anyhow::Result<Vec<u8>> {
+                let out = dir.join("commit.webm");
+                concat_chunks(&dir, &out)?;
+                let bytes = std::fs::read(&out)?;
+                let _ = std::fs::remove_dir_all(&dir);
+                Ok(bytes)
+            }
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
+        return ingest_bytes(s, user, Bytes::from(video_bytes), incremental, None).await;
+    }
+
+    let id = session;
+    // Claim before promote_staged touches clip_dir — see the sweeper's identical claim for
+    // why: this handler and the abandoned-session sweeper are the two writers that can
+    // otherwise race on the same id. A 409 here means the sweeper decided (wrongly, since a
+    // live commit is in fact in progress) that this session was abandoned; the client's
+    // stage-commit failure path already falls back to `/ingest?reuse=<id>`, which will retry
+    // the claim once the sweeper's salvage finishes.
+    let claim = try_claim(&s.clip_claims, &id)
+        .ok_or((StatusCode::CONFLICT, "clip is already being finalized".into()))?;
+    let clip_dir = s.clips_dir.join(&id);
+    let video = tokio::task::spawn_blocking({
+        let (dir, clip_dir, id) = (dir.clone(), clip_dir.clone(), id.clone());
+        move || promote_staged(&dir, &clip_dir, &id)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
+
+    // Ownership was recorded at stage-open; re-assert in case the session cookie only became
+    // available at commit (e.g. a login completed mid-recording).
+    if let (Some(a), Some(u)) = (&s.auth, &user) {
+        if a.db.clip_owner(&id).ok().flatten().is_none() {
+            let _ = a.db.set_clip_owner(&id, u.id);
+        }
+    }
+
+    spawn_phase2(&s, id.clone(), clip_dir, video, incremental, claim);
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// Blocking Phase-1 of an instant-link commit (also the sweeper's salvage path): concat the
+/// session's chunks on disk, move the result into `clip_dir/video.webm` (rename; copies only
+/// across filesystems), drop the stage dir, and promote the `recording` stub to `enriching`
+/// with real probe metadata.
+fn promote_staged(stage_dir: &std::path::Path, clip_dir: &std::path::Path, id: &str) -> anyhow::Result<PathBuf> {
+    let out = stage_dir.join("commit.webm");
+    concat_chunks(stage_dir, &out)?;
+    std::fs::create_dir_all(clip_dir)?;
+    let video = clip_dir.join("video.webm");
+    move_file(&out, &video)?;
+    let _ = std::fs::remove_dir_all(stage_dir);
+    clipxd_recorder::promote_recording_stub(clip_dir, &video, id, "Screen recording")?;
+    Ok(video)
+}
+
+/// `rename` when possible (same filesystem — instant), else copy + remove (temp dir on tmpfs,
+/// clips dir on disk).
+fn move_file(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dst)?;
+    let _ = std::fs::remove_file(src);
+    Ok(())
 }
 
 /// `POST /clip/:id/cursor` — the browser recorder captured a cursor track (pointer moves +
@@ -953,7 +1388,7 @@ async fn ingest_tunneled(
     let body = body.clone();
     let owner_email = s.auth.as_ref().and_then(|_| headers.get("x-clipxd-owner-email").and_then(|v| v.to_str().ok()).map(String::from));
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let id = format!("clp_{:08x}", stamp as u32);
+    let id = mint_clip_id();
     let tmp = std::env::temp_dir().join(format!("clipxd-tunnel-{stamp}.{ext}"));
     let tmp_clone = tmp.clone();
     let body_for_thread = body.clone();
@@ -1663,6 +2098,7 @@ fn share_status_pill(s: &clipxd_index::Status) -> &'static str {
         Complete    => r#"<span class="pill signal">indexed</span>"#,
         Enriching   => r#"<span class="pill sodium">indexing…</span>"#,
         Partial     => r#"<span class="pill sodium">partial — captions empty</span>"#,
+        Recording   => r#"<span class="pill sodium">recording…</span>"#,
     }
 }
 
@@ -2295,7 +2731,8 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 
 #[cfg(test)]
 mod tests {
-    use super::share_base;
+    use super::{mint_clip_id, share_base, try_claim, ClipClaims};
+    use std::sync::{Arc, Mutex as StdMutex};
 
     #[test]
     fn share_base_uses_host_port_and_lan_ip() {
@@ -2305,5 +2742,40 @@ mod tests {
         // no port / unparseable → default 8787
         assert_eq!(share_base(None, "10.0.0.5"), "http://10.0.0.5:8787");
         assert_eq!(share_base(Some("box.local"), "10.0.0.5"), "http://10.0.0.5:8787");
+    }
+
+    // Regression coverage for the sweeper-vs-commit race a code review caught: two finalizers
+    // (a staged commit, the /ingest?reuse= fallback, and the abandoned-session sweeper) must
+    // never write the same clip_dir concurrently. `try_claim`/`ClaimGuard` is the fix; these
+    // tests pin its two load-bearing properties directly, without spinning up the HTTP layer.
+    #[test]
+    fn second_claim_on_the_same_id_is_rejected_while_the_first_is_held() {
+        let claims: ClipClaims = Arc::new(StdMutex::new(std::collections::HashSet::new()));
+        let first = try_claim(&claims, "clp_dup").expect("first claim succeeds");
+        assert!(try_claim(&claims, "clp_dup").is_none(), "a second concurrent finalizer must be rejected");
+        // A different id is unaffected — the claim is per-id, not a global lock.
+        assert!(try_claim(&claims, "clp_other").is_some());
+        drop(first);
+    }
+
+    #[test]
+    fn dropping_the_guard_releases_the_claim_for_the_next_finalizer() {
+        let claims: ClipClaims = Arc::new(StdMutex::new(std::collections::HashSet::new()));
+        {
+            let _first = try_claim(&claims, "clp_seq").expect("first claim succeeds");
+            assert!(try_claim(&claims, "clp_seq").is_none());
+        } // _first drops here — e.g. the sweeper's promote_staged failed and returned early
+        assert!(try_claim(&claims, "clp_seq").is_some(), "a released id must be claimable again");
+    }
+
+    #[test]
+    fn minted_clip_ids_never_collide_across_a_realistic_burst() {
+        // The old scheme (32-bit truncated nanosecond timestamp) collides with 50% probability
+        // after ~65K mints — a busy box would hit this in days. Assert the new scheme doesn't,
+        // across a burst far larger than any single box will mint between restarts.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..50_000 {
+            assert!(seen.insert(mint_clip_id()), "mint_clip_id produced a duplicate");
+        }
     }
 }

@@ -7,6 +7,8 @@ import { usePrefersReducedMotion } from "./motion";
 import {
   recordLastClipPending,
   recordLastClipReady,
+  recordLastClipRecording,
+  touchLastClipRecording,
   recordLastClipDone,
   shareUrlFor,
   clearLastClip,
@@ -67,6 +69,12 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     },
     [],
   );
+  // Instant link: the server minted the real clip id at record start — the share URL is
+  // already live (status: recording), so surface a copyable link card immediately.
+  const handleRecordingLink = useCallback((id: string) => {
+    const username = localStorage.getItem("clipxd:username");
+    recordLastClipRecording(id, username);
+  }, []);
   const handleError = useCallback((reason: string) => {
     const existing = getLastClip();
     if (existing) {
@@ -81,6 +89,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
   }, [showToast]);
 
   const { state, start, stop } = useScreenRecorder(base, {
+    onRecordingLink: handleRecordingLink,
     onPending: handlePending,
     onClipReady: handleReady,
     onError: handleError,
@@ -114,13 +123,17 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     };
   }, [camera, showToast]);
 
-  // rec clock
+  // rec clock — also keeps the live "recording" localStorage record fresh so its
+  // staleness pruning never fires on a long recording that's genuinely still running.
   useEffect(() => {
     if (state !== "recording") {
       setSecs(0);
       return;
     }
-    const h = window.setInterval(() => setSecs((s) => s + 1), 1000);
+    const h = window.setInterval(() => {
+      setSecs((s) => s + 1);
+      touchLastClipRecording();
+    }, 1000);
     return () => window.clearInterval(h);
   }, [state]);
 
@@ -173,7 +186,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
         const data = await r.json().catch(() => ({})) as { clips?: { id: string; status: string }[] };
         const found = data.clips?.find((c) => c.id === id);
         if (found) {
-          if (found.status !== "enriching") recordLastClipDone();
+          if (found.status === "complete" || found.status === "partial") recordLastClipDone();
           onRetry(id);
           return;
         }
@@ -186,20 +199,32 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     }
   };
 
-  // The link card mounts when the user has a clip AND it's not actively being
-  // recorded.  In "saving" the user just clicked Stop; in "indexing" the
-  // server has issued a real id and we're polling; in "ready" the local
-  // card is gone (banner cleared via recordLastClipDone).
+  // Instant link: the server minted the clip id at record start and the share URL resolves
+  // (status: recording on the stub) — show a copyable live-link card. Keyed on the stored
+  // status, NOT on live recorder state: after a mid-recording refresh the MediaRecorder is
+  // gone but the link still exists (the sweeper publishes whatever chunks landed), and the
+  // card is the only surface telling the user that.
+  const showLiveLink = lastClip?.status === "recording" && !processing && !failed;
+  const liveLinkInterrupted = showLiveLink && !recording;
+
+  // The post-commit link card. In "indexing" the server has committed the video and Phase 2
+  // is filling the index in; in "ready" the local card is gone (banner cleared via
+  // recordLastClipDone).
   const showLinkReady =
     lastClip &&
     !lastClip.id.startsWith("pending_") &&
+    lastClip.status !== "recording" &&
+    lastClip.status !== "saving" &&
     !recording &&
     !processing &&
     !failed;
 
-  // The "still uploading" pill — fires AS SOON AS Stop is clicked, before
-  // the commit returns. This is the band-aid for "I refreshed mid-upload".
-  const showSavingPill = lastClip && lastClip.id.startsWith("pending_");
+  // The "still uploading" pill — fires AS SOON AS Stop is clicked, before the commit
+  // returns. With an instant link the id is already real, so the URL stays visible (the
+  // link even plays the staged video while the commit finishes); against an older server
+  // it's a placeholder "pending_…" id and we only show the reassurance text.
+  const showSavingPill = lastClip?.status === "saving";
+  const savingHasRealId = showSavingPill && lastClip !== null && !lastClip.id.startsWith("pending_");
 
   return (
     <div className="recording">
@@ -219,6 +244,59 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
           <span className="rec-hint">screen · 1080p · auto-zoom on{camera ? " · camera" : ""}</span>
         </div>
 
+        {/* Live-link card — the instant link. Mounts the moment recording starts: the
+            server minted the real clip id at stage-open, so the share URL already
+            resolves (it shows a "recording…" page and plays the staged video live). */}
+        <AnimatePresence>
+          {showLiveLink && lastClip && (
+            <motion.div
+              key="liveLink"
+              className="link-ready"
+              initial={reduced ? false : { opacity: 0, y: -12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 320, damping: 28 } }}
+              exit={{ opacity: 0, y: -8, transition: { duration: 0.18 } }}
+            >
+              <div className="link-ready-head">
+                <span className="led" style={{ width: 8, height: 8 }} />
+                <b>{liveLinkInterrupted ? "Recording interrupted · link still live" : "Recording · link is live"}</b>
+                {liveLinkInterrupted && (
+                  <button
+                    type="button"
+                    className="link-ready-x"
+                    onClick={() => retire()}
+                    aria-label="Dismiss link card"
+                    title="Dismiss"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <input
+                className="input mono"
+                readOnly
+                value={lastClip.url}
+                onFocus={(e) => e.currentTarget.select()}
+                onClick={(e) => e.currentTarget.select()}
+              />
+              <div className="link-ready-row">
+                <button
+                  type="button"
+                  className="btn-signal btn-pill"
+                  onClick={copyAgain}
+                  style={{ padding: "0 18px" }}
+                >
+                  {copied === "copied" ? "✓ Copied" : copied === "failed" ? "Press ⌘C" : "Copy link"}
+                </button>
+                <span className="link-ready-hint">
+                  {liveLinkInterrupted
+                    ? "This tab lost its recorder (refresh?). Everything captured so far publishes to this link automatically."
+                    : "Share it now — the page fills in live and the full video lands when you stop."}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Saving pill — visible the moment Stop is clicked, before the
             commit completes.  Persists across refreshes so a user who
             navigates away mid-upload still sees what's happening. */}
@@ -235,9 +313,19 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                 <span className="dot sodium" style={{ width: 8, height: 8, boxShadow: "0 0 8px var(--sodium)" }} />
                 <b>Stopped · uploading…</b>
               </div>
+              {savingHasRealId && lastClip && (
+                <input
+                  className="input mono"
+                  readOnly
+                  value={lastClip.url}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                />
+              )}
               <div className="link-ready-hint" style={{ marginTop: 6 }}>
-                Don't refresh — your recording is being assembled on the server. Refresh any time,
-                and you'll land back here on this page.
+                {savingHasRealId
+                  ? "Your link already works — the final video is being assembled on the server."
+                  : "Don't refresh — your recording is being assembled on the server. Refresh any time, and you'll land back here on this page."}
               </div>
             </motion.div>
           )}

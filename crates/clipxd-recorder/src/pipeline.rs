@@ -70,6 +70,43 @@ pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str) -> Result<
     Ok(clip_dir)
 }
 
+/// Promote an instant-link `status: recording` stub once its final video is on disk: fill
+/// in the real probe metadata and flip to `status: enriching`. The stub was written at
+/// stage-open (before any video existed) so the share URL could resolve during recording;
+/// this is the cheap commit-time counterpart of [`stub_clip`] — a probe + one JSON rewrite,
+/// **no video copy** (the caller already moved the assembled file into `clip_dir`).
+pub fn promote_recording_stub(clip_dir: &Path, video: &Path, id: &str, title: &str) -> Result<Index> {
+    ensure!(video.exists(), "no such video: {}", video.display());
+    let info = media::probe(video)?;
+    let mut index = std::fs::read_to_string(clip_dir.join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Index>(&s).ok())
+        .unwrap_or_else(|| {
+            Index::new(
+                id,
+                Source::Screen,
+                Metadata {
+                    duration: 0.0,
+                    resolution: [0, 0],
+                    fps: 0.0,
+                    created_at: unix_secs(),
+                    title: title.to_string(),
+                    app_focus: Vec::new(),
+                    url_context: None,
+                    has_video: true,
+                },
+            )
+        });
+    index.metadata.duration = info.duration_s;
+    index.metadata.resolution = [info.width, info.height];
+    index.metadata.fps = info.fps;
+    index.metadata.has_video = true;
+    index.status = Status::Enriching;
+    index.summary.tldr = "Indexing… the transcript, on-screen text, and captions are being built.".into();
+    std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
+    Ok(index)
+}
+
 /// **Phase 2:** the heavy part — frames → veyo gate → enrich (OCR/caption) → index, written
 /// into an existing `clip_dir` (overwriting any stub). Used by both `record_from_video` and the
 /// async ingest's background task. If `events` is empty, a sibling `events.json` (e.g. from a
@@ -81,15 +118,30 @@ pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events:
     ensure!(!frames.is_empty(), "no frames extracted from {}", video.display());
     let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
 
-    let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
-    let enricher = Enricher::with_local_defaults();
-    let (tb, ob, cb) = enricher.backends();
-    eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
-    let enrichment = enricher.enrich(&EnrichInput {
-        deltas: &gated.deltas,
-        frames: &gated.salient_frames,
-        audio: audio.as_deref(),
-    })?;
+    // The transcript (whisper over audio.wav, CPU-bound and often the longest single stage)
+    // and the visual enrichment (gate → OCR → caption network calls) share no data — run
+    // them side by side instead of back-to-back.
+    let (visual, tx) = std::thread::scope(|scope| {
+        let tx_handle = scope.spawn(|| audio.as_deref().map(crate::transcribe::transcribe).unwrap_or_default());
+        let visual = (|| -> Result<(gate::GateOutput, veyo_enrich::Enrichment)> {
+            let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
+            let enricher = Enricher::with_local_defaults();
+            let (tb, ob, cb) = enricher.backends();
+            eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
+            let enrichment = enricher.enrich(&EnrichInput {
+                deltas: &gated.deltas,
+                frames: &gated.salient_frames,
+                audio: audio.as_deref(),
+            })?;
+            Ok((gated, enrichment))
+        })();
+        let tx = tx_handle.join().unwrap_or_else(|e| {
+            eprintln!("transcribe thread panicked: {e:?} (continuing without a transcript)");
+            Vec::new()
+        });
+        (visual, tx)
+    });
+    let (gated, enrichment) = visual?;
 
     let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &enrichment);
 
@@ -101,11 +153,8 @@ pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events:
     };
     index.event_track = to_index_events(&track);
 
-    if let Some(a) = audio.as_deref() {
-        let tx = crate::transcribe::transcribe(a);
-        if !tx.is_empty() {
-            index.transcript = tx;
-        }
+    if !tx.is_empty() {
+        index.transcript = tx;
     }
 
     let focus = if track.is_empty() {

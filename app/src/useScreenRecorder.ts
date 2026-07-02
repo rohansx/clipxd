@@ -4,6 +4,10 @@ import { postCursor } from "./api";
 export type RecState = "idle" | "recording" | "processing" | "failed";
 
 export interface RecorderCallbacks {
+  /** Fires as soon as the server mints the clip id at record start (instant link) —
+   *  the share URL already resolves while the recording is still running. Not fired
+   *  against older servers that only return a `stg_` session id. */
+  onRecordingLink?: (id: string) => void;
   /** Fires the moment the recorder stops. Persist a "saving" record to
    *  localStorage NOW so a hard refresh during upload doesn't lose state. */
   onPending?: (stopId: string) => void;
@@ -49,7 +53,7 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, lab
 // /ingest/stage/:session — so by the time the user stops, most of the video is already
 // on the server. Only the last ≤15 s chunk needs to upload after stop.
 export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks = {}) {
-  const { onPending, onClipReady, onError } = callbacks;
+  const { onRecordingLink, onPending, onClipReady, onError } = callbacks;
   const [state, setState] = useState<RecState>("idle");
   // Distinct "we tried, here's why" reason once state === "failed".
   const [error, setError] = useState<string | null>(null);
@@ -101,12 +105,18 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
 
       // Streaming stage session — the server creates the on-disk session dir and hands back
       // its id; chunk PUTs must target *that* id (not a locally-generated one) or they 404.
+      // New servers mint the real clip id here (instant link): the session IS the clip, and
+      // the share URL resolves from this moment. `id` is absent on older servers.
       const sessionPromise: Promise<string | null> = fetch(`${apiBase}/ingest/stage`, {
         method: "POST",
         credentials: "include",
       })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d: { session?: string } | null) => d?.session ?? null)
+        .then((d: { session?: string; id?: string } | null) => {
+          const session = d?.session ?? d?.id ?? null;
+          if (d?.id && d.id.startsWith("clp_") && onRecordingLink) onRecordingLink(d.id);
+          return session;
+        })
         .catch(() => null);
 
       let chunkSeq = 0;
@@ -205,11 +215,14 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
             // 5xx or no id → fall through to the original /ingest path.
           }
 
-          // Fallback: assemble full blob and POST to /ingest.
+          // Fallback: assemble full blob and POST to /ingest. For an instant-link session
+          // the share URL for `session` may already be copied/shared — pass it as ?reuse=
+          // so the recording lands under that same URL instead of a fresh, unshared id.
           const blob = new Blob(chunks.current, { type: "video/webm" });
           if (blob.size === 0) { failed("Recording produced no data"); return; }
+          const reuse = session && session.startsWith("clp_") ? session : null;
           try {
-            const id = await ingestWithTimeout(blob, apiBase, INGEST_TIMEOUT_MS);
+            const id = await ingestWithTimeout(blob, apiBase, INGEST_TIMEOUT_MS, reuse);
             if (id) { ok(id); return; }
             failed("Upload did not return a clip id (server unreachable or timed out)");
           } catch (e) {
@@ -241,10 +254,11 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   return { state, error, start, stop };
 }
 
-async function ingestWithTimeout(blob: Blob, apiBase: string, timeoutMs: number): Promise<string | null> {
+async function ingestWithTimeout(blob: Blob, apiBase: string, timeoutMs: number, reuseId: string | null = null): Promise<string | null> {
   try {
+    const url = `${apiBase}/ingest${reuseId ? `?reuse=${encodeURIComponent(reuseId)}` : ""}`;
     const r = await fetchWithTimeout(
-      `${apiBase}/ingest`,
+      url,
       { method: "POST", headers: { "content-type": "video/webm" }, body: blob, credentials: "include" },
       timeoutMs,
       "/ingest",

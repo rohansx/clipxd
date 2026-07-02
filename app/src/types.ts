@@ -3,7 +3,7 @@
 // optional fields use `skip_serializing_if` on the Rust side, so treat them as possibly-absent.
 
 export type ClipSource = "screen" | "browser" | "import";
-export type ClipStatus = "complete" | "partial" | "enriching";
+export type ClipStatus = "complete" | "partial" | "enriching" | "recording";
 export type TextKind = "ocr" | "dom";
 
 export interface Metadata {

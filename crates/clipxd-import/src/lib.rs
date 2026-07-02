@@ -11,6 +11,7 @@ pub mod downscale;
 pub mod gate;
 pub mod map;
 pub mod media;
+pub mod phash;
 pub mod pipeline;
 
 pub use pipeline::{import, ImportOptions, ImportOutput};

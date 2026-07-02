@@ -6,6 +6,7 @@
 //! codec discards pixels) so they can be OCR'd and captioned by veyo-enrich.
 
 use crate::downscale::rgba_to_cells;
+use crate::phash::{hash_frame, FrameHash};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,12 @@ use veyo_enrich::SalientFrame;
 /// sees it (and may infer the opposite). We guarantee coverage by also keeping a frame at
 /// every multiple of this interval, so no scene longer than it goes unindexed.
 const KEYFRAME_FLOOR_MS: u64 = 2000;
+
+/// A floor frame within this per-channel-dHash Hamming distance (of 192 bits) of the last
+/// kept frame is a visual duplicate — the scene was already indexed when it first appeared,
+/// so enriching it again buys nothing. Kept deliberately tight: at 9×8 the hash is coarse,
+/// and only outright-static screens should dedup.
+const DUP_HAMMING_MAX: u32 = 2;
 
 /// Output of the gate: the salient deltas, and the unique frames they point at (deduped,
 /// ready to hand to enrichment for OCR + captioning).
@@ -54,22 +61,42 @@ pub fn run_gate(
     // Frames to enrich, keyed (and deduped + time-ordered) by timestamp so a frame is OCR'd
     // once even when several deltas land on it. Start with the frame nearest each salient
     // delta, then add the keyframe-floor frames so colour-only / persistent scenes are covered.
-    let mut keep: BTreeMap<u64, PathBuf> = BTreeMap::new();
+    // The bool marks delta-flagged frames, which are exempt from the perceptual dedup below.
+    let mut keep: BTreeMap<u64, (PathBuf, bool)> = BTreeMap::new();
     for d in &deltas {
         if let Some((t_ms, path)) = nearest_frame(frames, d.t_event) {
-            keep.entry(*t_ms).or_insert_with(|| path.clone());
+            keep.entry(*t_ms).or_insert_with(|| (path.clone(), true));
         }
     }
     let times: Vec<u64> = frames.iter().map(|(t, _)| *t).collect();
     for mark in floor_marks(&times, KEYFRAME_FLOOR_MS) {
         if let Some((t_ms, path)) = nearest_frame(frames, mark) {
-            keep.entry(*t_ms).or_insert_with(|| path.clone());
+            keep.entry(*t_ms).or_insert_with(|| (path.clone(), false));
         }
     }
-    let salient_frames: Vec<SalientFrame> = keep
-        .into_iter()
-        .map(|(t_ms, path)| SalientFrame { t_ms, path, region: None })
-        .collect();
+
+    // Perceptual dedup of *floor* frames only: on a quiet screen the floor re-keeps a
+    // visually identical frame every 2s, and every one costs an OCR pass + a caption call —
+    // the dominant per-clip enrichment cost. Delta-flagged frames always survive: a one-line
+    // text change can be invisible at the hash's 9×8 resolution, and the codec's salience
+    // grid is the authority on "something changed". Causal and deterministic (each decision
+    // depends only on earlier frames), so incremental replays reproduce it bit-identically.
+    let mut last_hash: Option<FrameHash> = None;
+    let mut salient_frames: Vec<SalientFrame> = Vec::new();
+    for (t_ms, (path, from_delta)) in keep {
+        let hash = hash_frame(&path).ok(); // decode failure → keep the frame (never lose coverage)
+        if !from_delta {
+            if let (Some(h), Some(prev)) = (hash.as_ref(), last_hash.as_ref()) {
+                if h.distance(prev) <= DUP_HAMMING_MAX {
+                    continue;
+                }
+            }
+        }
+        if let Some(h) = hash {
+            last_hash = Some(h);
+        }
+        salient_frames.push(SalientFrame { t_ms, path, region: None });
+    }
 
     Ok(GateOutput { deltas, salient_frames })
 }

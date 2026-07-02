@@ -74,9 +74,22 @@ impl IncrementalIndexer {
     /// moving the incrementally-populated frames directory into place. Consumes `self` — a
     /// session's indexer is used exactly once.
     pub fn finalize(mut self, video: &Path, clip_dir: &Path, id: &str, title: &str, events: &EventTrack) -> Result<Index> {
-        self.run_pass(video, title, false)?;
+        // The final tail pass (frames → gate → OCR/caption calls) and the audio transcript
+        // share no data — overlap them; whisper on CPU is often the longest post-stop stage.
+        let (pass, tx) = std::thread::scope(|scope| {
+            let tx_handle = scope.spawn(|| {
+                let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
+                audio.as_deref().map(crate::transcribe::transcribe).unwrap_or_default()
+            });
+            let pass = self.run_pass(video, title, false);
+            let tx = tx_handle.join().unwrap_or_else(|e| {
+                eprintln!("transcribe thread panicked: {e:?} (continuing without a transcript)");
+                Vec::new()
+            });
+            (pass, tx)
+        });
+        pass?;
         let info = media::probe(video)?;
-        let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
 
         let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &self.enrichment);
 
@@ -87,11 +100,8 @@ impl IncrementalIndexer {
         };
         index.event_track = to_index_events(&track);
 
-        if let Some(a) = audio.as_deref() {
-            let tx = crate::transcribe::transcribe(a);
-            if !tx.is_empty() {
-                index.transcript = tx;
-            }
+        if !tx.is_empty() {
+            index.transcript = tx;
         }
 
         let focus = if track.is_empty() { autofocus::focus_track_from_deltas(&self.all_deltas, info.width, info.height) } else { track };
