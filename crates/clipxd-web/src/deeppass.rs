@@ -25,7 +25,12 @@ pub fn enabled() -> bool {
 }
 
 fn model() -> String {
-    std::env::var("CLIPXD_GEMINI_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "gemini-2.5-flash-lite".into())
+    // gemini-2.5-flash-lite returned repeated 503 "high demand" errors in testing (2026-07) --
+    // likely deprioritized capacity now that newer generations exist. gemini-3.1-flash-lite is
+    // the current stable cheap/fast tier and worked cleanly (17.6s for a whole-video pass on a
+    // ~27s clip). Re-verify with `curl .../v1beta/models` against your key if this starts
+    // failing again -- Google's naming/availability shifts faster than this comment will.
+    std::env::var("CLIPXD_GEMINI_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "gemini-3.1-flash-lite".into())
 }
 
 /// What the deep pass asks for — matches the fields it is allowed to merge into the index.

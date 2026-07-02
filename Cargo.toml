@@ -25,7 +25,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"          # open-core: permissive core; commercial hosted/compliance layer
 repository = "https://github.com/rsx/clipxd"
-rust-version = "1.80"
+rust-version = "1.95"  # oar-ocr 0.7+ (Rust-native OCR, via veyo-enrich) needs it
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
