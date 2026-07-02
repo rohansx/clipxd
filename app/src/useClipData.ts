@@ -16,7 +16,7 @@ export function useClips(): { clips: ClipSummary[] | null; reload: () => void } 
       fetchClips().then((c) => {
         if (!live) return;
         setClips(c);
-        const enriching = c.some((x) => x.status === "enriching");
+        const enriching = c.some((x) => x.status === "enriching" || x.status === "recording");
         if (enriching && poll === undefined) poll = window.setInterval(tick, 3000);
         else if (!enriching && poll !== undefined) {
           window.clearInterval(poll);
@@ -70,9 +70,10 @@ export function useClip(id: string | null): ClipData {
         .then(([index, zoom]) => {
           if (!live) return;
           setData({ index, zoom, loading: false, error: null });
-          if (index.status === "enriching" && poll === undefined) {
+          const filling = index.status === "enriching" || index.status === "recording";
+          if (filling && poll === undefined) {
             poll = window.setInterval(() => load(false), 2500);
-          } else if (index.status !== "enriching" && poll !== undefined) {
+          } else if (!filling && poll !== undefined) {
             window.clearInterval(poll);
             poll = undefined;
           }

@@ -191,6 +191,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
       lastClip.status === "saving" ||
       (lastClip.id === id && index.status === "enriching")
     );
+  const liveRecording = index.status === "recording";
 
   return (
     <div className="clip-page">
@@ -215,7 +216,16 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
           }}
         />
       )}
-      {justRecorded && (
+      {liveRecording && (
+        <div className="clip-indexing-banner" role="status" aria-live="polite">
+          <span className="spin" />
+          <div>
+            <b>Recording in progress…</b>
+            <span>this link is live — the video and index fill in as the recording happens, no need to refresh.</span>
+          </div>
+        </div>
+      )}
+      {justRecorded && !liveRecording && (
         <div className="clip-indexing-banner" role="status" aria-live="polite">
           <span className="spin" />
           <div>
@@ -230,6 +240,11 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
         {index.status === "enriching" && (
           <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="The video is ready and shareable now; transcript, on-screen text and captions are still being built and will appear automatically.">
             <span className="spin" style={{ width: 10, height: 10 }} /> indexing…
+          </span>
+        )}
+        {index.status === "recording" && (
+          <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="This recording is still running. The link is already shareable; the video and index fill in live.">
+            <span className="spin" style={{ width: 10, height: 10 }} /> recording…
           </span>
         )}
         {index.status === "complete" && emptyIndex(index) && (

@@ -103,14 +103,22 @@ fn parse_rational(r: &str) -> f32 {
 
 /// Extract frames at `sample_fps` into `frames_dir`, returning `(t_ms, path)` per frame
 /// in time order.
+///
+/// Frames are written as high-quality JPEG (`-q:v 2`, visually lossless for screen
+/// content), not lossless PNG: a 5-minute 1080p clip at 4 fps is ~1,200 frames, and PNGs
+/// made that 2–4 GB of encode work + disk + S3-mirror upload per clip, all of which the
+/// gate/OCR/caption stages then re-decode. Old clips with `.png` frames keep working —
+/// every consumer resolves frames by the path the extractor returned, and the frame HTTP
+/// endpoint falls back across extensions.
 pub fn extract_frames(video: &Path, frames_dir: &Path, sample_fps: f32) -> Result<Vec<(u64, PathBuf)>> {
     std::fs::create_dir_all(frames_dir)?;
-    let pattern = frames_dir.join("%05d.png");
+    let pattern = frames_dir.join("%05d.jpg");
     let status = Command::new("ffmpeg")
         .arg("-i")
         .arg(video)
         .arg("-vf")
         .arg(format!("fps={sample_fps}"))
+        .args(["-q:v", "2"])
         .arg("-y")
         .arg(&pattern)
         .stdout(std::process::Stdio::null())
@@ -119,10 +127,21 @@ pub fn extract_frames(video: &Path, frames_dir: &Path, sample_fps: f32) -> Resul
         .context("failed to run ffmpeg for frame extraction")?;
     anyhow::ensure!(status.success(), "ffmpeg frame extraction failed");
 
-    let mut frames: Vec<PathBuf> = std::fs::read_dir(frames_dir)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("png"))
-        .collect();
+    let by_ext = |ext: &str| -> Vec<PathBuf> {
+        std::fs::read_dir(frames_dir)
+            .map(|it| {
+                it.filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.extension().and_then(|x| x.to_str()) == Some(ext))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // One extension only — mixing (a pre-JPEG frames dir revisited after a deploy) would
+    // double-count frames and skew every timestamp derived from the enumeration below.
+    let mut frames = by_ext("jpg");
+    if frames.is_empty() {
+        frames = by_ext("png");
+    }
     frames.sort();
 
     // ffmpeg's `fps` filter emits frame i (0-based) at t = i / sample_fps seconds.

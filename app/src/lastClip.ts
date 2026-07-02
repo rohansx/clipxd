@@ -14,7 +14,7 @@
 const KEY = "clipxd:lastClip";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-export type LastClipStatus = "saving" | "indexing" | "ready" | "failed";
+export type LastClipStatus = "recording" | "saving" | "indexing" | "ready" | "failed";
 
 export interface LastClip {
   /** Backend clip id when known. For a still-saving record the
@@ -51,6 +51,12 @@ function read(): LastClip | null {
       localStorage.removeItem(KEY);
       return null;
     }
+    // "recording" records go stale after 4h (recordings can be long; updatedAt refreshes
+    // once a minute while the recorder is actually running — see Recording.tsx).
+    if (parsed.status === "recording" && Date.now() - parsed.updatedAt > 4 * 60 * 60 * 1000) {
+      localStorage.removeItem(KEY);
+      return null;
+    }
     if (Date.now() - parsed.createdAt > MAX_AGE_MS) {
       localStorage.removeItem(KEY);
       return null;
@@ -68,15 +74,48 @@ export function shareUrlFor(id: string, username: string | null): string {
     : `${location.origin}/?clip=${id}`;
 }
 
-/** Record the moment the user clicked Stop. The id is a placeholder —
- *  the server returns a real id later via {@link recordLastClipReady}. */
-export function recordLastClipPending(stopId: string, username: string | null): LastClip {
-  const id = `pending_${stopId}`;
+/** Record that a recording just started and the server already issued the real clip id —
+ *  the instant link. The share URL is live from this moment (the server wrote a
+ *  `status: recording` stub), so the card can show a copyable link mid-recording.
+ *  No-op when a more-advanced record exists: the stage-create response can resolve *after*
+ *  the user already stopped (saving/indexing/ready must never be clobbered back). */
+export function recordLastClipRecording(id: string, username: string | null): LastClip | null {
+  const existing = read();
+  if (existing && existing.status !== "recording") return null;
   const lc: LastClip = {
     id,
     url: shareUrlFor(id, username),
     username,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
+    status: "recording",
+  };
+  try { localStorage.setItem(KEY, JSON.stringify(lc)); } catch { /* noop */ }
+  window.dispatchEvent(new CustomEvent("clipxd:lastClip", { detail: lc }));
+  return lc;
+}
+
+/** Refresh a live "recording" record's updatedAt so the 4h staleness pruning never fires
+ *  on a genuinely-running long recording. No-op for any other status. */
+export function touchLastClipRecording(): void {
+  const existing = read();
+  if (!existing || existing.status !== "recording") return;
+  const lc: LastClip = { ...existing, updatedAt: Date.now() };
+  try { localStorage.setItem(KEY, JSON.stringify(lc)); } catch { /* noop */ }
+}
+
+/** Record the moment the user clicked Stop. If the instant link already gave us the real
+ *  clip id (status "recording"), keep it — only the status flips to "saving". Otherwise
+ *  (older server) fall back to a placeholder id until commit returns the real one. */
+export function recordLastClipPending(stopId: string, username: string | null): LastClip {
+  const existing = read();
+  const keepId = existing && existing.status === "recording" && existing.id.startsWith("clp_");
+  const id = keepId ? existing.id : `pending_${stopId}`;
+  const lc: LastClip = {
+    id,
+    url: shareUrlFor(id, username),
+    username,
+    createdAt: existing?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
     status: "saving",
   };
