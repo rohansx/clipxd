@@ -73,6 +73,7 @@ fn mint_clip_id() -> String {
 
 pub mod auth;
 pub mod deeppass;
+pub mod mcp;
 pub mod storage;
 use auth::{AuthState, AuthUser};
 
@@ -150,7 +151,11 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/u/:username/clip/:id/events", get(get_events_for_user))
         .route("/u/:username/clip/:id/video", get(get_video_for_user))
         .route("/u/:username/clip/:id/frames/:name", get(get_frame_for_user))
-        .route("/net", get(get_net));
+        .route("/net", get(get_net))
+        // Multi-tenant MCP: "add clipxd.com as an MCP server" — every tool takes an explicit
+        // clip_id, same unguessable-id security model as the read-only routes above (no
+        // per-clip auth check; the id itself is the access control, matching /clip/:id/query).
+        .route_service("/mcp", mcp::mcp_service(state.clone()));
     router = if public {
         router.route("/", get(public_root))
     } else {
