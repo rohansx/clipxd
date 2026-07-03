@@ -14,6 +14,24 @@
 {$CLIPXD_DOMAIN} {
 	encode zstd gzip
 
+	# Security headers — applied to every response so a stray 404 from
+	# the file_server can't leak with no headers at all.
+	header {
+		# HSTS: 2 years, include subdomains, preload-ready.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		# Cross-origin isolation — required for SharedArrayBuffer if we
+		# ever turn it on, otherwise a free defensive win.
+		Cross-Origin-Opener-Policy "same-origin"
+		# No embedding — clipxd is an app, not a frame target.
+		X-Frame-Options "DENY"
+		# Sensible referrer policy.
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Disable powerful features we don't use.
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+		# Block MIME sniffing.
+		X-Content-Type-Options "nosniff"
+	}
+
 	# Backend surface
 	@backend path /clip/* /clips /ingest* /import /net /auth/* /u/*
 	handle @backend {
@@ -21,9 +39,30 @@
 	}
 
 	# Static single-page app (Vite build output)
+	@assets path /assets/*
+	handle @assets {
+		root * /var/www/clipxd
+		# Vite hashes asset filenames, so a 1-year immutable cache is safe
+		# (a content change = new hash = new URL).
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	@staticfile path /favicon.svg /favicon.*.png /og-image.svg /og-image.* /robots.txt /sitemap.xml /manifest.json
+	handle @staticfile {
+		root * /var/www/clipxd
+		# Same as assets but shorter — these are referenced by name from
+		# crawlers and may be edited in place.
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+
 	handle {
 		root * /var/www/clipxd
 		try_files {path} /index.html
+		# Don't let the SPA HTML get cached aggressively — clients expect
+		# new deploys to show up on refresh.
+		header Cache-Control "public, max-age=0, must-revalidate"
 		file_server
 	}
 

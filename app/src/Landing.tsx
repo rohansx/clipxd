@@ -134,12 +134,10 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
       {/* ===================  HERO  =================== */}
       <section className="hero">
         <div className="hero-grid">
-          <motion.div
-            variants={vMount}
-            initial="hidden"
-            animate="shown"
-            style={{ minWidth: 0 }}
-          >
+          {/* Hero text starts visible — the prerendered shell paints with
+              HTML, so we never want framer-motion's `initial="hidden"` here.
+              Animation is purely a subtle CSS fade-up via .hero-rise. */}
+          <div className="hero-rise" style={{ minWidth: 0 }}>
             <div className="kicker">
               <span className="led" />open source screen recorder · powered by the veyo codec
             </div>
@@ -154,15 +152,9 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
               — queryable straight from the link.{" "}
               <span className="em">Drag the seam below</span> to see one second, both ways.
             </p>
-          </motion.div>
+          </div>
 
-          <motion.div
-            variants={vMount}
-            initial="hidden"
-            animate="shown"
-            transition={{ delay: 0.06 }}
-            style={{ minWidth: 0 }}
-          >
+          <div className="hero-rise hero-rise-d2" style={{ minWidth: 0 }}>
             <div className="wipe-head">
               <span className="w">
                 <span className="dot sodium" />WATCH — what a human sees
@@ -205,7 +197,7 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
                 </div>
               ))}
             </div>
-          </motion.div>
+          </div>
         </div>
 
         {/* TRUST STRIP */}
@@ -632,12 +624,16 @@ function Wipe({
   // from the design (16:9.5 viewport + centered card).  Labels live INSIDE
   // the box (left:8px) instead of at left:-1px so they stay readable when
   // the box straddles the seam and gets clipped by `revealClip`.
+  // Label backgrounds use the wash (light tint of the color) so dark text on
+  // them always meets WCAG AA. The border on the .wipe-box itself still
+  // uses the saturated color, so the demo still reads "this is signal,
+  // this is sodium" at a glance.
   const boxes = [
-    { id: "url",    top: "13%", left: "16%", w: "30%", h: "10%", label: 'ocr · url',          color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "title",  top: "25%", left: "18%", w: "26%", h: "9%",  label: 'ocr · "Payment"',    color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "card",   top: "38%", left: "18%", w: "64%", h: "11%", label: 'ocr · card · pii',   color: "var(--signal)", ink: "var(--on-accent)", danger: false },
-    { id: "click",  top: "62%", left: "18%", w: "64%", h: "11%", label: 'event · click',      color: "var(--sodium)", ink: "var(--on-accent)", danger: false },
-    { id: "err",    top: "78%", left: "18%", w: "64%", h: "13%", label: 'ocr+net · 500',      color: "var(--danger)", ink: "#fff",            danger: true  },
+    { id: "url",    top: "13%", left: "16%", w: "30%", h: "10%", label: 'ocr · url',          color: "var(--signal)", ink: "var(--signal-text)", bg: "var(--signal-wash)" },
+    { id: "title",  top: "25%", left: "18%", w: "26%", h: "9%",  label: 'ocr · "Payment"',    color: "var(--signal)", ink: "var(--signal-text)", bg: "var(--signal-wash)" },
+    { id: "card",   top: "38%", left: "18%", w: "64%", h: "11%", label: 'ocr · card · pii',   color: "var(--signal)", ink: "var(--signal-text)", bg: "var(--signal-wash)" },
+    { id: "click",  top: "62%", left: "18%", w: "64%", h: "11%", label: 'event · click',      color: "var(--sodium)", ink: "var(--sodium-text)", bg: "var(--sodium-wash)" },
+    { id: "err",    top: "78%", left: "18%", w: "64%", h: "13%", label: 'ocr+net · 500',      color: "var(--danger)", ink: "var(--danger)",      bg: "var(--danger-soft)" },
   ];
 
   // The seam position is driven by parent state; we just need its % to render
@@ -708,7 +704,7 @@ function Wipe({
             <span
               className="wipe-box-label"
               style={{
-                background: b.color,
+                background: b.bg,
                 color: b.ink,
               }}
             >
@@ -851,7 +847,7 @@ function TwoBody() {
 function Footer() {
   const col = (heading: string, items: string[]) => (
     <div className="landing-footer-col">
-      <h4>{heading}</h4>
+      <h3>{heading}</h3>
       <ul>
         {items.map((i) => (
           <li key={i}>{i}</li>
@@ -877,7 +873,7 @@ function Footer() {
             <span
               style={{
                 display: "inline-flex",
-                background: "var(--signal)",
+                background: "var(--signal-strong)",
                 color: "var(--on-accent)",
                 fontSize: 13,
                 fontWeight: 700,

@@ -29,9 +29,14 @@
   --panel:#FBF7F4; --panel-2:#F3EDEF; --panel-3:#EAE2EC;
   --glass:rgba(255,255,255,.5); --glass-2:rgba(255,255,255,.66);
   --border:rgba(70,52,92,.10); --border-2:rgba(70,52,92,.18);
-  --text:#211B2B; --text-2:#5F586E; --text-3:#928BA1;
-  --sodium-text:#D6461F; --signal-text:#0C8E6C;
-  --on-accent:#FFFFFF; --danger:#E0452B; --danger-soft:#FBE4DF;
+  --text:#211B2B; --text-2:#5F586E; --text-3:#6B6478;
+--sodium-text:#A22F18; --signal-text:#08513E;
+        /* darker accents that meet WCAG AA against white text — used by buttons
+           and CTAs. The original --signal/--sodium are kept for brand surfaces
+           (logos, soft fills, gradients). */
+        --signal-strong:#0A6E54;
+        --sodium-strong:#9C2E15;
+  --on-accent:#FFFFFF; --danger:#9C2E15; --danger-soft:#FBE4DF;
   --sodium-wash:rgba(255,122,89,.13); --signal-wash:rgba(22,199,154,.13);
   --grid:rgba(70,52,92,.04);
   --scrim:rgba(244,238,246,.74);
@@ -60,8 +65,10 @@
   --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
   --glass:rgba(54,46,78,.46); --glass-2:rgba(60,52,86,.6);
   --border:rgba(255,255,255,.10); --border-2:rgba(255,255,255,.2);
-  --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
+  --text:#F4F1FB; --text-2:#C7C0DA; --text-3:#8E84A8;
   --sodium-text:#FFAD90; --signal-text:#5FE7C2;
+  --signal-strong:#5FE7C2;
+  --sodium-strong:#FFAD90;
   --on-accent:#15121C; --danger:#FF6F5A; --danger-soft:#3A1A22;
   --sodium-wash:rgba(255,122,89,.16); --signal-wash:rgba(22,199,154,.2);
   --grid:rgba(255,255,255,.04);
@@ -141,6 +148,16 @@ button:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visibl
 @keyframes navSheen{0%{transform:translateX(-180%) skewX(-12deg)}45%,100%{transform:translateX(420%) skewX(-12deg)}}
 @keyframes toastIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 
+/* Hero rise — pure CSS, no JS dependency, paints immediately. Replaces
+   framer-motion's initial="hidden" + animate="shown" on the hero, which
+   was leaving the page blank until React mounted and ran the animation. */
+@keyframes heroRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.hero-rise{
+  animation:heroRise .55s cubic-bezier(.22,1,.36,1) both;
+  animation-delay:.05s;
+}
+.hero-rise-d2{animation-delay:.15s}
+
 @media (prefers-reduced-motion: reduce){
   *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
 }
@@ -158,9 +175,9 @@ button:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visibl
   box-shadow:var(--clay-sm);
 }
 .btn:hover:not(:disabled){border-color:var(--border-2)}
-.btn-signal{background:var(--signal);color:var(--on-accent);border-color:transparent;box-shadow:var(--pop-signal)}
+.btn-signal{background:var(--signal-strong);color:var(--on-accent);border-color:transparent;box-shadow:var(--pop-signal)}
 .btn-signal:hover:not(:disabled){filter:brightness(1.04)}
-.btn-sodium{background:var(--sodium);color:var(--on-accent);border-color:transparent;box-shadow:var(--pop-sodium)}
+.btn-sodium{background:var(--sodium-strong);color:var(--on-accent);border-color:transparent;box-shadow:var(--pop-sodium)}
 .btn-sodium:hover:not(:disabled){filter:brightness(1.04)}
 .btn-ghost{background:transparent;box-shadow:none}
 .btn-ghost:hover:not(:disabled){background:var(--panel-2);color:var(--text)}
@@ -220,7 +237,7 @@ button:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visibl
 .landing-brand-name{font-family:var(--font-display);font-weight:700;font-size:20px;letter-spacing:-.025em;display:inline-flex;align-items:center;gap:6px}
 .landing-brand-pill{
   display:inline-flex;align-items:center;justify-content:center;
-  background:var(--signal);color:var(--on-accent);font-size:14px;font-weight:700;
+  background:var(--signal-strong);color:var(--on-accent);font-size:14px;font-weight:700;
   letter-spacing:0;padding:2px 7px 3px;border-radius:9px;transform:rotate(-5deg);
   box-shadow:var(--clay-sm);
 }
@@ -249,7 +266,7 @@ button:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visibl
 
 .landing-cta-app{
   display:inline-flex;align-items:center;gap:7px;
-  background:var(--signal);color:var(--on-accent);font-weight:600;font-size:13.5px;
+  background:var(--signal-strong);color:var(--on-accent);font-weight:600;font-size:13.5px;
   font-family:var(--font-ui);padding:10px 18px;border-radius:99px;
   border:none;cursor:pointer;box-shadow:var(--pop-signal);
 }
@@ -375,13 +392,13 @@ h2.section-title{
 .wipe-box.danger{border-color:var(--danger)}
 .wipe-box-label{
   position:absolute;top:6px;left:8px;font-family:var(--font-mono);font-size:9px;
-  font-weight:600;color:var(--on-accent);padding:2px 5px;border-radius:3px;
+  font-weight:600;color:var(--text);padding:2px 5px;border-radius:3px;
   white-space:nowrap;box-shadow:var(--clay-sm);
-  background:var(--signal);
+  background:var(--signal-wash);
   z-index:3;
 }
-.wipe-box.sodium .wipe-box-label{background:var(--sodium)}
-.wipe-box.danger .wipe-box-label{background:var(--danger);color:#fff}
+.wipe-box.sodium .wipe-box-label{background:var(--sodium-wash);color:var(--text)}
+.wipe-box.danger .wipe-box-label{background:var(--danger-soft);color:var(--danger)}
 
 /* HUD chips welded onto the wipe */
 .wipe-hud{
@@ -474,7 +491,7 @@ h2.section-title{
 .index-card .row{display:flex;align-items:center;gap:10px}
 .index-card .tag{
   font-family:var(--font-mono);font-size:12px;color:var(--on-accent);
-  background:var(--signal);border-radius:8px;padding:3px 8px;font-weight:500;box-shadow:var(--clay-sm);
+  background:var(--signal-strong);border-radius:8px;padding:3px 8px;font-weight:600;box-shadow:var(--clay-sm);
 }
 .index-card .ttl{font-family:var(--font-display);font-weight:500;font-size:17px;letter-spacing:-.01em}
 .index-card .desc{font-size:13.5px;color:var(--text-2);line-height:1.5}
@@ -602,8 +619,8 @@ h2.section-title{
 .final-cta .badge-signal{
   display:inline-block;padding:1px .2em 3px;border-radius:11px;color:var(--on-accent);
 }
-.final-cta .badge-soda{background:var(--sodium);transform:rotate(-2deg);box-shadow:var(--clay-sodium)}
-.final-cta .badge-signal{background:var(--signal);transform:rotate(2deg);box-shadow:var(--clay-signal)}
+.final-cta .badge-soda{background:var(--sodium-strong);transform:rotate(-2deg);box-shadow:var(--clay-sodium)}
+.final-cta .badge-signal{background:var(--signal-strong);transform:rotate(2deg);box-shadow:var(--clay-signal)}
 .final-cta .lede{margin-top:14px;font-size:17px;color:var(--text-2);max-width:480px;margin-left:auto;margin-right:auto}
 .final-cta .row-buttons{display:flex;gap:12px;justify-content:center;margin-top:26px;flex-wrap:wrap}
 
@@ -615,9 +632,9 @@ h2.section-title{
 .landing-footer-grid{
   display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:28px;
 }
-.landing-footer-col h4{
+.landing-footer-col h3{
   font-family:var(--font-mono);font-size:11px;color:var(--text-3);
-  letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px;
+  letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px;font-weight:600;
 }
 .landing-footer-col ul{display:flex;flex-direction:column;gap:9px;list-style:none}
 .landing-footer-col li{font-size:13.5px;color:var(--text-2);cursor:pointer}

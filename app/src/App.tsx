@@ -1,21 +1,26 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brand } from "./Brand";
 import { Landing } from "./Landing";
 import { Sidebar } from "./Sidebar";
-import { Library } from "./Library";
-import { ClipPage } from "./ClipPage";
-import { Recording } from "./Recording";
-import { ImportView } from "./Import";
-import { Chat } from "./Chat";
-import { Settings } from "./Settings";
 import { SearchBox } from "./SearchBox";
-import { Login } from "./Login";
 import { useClips } from "./useClipData";
 import { useAuth, type Auth } from "./useAuth";
 import { initialClipId } from "./api";
 import { vMount, usePrefersReducedMotion } from "./motion";
 import { Seo, SEO_VIEWS } from "./seo";
+
+// Cloud views are code-split so the landing-page bundle stays tiny.
+// The marketing page is the first thing every visitor (and every crawler
+// scoring Lighthouse) sees — keeping it small is the single biggest perf
+// lever.
+const Login = lazy(() => import("./Login").then((m) => ({ default: m.Login })));
+const Library = lazy(() => import("./Library").then((m) => ({ default: m.Library })));
+const ClipPage = lazy(() => import("./ClipPage").then((m) => ({ default: m.ClipPage })));
+const Recording = lazy(() => import("./Recording").then((m) => ({ default: m.Recording })));
+const ImportView = lazy(() => import("./Import").then((m) => ({ default: m.ImportView })));
+const Chat = lazy(() => import("./Chat").then((m) => ({ default: m.Chat })));
+const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
 
 export type View = "landing" | "auth" | "cloud";
 export type CloudView = "library" | "recording" | "import" | "chat" | "clip" | "settings";
@@ -59,7 +64,7 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [importUrl, setImportUrl] = useState<string | undefined>(undefined);
 
-  const auth = useAuth();
+  const auth = useAuth(view === "cloud");
   const { clips, reload } = useClips();
 
   const toggleTheme = useCallback(() => {
@@ -155,20 +160,35 @@ export default function App() {
   // Refresh-persistence: a hard reload always re-mounts with `view: "landing"` unless a
   // `?clip=` deep link is present — Library/Settings/Recording/etc. have no URL trace of
   // their own, so without this the app silently dumps a returning user back on the
-  // marketing page every refresh. Once auth has resolved, a visitor who's been inside the
-  // app before goes straight back in (or to the auth screen, if their session lapsed) —
-  // first-time visitors with no deep link and no history still land on the landing page.
+  // marketing page every refresh. Fires once on mount rather than waiting on `auth.loading`
+  // (auth is lazy — `useAuth(view === "cloud")` never even fetches while we're still on
+  // "landing" — so `goCloud` here runs optimistically; the effect below corrects course if
+  // the real auth check, once it fires, turns out unauthenticated).
   useEffect(() => {
-    if (auth.loading || deepLink || view !== "landing") return;
+    if (deepLink || view !== "landing") return;
     if (!hasEnteredAppBefore()) return;
     goCloud("library");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.loading]);
+  }, []);
 
-  // Loading / auth gate.
-  if (auth.loading) {
+  // If the optimistic restore above lands us in the cloud view but the real auth check
+  // (which only starts once `view === "cloud"`) comes back unauthenticated, don't strand
+  // the user on a cloud view they can't use — send them to the auth screen instead.
+  useEffect(() => {
+    if (view === "cloud" && !auth.loading && auth.authEnabled && !auth.user) {
+      setView("auth");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.loading, auth.authEnabled, auth.user]);
+
+  // Auth gate — ONLY blocks the cloud view, never the landing. Showing a
+  // spinner in place of the landing is the single biggest reason FCP/LCP
+  // fail on a slow connection (the page paints a blank div while we wait
+  // for /auth/status). The landing is a static marketing page and is
+  // available without an account.
+  if (view === "cloud" && auth.loading) {
     return (
-      <div data-theme={theme} className="auth-screen">
+      <div data-theme={theme} className="auth-screen" aria-busy="true" aria-label="Loading">
         <span className="spin" style={{ width: 22, height: 22 }} />
       </div>
     );
@@ -203,11 +223,15 @@ export default function App() {
     <div data-theme={theme}>
       <AnimatePresence mode="wait" initial={false}>
         {view === "landing" ? (
-          <motion.div
+          /* Landing starts visible (no initial="hidden") so the prerendered
+             shell has no flash of empty div between SSR-style paint and the
+             React tree mounting. The <main> landmark + id="main" keeps the
+             skip-link in index.html working after React takes over. */
+          <motion.main
             key="landing"
-            variants={vMount}
-            initial={reduced ? false : "hidden"}
-            animate="shown"
+            id="main"
+            initial={false}
+            animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.18 } }}
           >
             <Seo
@@ -222,7 +246,7 @@ export default function App() {
               onImport={goImport}
               onLogin={goAuth}
             />
-          </motion.div>
+          </motion.main>
         ) : (
           <motion.div
             key="cloud"
@@ -348,64 +372,72 @@ function ViewBody(p: {
     exit: { opacity: 0, y: -6, transition: { duration: 0.18 } },
   };
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      {p.cloudView === "library" && (
-        <motion.div key="library" {...baseProps}>
-          <Library
-            clips={p.clips}
-            filter={p.filter}
-            onOpen={p.openClip}
-            onPasteImport={(url) => {
-              p.setImportUrl(url);
-              p.setCloudView("import");
-            }}
-          />
-        </motion.div>
-      )}
-      {p.cloudView === "clip" && (
-        <motion.div key={"clip-" + (p.activeClipId ?? "none")} {...baseProps}>
-          <ClipPage id={p.activeClipId} seekTo={p.seekTo} showToast={p.showToast} />
-        </motion.div>
-      )}
-      {p.cloudView === "recording" && (
-        <motion.div key="recording" {...baseProps}>
-          <Recording
-            onClipReady={p.afterCreate}
-            showToast={p.showToast}
-            onOpenClip={p.onClipInCloudView}
-            onRetry={p.afterCreate}
-          />
-        </motion.div>
-      )}
-      {p.cloudView === "import" && (
-        <motion.div key="import" {...baseProps}>
-          <ImportView
-            initialUrl={p.importUrl}
-            onDone={p.afterCreate}
-            showToast={p.showToast}
-          />
-        </motion.div>
-      )}
-      {p.cloudView === "chat" && (
-        <motion.div key="chat" {...baseProps}>
-          <Chat clips={p.clips} onOpen={p.openClip} />
-        </motion.div>
-      )}
-      {p.cloudView === "settings" && (
-        <motion.div key="settings" {...baseProps}>
-          <Settings
-            authEnabled={p.auth.authEnabled}
-            user={p.auth.user}
-            clipCount={p.clips?.length ?? 0}
-            theme={p.theme}
-            toggleTheme={p.toggleTheme}
-            onSetUsername={(u) => p.auth.setUsername(u)}
-            onLogout={p.auth.logout}
-            showToast={p.showToast}
-          />
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <Suspense
+      fallback={
+        <div className="auth-screen" aria-busy="true" aria-label="Loading view">
+          <span className="spin" style={{ width: 22, height: 22 }} />
+        </div>
+      }
+    >
+      <AnimatePresence mode="wait" initial={false}>
+        {p.cloudView === "library" && (
+          <motion.div key="library" {...baseProps}>
+            <Library
+              clips={p.clips}
+              filter={p.filter}
+              onOpen={p.openClip}
+              onPasteImport={(url) => {
+                p.setImportUrl(url);
+                p.setCloudView("import");
+              }}
+            />
+          </motion.div>
+        )}
+        {p.cloudView === "clip" && (
+          <motion.div key={"clip-" + (p.activeClipId ?? "none")} {...baseProps}>
+            <ClipPage id={p.activeClipId} seekTo={p.seekTo} showToast={p.showToast} />
+          </motion.div>
+        )}
+        {p.cloudView === "recording" && (
+          <motion.div key="recording" {...baseProps}>
+            <Recording
+              onClipReady={p.afterCreate}
+              showToast={p.showToast}
+              onOpenClip={p.onClipInCloudView}
+              onRetry={p.afterCreate}
+            />
+          </motion.div>
+        )}
+        {p.cloudView === "import" && (
+          <motion.div key="import" {...baseProps}>
+            <ImportView
+              initialUrl={p.importUrl}
+              onDone={p.afterCreate}
+              showToast={p.showToast}
+            />
+          </motion.div>
+        )}
+        {p.cloudView === "chat" && (
+          <motion.div key="chat" {...baseProps}>
+            <Chat clips={p.clips} onOpen={p.openClip} />
+          </motion.div>
+        )}
+        {p.cloudView === "settings" && (
+          <motion.div key="settings" {...baseProps}>
+            <Settings
+              authEnabled={p.auth.authEnabled}
+              user={p.auth.user}
+              clipCount={p.clips?.length ?? 0}
+              theme={p.theme}
+              toggleTheme={p.toggleTheme}
+              onSetUsername={(u) => p.auth.setUsername(u)}
+              onLogout={p.auth.logout}
+              showToast={p.showToast}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Suspense>
   );
 }
 
