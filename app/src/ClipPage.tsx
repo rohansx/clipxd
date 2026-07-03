@@ -208,7 +208,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             description: index.summary.tldr || "A clip on clipxd",
             uploadDate: index.metadata.created_at,
             duration: `PT${Math.max(1, Math.round(index.metadata.duration))}S`,
-            thumbnailUrl: `/clip/${id}/frames/00001.png`,
+            thumbnailUrl: `/clip/${id}/thumbnail`,
             contentUrl: `/clip/${id}/video`,
             encodingFormat: "video/webm",
             isAccessibleForFree: true,

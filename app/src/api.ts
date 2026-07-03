@@ -200,7 +200,7 @@ export function frameUrl(id: string, name: string, base = apiBase()): string {
 }
 
 export function thumbUrl(id: string, base = apiBase()): string {
-  return `${base}/clip/${id}/frames/00001.png`;
+  return `${base}/clip/${id}/thumbnail`;
 }
 
 export async function fetchNet(base = apiBase()): Promise<NetInfo | null> {
