@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{self, CorsLayer};
 
 /// One streaming-upload session's incremental indexer, keyed by its session id (== the clip
 /// id for instant-link sessions). The outer map is locked only briefly (get/insert/remove);
@@ -213,7 +213,20 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     }
     router
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
-        .layer(CorsLayer::permissive())
+        // `CorsLayer::permissive()` sends `Access-Control-Allow-Origin: *`, which browsers
+        // categorically reject on any request sent with `credentials: 'include'` (used
+        // throughout the SPA so the session cookie flows to the API) — a wildcard ACAO can
+        // never be paired with credentials, no matter what other headers say. Mirroring the
+        // request's actual Origin instead of a wildcard is the standard fix, and is required
+        // for the SPA's supported cross-origin dev mode (`?api=http://localhost:8787` pointing
+        // a Vite dev server at a separately-run backend).
+        .layer(
+            CorsLayer::new()
+                .allow_origin(cors::AllowOrigin::mirror_request())
+                .allow_methods(cors::AllowMethods::mirror_request())
+                .allow_headers(cors::AllowHeaders::mirror_request())
+                .allow_credentials(true),
+        )
         .with_state(state)
 }
 
