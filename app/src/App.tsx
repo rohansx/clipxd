@@ -27,6 +27,26 @@ export interface SeekRequest {
   nonce: number;
 }
 
+/** Persisted across refreshes: "the user has been inside the app before" — lets a hard
+ *  refresh on Library/Settings/etc. restore straight back into the app instead of always
+ *  falling through to the marketing landing page (which otherwise has no memory that the
+ *  user ever left it, since only `?clip=` deep links survive a reload on their own). */
+const ENTERED_APP_KEY = "clipxd:enteredApp";
+function hasEnteredAppBefore(): boolean {
+  try {
+    return localStorage.getItem(ENTERED_APP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function markEnteredApp(): void {
+  try {
+    localStorage.setItem(ENTERED_APP_KEY, "1");
+  } catch {
+    /* storage may be unavailable */
+  }
+}
+
 export default function App() {
   const reduced = usePrefersReducedMotion();
   const deepLink = useMemo(initialClipId, []);
@@ -64,6 +84,7 @@ export default function App() {
 
   const goCloud = useCallback(
     (v: CloudView = "library") => {
+      markEnteredApp();
       // When unauthed, route to the explicit auth view (don't flash through Landing → Login).
       if (auth.authEnabled && !auth.user) {
         setView("auth");
@@ -75,7 +96,10 @@ export default function App() {
     [auth.authEnabled, auth.user],
   );
 
-  const goAuth = useCallback(() => setView("auth"), []);
+  const goAuth = useCallback(() => {
+    markEnteredApp();
+    setView("auth");
+  }, []);
   const goLanding = useCallback(() => setView("landing"), []);
   const goImport = useCallback(
     () => goCloud("import"),
@@ -127,6 +151,19 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.id]);
+
+  // Refresh-persistence: a hard reload always re-mounts with `view: "landing"` unless a
+  // `?clip=` deep link is present — Library/Settings/Recording/etc. have no URL trace of
+  // their own, so without this the app silently dumps a returning user back on the
+  // marketing page every refresh. Once auth has resolved, a visitor who's been inside the
+  // app before goes straight back in (or to the auth screen, if their session lapsed) —
+  // first-time visitors with no deep link and no history still land on the landing page.
+  useEffect(() => {
+    if (auth.loading || deepLink || view !== "landing") return;
+    if (!hasEnteredAppBefore()) return;
+    goCloud("library");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.loading]);
 
   // Loading / auth gate.
   if (auth.loading) {

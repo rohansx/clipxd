@@ -88,7 +88,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     showToast(reason);
   }, [showToast]);
 
-  const { state, start, stop } = useScreenRecorder(base, {
+  const { state, countdown, start, stop, skipCountdown, cancelCountdown } = useScreenRecorder(base, {
     onRecordingLink: handleRecordingLink,
     onPending: handlePending,
     onClipReady: handleReady,
@@ -138,6 +138,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
   }, [state]);
 
   const clock = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+  const counting = state === "counting";
   const recording = state === "recording";
   const processing = state === "processing";
   const failed = state === "failed";
@@ -234,6 +235,8 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
             <span className="led" />
             {recording
               ? "REC"
+              : counting
+              ? `STARTING · ${countdown}`
               : processing
               ? "UPLOADING"
               : failed
@@ -449,20 +452,38 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                 your screen → clipxd
               </span>
             </div>
-            <div style={{ padding: 28, color: "#222", background: "#fff", minHeight: 160 }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>
-                {recording
-                  ? "Recording your screen…"
-                  : processing
-                  ? "Uploading — link ready in a moment…"
-                  : failed
-                  ? "Upload didn't complete."
-                  : "Press record — pick a screen or window."}
+            {counting ? (
+              <div className="countdown-panel">
+                <div className="countdown-num" key={countdown}>{countdown}</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Get your screen ready…</div>
+                <div style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
+                  Switch to the window you want to show — recording starts automatically.
+                </div>
+                <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+                  <button className="btn-sodium btn-pill" onClick={skipCountdown} style={{ fontSize: 13, padding: "9px 18px" }}>
+                    Start now
+                  </button>
+                  <button className="btn btn-pill" onClick={cancelCountdown} style={{ fontSize: 13, padding: "9px 18px" }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <div style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
-                The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too.
+            ) : (
+              <div style={{ padding: 28, color: "#222", background: "#fff", minHeight: 160 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>
+                  {recording
+                    ? "Recording your screen…"
+                    : processing
+                    ? "Uploading — link ready in a moment…"
+                    : failed
+                    ? "Upload didn't complete."
+                    : "Press record — pick a screen or window."}
+                </div>
+                <div style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
+                  The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too.
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
@@ -483,9 +504,14 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
         </div>
 
         <div className="toolbar">
-          {!recording && !processing && !failed && (
+          {!counting && !recording && !processing && !failed && (
             <button className="btn-sodium btn-pill" onClick={() => { retire(); start(camStream); }} style={{ fontSize: 14, padding: "12px 22px" }}>
               ● {lastClip?.status === "failed" ? "Try again" : lastClip ? "Record another" : "Start recording"}
+            </button>
+          )}
+          {counting && (
+            <button className="btn btn-pill" disabled style={{ fontSize: 14, padding: "12px 22px" }}>
+              Starting in {countdown}… (controls above)
             </button>
           )}
           {recording && (
