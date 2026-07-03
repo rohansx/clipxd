@@ -140,6 +140,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/preview.gif", get(get_preview_gif))
         .route("/clip/:id/index.json", get(get_index))
         .route("/clip/:id/zoom.json", get(get_zoom))
+        .route("/clip/:id/thumbnail", get(get_thumbnail))
         .route("/clip/:id/query", get(get_query))
         .route("/clip/:id/search", get(get_search))
         .route("/clip/:id/events", get(get_events))
@@ -153,6 +154,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/u/:username/clip/:id/preview.gif", get(get_preview_gif_for_user))
         .route("/u/:username/clip/:id/index.json", get(get_index_for_user))
         .route("/u/:username/clip/:id/zoom.json", get(get_zoom_for_user))
+        .route("/u/:username/clip/:id/thumbnail", get(get_thumbnail_for_user))
         .route("/u/:username/clip/:id/query", get(get_query_for_user))
         .route("/u/:username/clip/:id/search", get(get_search_for_user))
         .route("/u/:username/clip/:id/events", get(get_events_for_user))
@@ -745,6 +747,40 @@ async fn get_zoom(State(s): State<AppState>, Path(id): Path<String>) -> Result<i
     }
     let bytes = read_object_or_local(&s, &format!("{id}/zoom.json")).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?.ok_or((StatusCode::NOT_FOUND, "no zoom track".into()))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// The clip's real first salient frame — NOT necessarily `frames/00001.*`. The salience gate
+/// skips frames until something actually changes on screen, so a clip's first *retained* frame
+/// is commonly `00003.jpg`, `00007.jpg`, etc. Anything that hardcodes `00001` (og:image, video
+/// poster, library thumbnails) 404s on exactly the clips where that skip happens — which is
+/// most of them. Falls back to the historical `frames/00001.png` guess only when the index has
+/// no visual_timeline at all (e.g. an ancient or transcript-only clip).
+fn first_frame_ref(idx: &Index) -> &str {
+    idx.visual_timeline.iter().find_map(|m| m.frame_ref.as_deref()).unwrap_or("frames/00001.png")
+}
+
+/// `GET /clip/:id/thumbnail` — the clip's real first salient frame, whatever it's actually
+/// named. Library cards and any other "just show me a still" consumer should hit this instead
+/// of guessing a frame path directly.
+async fn get_thumbnail(State(s): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let idx = load_index(&s, &id).await?;
+    let frame_ref = first_frame_ref(&idx).to_string();
+    let bytes = read_object_or_local(&s, &format!("{id}/{frame_ref}")).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("storage: {e}")))?
+        .ok_or((StatusCode::NOT_FOUND, "no salient frame yet".into()))?;
+    let ct = if frame_ref.ends_with(".jpg") || frame_ref.ends_with(".jpeg") { "image/jpeg" } else { "image/png" };
+    Ok(([(header::CONTENT_TYPE, ct)], bytes))
+}
+
+async fn get_thumbnail_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_thumbnail(State(s), Path(id)).await
 }
 
 /// `GET /clip/:id/preview.gif` — an animated GIF built from salient frames, for pasting into
@@ -2050,10 +2086,6 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
             title, idx.on_screen_text.len(), idx.event_track.len()
         )
     };
-    // First salient frame beats a hardcoded "00001.png": that's whatever was on screen at
-    // t=0 (often a blank/loading state), while the earliest visual_timeline entry with a
-    // frame_ref is the first moment the codec actually judged worth keeping a frame for.
-    let og_image_path = idx.visual_timeline.iter().find_map(|m| m.frame_ref.as_deref()).unwrap_or("frames/00001.png");
     let dur = idx.metadata.duration;
 
     let main = share_main(id, idx);
@@ -2072,7 +2104,7 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
   <meta property="og:title" content="{title}" />
   <meta property="og:description" content="{og_desc}" />
   <meta property="og:url" content="{url}" />
-  <meta property="og:image" content="{url}/{og_image_path}" />
+  <meta property="og:image" content="{url}/thumbnail" />
   <meta name="twitter:card" content="player" />
   <meta name="twitter:title" content="{title}" />
   <meta name="twitter:description" content="{og_desc}" />
@@ -2099,7 +2131,7 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
       <a class="pill ghost" href="/clip/{id}/index.json" target="_blank">index.json</a>
     </div>
     <div class="player">
-      <video src="/clip/{id}/video" controls poster="{url}/frames/00001.png" preload="metadata" playsinline></video>
+      <video src="/clip/{id}/video" controls poster="{url}/thumbnail" preload="metadata" playsinline></video>
     </div>
   </main>
 
