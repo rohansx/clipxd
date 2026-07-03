@@ -1,0 +1,142 @@
+//! Shared NVIDIA-primary/Gemini-fallback text completion — the "cheap LLM call over
+//! already-extracted index text" primitive. [`deeppass`](crate::deeppass) (title/tldr/chapters)
+//! and [`docgen`](crate::docgen) (PR description/SOP/QA steps) both build on [`complete`]
+//! rather than each hand-rolling the same two HTTP calls.
+//!
+//! **Two backends, primary + fallback — not a per-call choice:**
+//! 1. **NVIDIA NIM** (`NVIDIA_API_KEY`) — free-tier hosted inference (Kimi K2 by default; see
+//!    `CLIPXD_NVIDIA_MODEL`). No published per-token price as of 2026-07 (confirmed against
+//!    `docs.nvidia.com/nim` — no pricing page exists for the hosted endpoint), so it is
+//!    explicitly *not* the thing to depend on for guaranteed uptime or cost. Tried first
+//!    because it's free right now and was faster/equal quality in testing.
+//! 2. **Gemini** (`GEMINI_API_KEY`, model `CLIPXD_GEMINI_MODEL`, default
+//!    `gemini-3.1-flash-lite`) — a real, published, stable price
+//!    ($0.25/M in, $1.50/M out — ai.google.dev/gemini-api/docs/pricing, confirmed 2026-07).
+//!    Used whenever NVIDIA is unset, or fails for *any* reason (down, rate-limited, pricing
+//!    changed, model retired) — the fallback exists so a free tier disappearing overnight
+//!    doesn't silently turn every feature built on this off.
+
+use anyhow::{anyhow, bail, Context, Result};
+
+pub fn has_env(key: &str) -> bool {
+    std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+pub fn any_backend_configured() -> bool {
+    has_env("NVIDIA_API_KEY") || has_env("GEMINI_API_KEY")
+}
+
+/// Complete `prompt` against NVIDIA first (if configured), Gemini as fallback (if configured,
+/// or if NVIDIA was configured but failed). Returns the raw completion text plus which backend
+/// answered, for logging. `json_mode` asks Gemini for `responseMimeType: application/json`
+/// when the backend supports requesting it — NVIDIA's OpenAI-style chat completions have no
+/// such knob, so a caller needing JSON must ask for it in the prompt text itself either way,
+/// and tolerate a markdown-fenced response (ordinary chat models do this even when told not
+/// to) — see `deeppass::parse_deep_json`'s fence-stripping for the pattern.
+pub async fn complete(prompt: &str, json_mode: bool) -> Result<(String, &'static str)> {
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
+
+    let mut used = "none";
+    let mut result: Option<Result<String>> = None;
+    if has_env("NVIDIA_API_KEY") {
+        let r = call_nvidia(&client, prompt).await;
+        if let Err(e) = &r {
+            eprintln!("llm: NVIDIA backend failed, falling back to Gemini: {e:#}");
+        } else {
+            used = "nvidia";
+        }
+        result = Some(r);
+    }
+    if result.as_ref().is_none_or(|r| r.is_err()) && has_env("GEMINI_API_KEY") {
+        let r = call_gemini(&client, prompt, json_mode).await;
+        if r.is_ok() {
+            used = "gemini";
+        }
+        result = Some(r);
+    }
+    let text = result.ok_or_else(|| anyhow!("no LLM backend configured (set NVIDIA_API_KEY or GEMINI_API_KEY)"))??;
+    Ok((text, used))
+}
+
+fn nvidia_model() -> String {
+    // kimi-k2.6 was fastest and highest quality of the three NVIDIA-hosted Chinese frontier
+    // models tested (kimi-k2.6, minimax-m3, qwen3.5-122b-a10b) on this task — see project memory.
+    std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "moonshotai/kimi-k2.6".into())
+}
+
+async fn call_nvidia(client: &reqwest::Client, prompt: &str) -> Result<String> {
+    let key = std::env::var("NVIDIA_API_KEY").context("NVIDIA_API_KEY")?;
+    let body = serde_json::json!({
+        "model": nvidia_model(),
+        "messages": [{ "role": "user", "content": prompt }],
+        "temperature": 0.3,
+        "max_tokens": 2048,
+    });
+    let resp = client
+        .post("https://integrate.api.nvidia.com/v1/chat/completions")
+        .bearer_auth(&key)
+        .json(&body)
+        .send()
+        .await
+        .context("nvidia request")?;
+    let status = resp.status();
+    let out: serde_json::Value = resp.json().await.context("nvidia response")?;
+    if !status.is_success() {
+        bail!("nvidia {status}: {}", out["error"]["message"].as_str().or_else(|| out["detail"].as_str()).unwrap_or("?"));
+    }
+    out["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("nvidia response had no message content"))
+}
+
+fn gemini_model() -> String {
+    // gemini-2.5-flash-lite returned repeated 503 "high demand" errors in testing (2026-07) --
+    // likely deprioritized capacity now that newer generations exist. gemini-3.1-flash-lite is
+    // the current stable cheap/fast tier and has a real published price.
+    std::env::var("CLIPXD_GEMINI_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "gemini-3.1-flash-lite".into())
+}
+
+async fn call_gemini(client: &reqwest::Client, prompt: &str, json_mode: bool) -> Result<String> {
+    let key = std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY")?;
+    let mut generation_config = serde_json::json!({});
+    if json_mode {
+        generation_config["responseMimeType"] = "application/json".into();
+    }
+    let body = serde_json::json!({
+        "contents": [{ "parts": [{ "text": prompt }] }],
+        "generationConfig": generation_config,
+    });
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", gemini_model());
+    let resp = client.post(&url).header("x-goog-api-key", &key).json(&body).send().await.context("gemini request")?;
+    let status = resp.status();
+    let out: serde_json::Value = resp.json().await.context("gemini response")?;
+    if !status.is_success() {
+        bail!("gemini {status}: {}", out["error"]["message"].as_str().unwrap_or("?"));
+    }
+    out["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("gemini response had no text part"))
+}
+
+/// Strip a markdown code fence if the model wrapped its output in one anyway (common even
+/// when explicitly told not to, for both JSON and prose responses).
+pub fn strip_fence(text: &str) -> &str {
+    let t = text.trim();
+    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```markdown")).or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    t.strip_suffix("```").unwrap_or(t).trim()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_fence_handles_json_markdown_and_bare() {
+        assert_eq!(strip_fence("```json\n{\"a\":1}\n```"), "{\"a\":1}");
+        assert_eq!(strip_fence("```markdown\n# Title\n```"), "# Title");
+        assert_eq!(strip_fence("```\nplain\n```"), "plain");
+        assert_eq!(strip_fence("no fence here"), "no fence here");
+    }
+}

@@ -1,7 +1,11 @@
 import { useRef, useState } from "react";
 import { postCursor } from "./api";
 
-export type RecState = "idle" | "recording" | "processing" | "failed";
+export type RecState = "idle" | "counting" | "recording" | "processing" | "failed";
+
+/** Seconds between picking a screen/window and capture actually starting — time to switch
+ *  to the right window, close notification popups, etc. Same pattern as Loom/Cap.so. */
+export const COUNTDOWN_SECONDS = 3;
 
 export interface RecorderCallbacks {
   /** Fires as soon as the server mints the clip id at record start (instant link) —
@@ -57,8 +61,13 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   const [state, setState] = useState<RecState>("idle");
   // Distinct "we tried, here's why" reason once state === "failed".
   const [error, setError] = useState<string | null>(null);
+  // Seconds remaining while state === "counting"; null otherwise.
+  const [countdown, setCountdown] = useState<number | null>(null);
   const ref = useRef<{ mr: MediaRecorder } | null>(null);
   const chunks = useRef<Blob[]>([]);
+  // Resolves the in-flight countdown promise: true → proceed to recording, false → abort.
+  // null whenever state !== "counting".
+  const countdownResolve = useRef<((proceed: boolean) => void) | null>(null);
 
   const start = async (cameraStream: MediaStream | null) => {
     try {
@@ -66,7 +75,6 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         video: { frameRate: { ideal: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: true,
       });
-      chunks.current = [];
       let recordStream: MediaStream = screen;
       let raf = 0;
       const cleanups: Array<() => void> = [() => screen.getTracks().forEach((t) => t.stop())];
@@ -102,6 +110,39 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         screen.getAudioTracks().forEach((t) => comp.addTrack(t)); // keep system audio
         recordStream = comp;
       }
+
+      // Loom/Cap.so-style countdown: the screen/window/tab is already picked (the browser's
+      // native "you are sharing" indicator is up), but actual capture doesn't start until
+      // this resolves — gives the user a few seconds to switch to the right window, close a
+      // notification popup, etc. Cancellable via `cancelCountdown`/skippable via
+      // `skipCountdown`, both wired to `countdownResolve`.
+      setState("counting");
+      const proceed = await new Promise<boolean>((resolve) => {
+        let remaining = COUNTDOWN_SECONDS;
+        setCountdown(remaining);
+        const tick = window.setInterval(() => {
+          remaining -= 1;
+          if (remaining <= 0) {
+            window.clearInterval(tick);
+            resolve(true);
+          } else {
+            setCountdown(remaining);
+          }
+        }, 1000);
+        countdownResolve.current = (p) => {
+          window.clearInterval(tick);
+          resolve(p);
+        };
+      });
+      countdownResolve.current = null;
+      setCountdown(null);
+      if (!proceed) {
+        cleanups.forEach((fn) => fn());
+        setState("idle");
+        return;
+      }
+
+      chunks.current = [];
 
       // Streaming stage session — the server creates the on-disk session dir and hands back
       // its id; chunk PUTs must target *that* id (not a locally-generated one) or they 404.
@@ -246,12 +287,21 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   };
 
   const stop = () => {
+    if (countdownResolve.current) {
+      countdownResolve.current(false); // still counting down — Stop cancels, nothing was recorded
+      return;
+    }
     const mr = ref.current?.mr;
     if (!mr || mr.state === "inactive") return;
     mr.stop();
   };
 
-  return { state, error, start, stop };
+  /** "Start now" — skip the rest of the countdown and begin capturing immediately. */
+  const skipCountdown = () => countdownResolve.current?.(true);
+  /** Abort during the countdown — no recording happens, back to idle. */
+  const cancelCountdown = () => countdownResolve.current?.(false);
+
+  return { state, error, countdown, start, stop, skipCountdown, cancelCountdown };
 }
 
 async function ingestWithTimeout(blob: Blob, apiBase: string, timeoutMs: number, reuseId: string | null = null): Promise<string | null> {

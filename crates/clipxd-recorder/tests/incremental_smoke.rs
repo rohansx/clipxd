@@ -12,6 +12,13 @@ fn have_ffmpeg() -> bool {
     Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// Whisper isn't a hard dependency (`transcribe::transcribe` degrades to an empty transcript
+/// when none is installed), so this test skips rather than fails when neither backend
+/// `transcribe.rs` looks for (`whisper`, `whisper-cli`/`whisper-cpp`) is on PATH.
+fn have_whisper() -> bool {
+    ["whisper", "whisper-cli", "whisper-cpp"].iter().any(|bin| Command::new(bin).arg("--help").output().map(|o| o.status.success()).unwrap_or(false))
+}
+
 fn make_test_video(path: &Path, duration_s: u32) {
     let status = Command::new("ffmpeg")
         .args(["-y", "-f", "lavfi", "-i", &format!("testsrc=duration={duration_s}:size=320x240:rate=10")])
@@ -181,6 +188,65 @@ fn incremental_matches_batch_with_real_deltas_and_uneven_chunk_boundaries() {
         batch_index.on_screen_text.len(),
         "on-screen-text coverage should also match"
     );
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+fn make_video_with_tone(path: &Path, duration_s: u32) {
+    // A real (silent) audio *track* -- not the tone/testsrc-only videos above -- is what
+    // exercises the transcribe path at all; `transcribe.rs` returns early on a video with no
+    // audio stream. `anullsrc` avoids a network TTS dependency in a test that runs in CI.
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-f", "lavfi", "-i", &format!("testsrc=duration={duration_s}:size=320x240:rate=10")])
+        .args(["-f", "lavfi", "-i", &format!("anullsrc=r=16000:cl=mono:d={duration_s}")])
+        .args(["-c:v", "libvpx", "-c:a", "libvorbis", "-f", "webm"])
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("ffmpeg should run");
+    assert!(status.success(), "audio+video fixture generation failed");
+}
+
+/// End-to-end validation that live transcription is actually wired through the *public* API
+/// (`add_increment` across growing chunks, then `finalize`) when a real whisper binary is
+/// installed -- not just the internal `transcribe_pass` unit tests in `incremental.rs`, which
+/// call the private method directly. Skips gracefully (not a failure) when no whisper backend
+/// is on PATH, same spirit as `have_ffmpeg`.
+#[test]
+fn incremental_transcribes_live_when_whisper_is_installed() {
+    if !have_ffmpeg() || !have_whisper() {
+        eprintln!("skipping: ffmpeg and/or whisper not on PATH");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("clipxd-incr-whisper-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let full = tmp.join("full.webm");
+    make_video_with_tone(&full, 12);
+
+    let frames_dir = tmp.join("incr-frames");
+    let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+    // Two increments -- exercises the holdback-then-catch-up path the same way real ~15s
+    // streaming chunks do, not just a single finalize-only pass.
+    for seconds in [6.0, 12.0] {
+        let prefix = tmp.join(format!("prefix-{seconds}.webm"));
+        make_prefix(&full, &prefix, seconds);
+        indexer.add_increment(&prefix, "Screen recording").expect("increment should succeed");
+    }
+    let clip_dir = tmp.join("clip_whisper");
+    std::fs::create_dir_all(&clip_dir).unwrap();
+    let index = indexer.finalize(&full, &clip_dir, "clp_test_whisper", "Screen recording", &EventTrack::default()).expect("finalize should succeed");
+
+    // Silence transcribes to nothing (or near-nothing) from a real whisper -- this asserts
+    // the *pipeline* didn't crash/hang wiring a live binary end-to-end, not specific text.
+    // Any segments that did come back must have sane, non-overlapping, in-range timestamps.
+    eprintln!("transcript segments: {}", index.transcript.len());
+    for seg in &index.transcript {
+        eprintln!("  [{:.1}-{:.1}] {:?}", seg.start, seg.end, seg.text);
+        assert!(seg.start >= 0.0 && seg.end <= 12.5, "segment {seg:?} out of the clip's time range");
+        assert!(seg.start <= seg.end, "segment {seg:?} has start > end");
+    }
 
     std::fs::remove_dir_all(&tmp).ok();
 }

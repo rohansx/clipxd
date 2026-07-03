@@ -5,7 +5,7 @@ import { Landing } from "./Landing";
 import { Sidebar } from "./Sidebar";
 import { SearchBox } from "./SearchBox";
 import { useClips } from "./useClipData";
-import { useAuth } from "./useAuth";
+import { useAuth, type Auth } from "./useAuth";
 import { initialClipId } from "./api";
 import { vMount, usePrefersReducedMotion } from "./motion";
 import { Seo, SEO_VIEWS } from "./seo";
@@ -20,15 +20,36 @@ const ClipPage = lazy(() => import("./ClipPage").then((m) => ({ default: m.ClipP
 const Recording = lazy(() => import("./Recording").then((m) => ({ default: m.Recording })));
 const ImportView = lazy(() => import("./Import").then((m) => ({ default: m.ImportView })));
 const Chat = lazy(() => import("./Chat").then((m) => ({ default: m.Chat })));
+const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
 
 export type View = "landing" | "auth" | "cloud";
-export type CloudView = "library" | "recording" | "import" | "chat" | "clip";
+export type CloudView = "library" | "recording" | "import" | "chat" | "clip" | "settings";
 export type Theme = "light" | "dark";
 
 /** A seek request from the topbar search → consumed by the open ClipPage (nonce forces re-fire). */
 export interface SeekRequest {
   t: number;
   nonce: number;
+}
+
+/** Persisted across refreshes: "the user has been inside the app before" — lets a hard
+ *  refresh on Library/Settings/etc. restore straight back into the app instead of always
+ *  falling through to the marketing landing page (which otherwise has no memory that the
+ *  user ever left it, since only `?clip=` deep links survive a reload on their own). */
+const ENTERED_APP_KEY = "clipxd:enteredApp";
+function hasEnteredAppBefore(): boolean {
+  try {
+    return localStorage.getItem(ENTERED_APP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function markEnteredApp(): void {
+  try {
+    localStorage.setItem(ENTERED_APP_KEY, "1");
+  } catch {
+    /* storage may be unavailable */
+  }
 }
 
 export default function App() {
@@ -68,6 +89,7 @@ export default function App() {
 
   const goCloud = useCallback(
     (v: CloudView = "library") => {
+      markEnteredApp();
       // When unauthed, route to the explicit auth view (don't flash through Landing → Login).
       if (auth.authEnabled && !auth.user) {
         setView("auth");
@@ -79,7 +101,10 @@ export default function App() {
     [auth.authEnabled, auth.user],
   );
 
-  const goAuth = useCallback(() => setView("auth"), []);
+  const goAuth = useCallback(() => {
+    markEnteredApp();
+    setView("auth");
+  }, []);
   const goLanding = useCallback(() => setView("landing"), []);
   const goImport = useCallback(
     () => goCloud("import"),
@@ -131,6 +156,30 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.id]);
+
+  // Refresh-persistence: a hard reload always re-mounts with `view: "landing"` unless a
+  // `?clip=` deep link is present — Library/Settings/Recording/etc. have no URL trace of
+  // their own, so without this the app silently dumps a returning user back on the
+  // marketing page every refresh. Fires once on mount rather than waiting on `auth.loading`
+  // (auth is lazy — `useAuth(view === "cloud")` never even fetches while we're still on
+  // "landing" — so `goCloud` here runs optimistically; the effect below corrects course if
+  // the real auth check, once it fires, turns out unauthenticated).
+  useEffect(() => {
+    if (deepLink || view !== "landing") return;
+    if (!hasEnteredAppBefore()) return;
+    goCloud("library");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // If the optimistic restore above lands us in the cloud view but the real auth check
+  // (which only starts once `view === "cloud"`) comes back unauthenticated, don't strand
+  // the user on a cloud view they can't use — send them to the auth screen instead.
+  useEffect(() => {
+    if (view === "cloud" && !auth.loading && auth.authEnabled && !auth.user) {
+      setView("auth");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.loading, auth.authEnabled, auth.user]);
 
   // Auth gate — ONLY blocks the cloud view, never the landing. Showing a
   // spinner in place of the landing is the single biggest reason FCP/LCP
@@ -267,6 +316,9 @@ export default function App() {
                 showToast={showToast}
                 afterCreate={afterCreate}
                 onClipInCloudView={openClip}
+                auth={auth}
+                theme={theme}
+                toggleTheme={toggleTheme}
               />
             </main>
           </motion.div>
@@ -309,6 +361,9 @@ function ViewBody(p: {
   showToast: (m: string) => void;
   afterCreate: (id: string) => void;
   onClipInCloudView: (id: string) => void;
+  auth: Auth;
+  theme: Theme;
+  toggleTheme: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const baseProps = {
@@ -365,6 +420,20 @@ function ViewBody(p: {
         {p.cloudView === "chat" && (
           <motion.div key="chat" {...baseProps}>
             <Chat clips={p.clips} onOpen={p.openClip} />
+          </motion.div>
+        )}
+        {p.cloudView === "settings" && (
+          <motion.div key="settings" {...baseProps}>
+            <Settings
+              authEnabled={p.auth.authEnabled}
+              user={p.auth.user}
+              clipCount={p.clips?.length ?? 0}
+              theme={p.theme}
+              toggleTheme={p.toggleTheme}
+              onSetUsername={(u) => p.auth.setUsername(u)}
+              onLogout={p.auth.logout}
+              showToast={p.showToast}
+            />
           </motion.div>
         )}
       </AnimatePresence>

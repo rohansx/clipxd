@@ -37,3 +37,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 aws-sdk-s3 = { version = "1.99", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 aws-config = { version = "1.7", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
 async-trait = "0.1"
+# Multi-tenant MCP server at /mcp — every clip over one endpoint (clipxd-mcp stays the
+# single-clip local/stdio server; this is the "add clipxd.com as an MCP server" surface).
+rmcp = { version = "1.7.0", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = { workspace = true }

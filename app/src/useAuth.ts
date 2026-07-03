@@ -50,6 +50,18 @@ export function useAuth(enabled = true): Auth {
     };
   }, [n, enabled]);
 
+  // Recording.tsx reads the username straight out of localStorage (so a share link is
+  // available the instant a clip is recorded, no API round-trip needed) — keep that mirror
+  // in sync with whatever `user` actually is, however it got set (login/signup/claim/logout).
+  useEffect(() => {
+    try {
+      if (user?.username) localStorage.setItem("clipxd:username", user.username);
+      else localStorage.removeItem("clipxd:username");
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, [user?.username]);
+
   const login = useCallback(async (email: string, password: string) => {
     setUser(await apiLogin(email, password));
     setAuthEnabled(true);

@@ -52,6 +52,28 @@ clipxd://clip/{id}/transcript      -> transcript stream
 clipxd://clip/{id}/frames/{t}      -> a single salient (redacted) screenshot, if it exists
 ```
 
+### 1.4 Two ways to run it
+
+**Local, single-clip, stdio** (`clipxd-mcp` binary) — point an MCP client at a downloaded
+`index.json` (or clip dir) and it serves exactly that clip over stdio:
+
+```
+clipxd-mcp <clip-dir | index.json>
+```
+
+The right shape for a local-first, one-clip-at-a-time workflow (Claude Desktop's
+`mcp_config.json`, a CLI agent, etc.) — no network, nothing leaves the box.
+
+**Hosted, multi-tenant, Streamable HTTP** — `https://clipxd.com/mcp` (or your own deploy's
+domain). Add it once as an MCP server in any MCP-speaking client, and every tool takes an
+explicit `clip_id` (the id from a share URL, e.g. `clipxd.com/clip/clp_1efc6ad3` →
+`clip_id: "clp_1efc6ad3"`) so one connection reaches every clip you paste. This is the "paste
+a clip link into your agent" surface — same tools as §1.1 minus the library-wide/omitted-id
+mode (`query_clip`, `search_text`, `get_frame_context`, `get_events`, `get_summary`), same
+unguessable-id security model as the plain HTTP API (§2) — no per-clip auth, the id itself is
+the access control. Implemented in `clipxd-web`'s `mcp` module, mounted alongside the
+read-only HTTP routes.
+
 ---
 
 ## 2. JSON API + sidecar (non-MCP consumers)

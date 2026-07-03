@@ -244,18 +244,14 @@ button:focus-visible,input:focus-visible,a:focus-visible,[tabindex]:focus-visibl
 .landing-nav-rec{
   display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;
   color:var(--text-3);background:var(--panel-2);border-radius:99px;
-  padding:5px 11px 5px 9px;box-shadow:var(--clay-in);
+  padding:5px 11px;box-shadow:var(--clay-in);
 }
-.landing-nav-tabs{
-  margin-left:auto;display:flex;gap:2px;background:var(--panel-2);
-  border-radius:99px;padding:4px;box-shadow:var(--clay-in);
+.landing-nav-github{
+  display:grid;place-items:center;width:34px;height:34px;border-radius:50%;
+  color:var(--text-2);background:var(--panel-2);box-shadow:var(--clay-in);
+  transition:color .14s,transform .18s var(--ease-clip);
 }
-.landing-nav-tab{
-  cursor:pointer;font-family:var(--font-mono);font-size:12.5px;
-  color:var(--text-2);padding:7px 13px;border-radius:99px;border:none;background:transparent;
-}
-.landing-nav-tab:hover{color:var(--text)}
-.landing-nav-tab.on{background:var(--panel);color:var(--text);box-shadow:var(--clay-sm)}
+.landing-nav-github:hover{color:var(--text);transform:translateY(-2px)}
 
 .theme-pill{
   display:flex;align-items:center;background:var(--panel-2);border:1px solid var(--border);
@@ -654,8 +650,7 @@ h2.section-title{
    cloud app shell
    ========================================================================== */
 .cloud{
-  max-width:1440px;margin:0 auto;display:grid;
-  grid-template-columns:248px 1fr;height:100vh;overflow:hidden;
+  display:grid;grid-template-columns:248px 1fr;height:100vh;overflow:hidden;
 }
 
 /* sidebar — clay pill nav over a soft gradient */
@@ -904,6 +899,20 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 }
 .vframe video{width:100%;display:block;background:#000;transition:transform .12s linear}
 .vframe.mock{background:#fff}
+.countdown-panel{
+  padding:34px 28px;min-height:160px;background:#fff;color:#222;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.countdown-num{
+  font-family:var(--font-display);font-weight:700;font-size:52px;line-height:1;
+  color:var(--sodium-text);margin-bottom:10px;
+  animation:countdownPop .5s var(--ease-clip);
+}
+@keyframes countdownPop{
+  0%{transform:scale(0.6);opacity:0}
+  55%{transform:scale(1.12);opacity:1}
+  100%{transform:scale(1);opacity:1}
+}
 .zoom-badge{
   position:absolute;top:12px;left:12px;z-index:4;
   font-family:var(--font-mono);font-size:10.5px;color:#fff;
@@ -1334,6 +1343,33 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 }
 
 .auth-screen{min-height:100vh;display:grid;align-content:center;justify-items:center;padding:24px;background:var(--env),var(--bg)}
+/* ------------------------------------------------------------------------
+   Settings — account, appearance, server info. Card grid, same tokens as
+   the rest of the app (var(--panel)/var(--border)/var(--clay-sm)).
+   ------------------------------------------------------------------------ */
+.settings-grid{display:flex;flex-direction:column;gap:16px;max-width:640px;margin-top:18px}
+.settings-card{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  box-shadow:var(--clay-sm);padding:18px 20px;display:flex;flex-direction:column;gap:14px;
+}
+.settings-card-head{display:flex;align-items:center;gap:9px}
+.settings-card-head b{font-size:14px;color:var(--text);font-weight:600}
+.settings-card-icon{
+  width:26px;height:26px;border-radius:9px;display:grid;place-items:center;
+  background:var(--panel-2);color:var(--text-3);font-family:var(--font-mono);font-size:13px;
+}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.settings-row-label{font-size:13.5px;color:var(--text);font-weight:600}
+.settings-row-hint{font-size:12px;color:var(--text-3);margin-top:2px;line-height:1.4}
+.settings-mono{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);background:var(--panel-2);padding:2px 7px;border-radius:6px}
+.settings-note{
+  font-size:12.5px;color:var(--text-3);background:var(--panel-2);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:10px 12px;margin:0;line-height:1.5;
+}
+.settings-username{border-top:1px solid var(--border);padding-top:14px}
+.settings-username-row{display:flex;gap:8px}
+.settings-username-row .input{flex:1}
+
 .auth-card{
   width:min(400px,94vw);background:var(--panel);border:1px solid var(--border);
   box-shadow:var(--clay);padding:24px 22px;display:flex;flex-direction:column;gap:10px;
@@ -1363,8 +1399,6 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
    responsive
    ========================================================================== */
 @media (max-width:1180px){
-  .cloud{grid-template-columns:1px 1fr}
-  .sidebar{display:none}
   .index-grid{grid-template-columns:repeat(3,1fr)}
 }
 @media (max-width:980px){
@@ -1377,19 +1411,24 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   .landing-footer-grid{grid-template-columns:1fr 1fr}
   .pipe-node{width:156px;min-height:120px;padding:14px}
   .pipe-arrow{padding:0 10px}
-}
-@media (max-width:720px){
-  .cloud{grid-template-columns:1fr}
-  .sidebar{display:flex;flex-direction:row;align-items:center;overflow-x:auto;border-right:none;border-bottom:1px solid var(--border);padding:10px;gap:4px}
+  /* Sidebar goes from a fixed 248px rail to a horizontal scroll-strip on top —
+     no dead zone where nav disappears entirely (previously hidden 720-1180px). */
+  .cloud{grid-template-columns:1fr;grid-template-rows:auto 1fr;height:100vh}
+  .sidebar{
+    display:flex;flex-direction:row;align-items:center;overflow-x:auto;
+    border-right:none;border-bottom:1px solid var(--border);padding:10px;gap:4px;
+  }
   .side-bubble,.side-workspace,.side-foot{display:none}
   .side-row{width:auto;white-space:nowrap;padding:8px 12px}
+}
+@media (max-width:720px){
   .dual-body{grid-template-columns:1fr !important;grid-template-rows:auto auto}
   .watch-body{border-right:none;border-bottom:1px solid var(--border)}
   .recording{grid-template-columns:1fr}
   .rec-left{border-right:none;border-bottom:1px solid var(--border)}
   .stat-ledger{grid-template-columns:1fr}
   .index-grid{grid-template-columns:1fr}
-  .landing-nav-rec,.landing-nav-tabs{display:none}
+  .landing-nav-rec{display:none}
   .compare{font-size:13px}
   .compare-row{grid-template-columns:1.4fr repeat(4,1fr)}
   .seam-toggle{order:3;margin:0}
