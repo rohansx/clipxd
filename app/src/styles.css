@@ -787,7 +787,7 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 .clip-card{
   border:1px solid var(--border);background:var(--panel);
   border-radius:var(--r);box-shadow:var(--clay);overflow:hidden;
-  cursor:pointer;text-align:left;padding:0;display:block;
+  cursor:pointer;text-align:left;padding:0;display:block;width:100%;
 }
 .clip-thumb{
   aspect-ratio:16/10;position:relative;display:grid;place-items:center;
