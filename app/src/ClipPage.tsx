@@ -348,7 +348,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             downloadBlob(`${id}.clipxd.json`, new Blob([JSON.stringify(toProject(id, regions, edits), null, 2)], { type: "application/json" }))
           }
         />
-        <ReadBody index={index} t={t} seek={seek} />
+        <ReadBody id={id} index={index} t={t} seek={seek} />
       </div>
 
       <div className="agent-rail">
