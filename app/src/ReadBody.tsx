@@ -1,18 +1,21 @@
 import { useState } from "react";
-import { fmt, type Index } from "./types";
+import { fmt, type Index, type VisualMoment } from "./types";
+import { frameUrl } from "./api";
 
-type Tab = "transcript" | "ocr" | "events" | "summary";
+type Tab = "moments" | "transcript" | "ocr" | "events" | "summary";
 
 interface ReadBodyProps {
+  id: string;
   index: Index;
   t: number;
   seek: (t: number) => void;
 }
 
-export function ReadBody({ index, t, seek }: ReadBodyProps) {
+export function ReadBody({ id, index, t, seek }: ReadBodyProps) {
   const [tab, setTab] = useState<Tab>(defaultTab(index));
 
   const tabs: { key: Tab; label: string; n: number }[] = [
+    { key: "moments", label: "Moments", n: index.visual_timeline.length },
     { key: "transcript", label: "Transcript", n: index.transcript.length },
     { key: "ocr", label: "On-screen", n: index.on_screen_text.length },
     { key: "events", label: "Events", n: index.event_track.length },
@@ -34,8 +37,9 @@ export function ReadBody({ index, t, seek }: ReadBodyProps) {
         ))}
       </div>
       <div className="read-scroll">
-        {tab === "transcript" && <Transcript index={index} t={t} seek={seek} />}
-        {tab === "ocr" && <OnScreen index={index} t={t} seek={seek} />}
+        {tab === "moments" && <Moments id={id} index={index} t={t} seek={seek} />}
+        {tab === "transcript" && <Transcript id={id} index={index} t={t} seek={seek} />}
+        {tab === "ocr" && <OnScreen id={id} index={index} t={t} seek={seek} />}
         {tab === "events" && <Events index={index} seek={seek} />}
         {tab === "summary" && <SummaryTab index={index} />}
       </div>
@@ -44,6 +48,9 @@ export function ReadBody({ index, t, seek }: ReadBodyProps) {
 }
 
 function defaultTab(index: Index): Tab {
+  // Lead with the most human-readable stream that actually has content: the captioned
+  // moments (what each frame shows) first, then transcript, then raw OCR.
+  if (index.visual_timeline.length) return "moments";
   if (index.transcript.length) return "transcript";
   if (index.on_screen_text.length) return "ocr";
   if (index.event_track.length) return "events";
@@ -52,6 +59,46 @@ function defaultTab(index: Index): Tab {
 
 function Empty({ what }: { what: string }) {
   return <div className="empty" style={{ padding: 30 }}>{what}</div>;
+}
+
+/** Resolve a moment's `frame_ref` ("frames/00003.jpg") to a servable frame URL. The
+ *  `/clip/:id/frames/:name` route takes the bare filename, so strip the `frames/` prefix. */
+function momentFrameUrl(id: string, m: VisualMoment): string | null {
+  if (!m.frame_ref) return null;
+  const name = m.frame_ref.replace(/^frames\//, "");
+  return frameUrl(id, name);
+}
+
+function Moments({ id, index, t, seek }: ReadBodyProps) {
+  if (!index.visual_timeline.length)
+    return <Empty what="No captioned moments yet — the vision model runs as the clip finishes indexing." />;
+  return (
+    <>
+      {index.visual_timeline.map((m, i) => {
+        const src = momentFrameUrl(id, m);
+        const active = Math.abs(m.t - t) < 1.2;
+        return (
+          <button
+            key={i}
+            className={"moment-row" + (active ? " on" : "")}
+            style={{ animationDelay: `${Math.min(i, 20) * 0.02}s` }}
+            onClick={() => seek(m.t)}
+            title={`Jump to ${fmt(m.t)}`}
+          >
+            {src ? (
+              <img className="moment-thumb" src={src} alt="" loading="lazy" />
+            ) : (
+              <span className="moment-thumb moment-thumb-empty" aria-hidden />
+            )}
+            <div className="moment-text">
+              <span className="moment-t mono">{fmt(m.t)}</span>
+              <span className="moment-cap">{m.caption}</span>
+            </div>
+          </button>
+        );
+      })}
+    </>
+  );
 }
 
 function Transcript({ index, t, seek }: ReadBodyProps) {
