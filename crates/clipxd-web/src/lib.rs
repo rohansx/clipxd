@@ -2170,6 +2170,10 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!-- Match whatever theme the visitor picked in the app (same origin, so this localStorage
+       key is shared) before first paint — falls through to the CSS's own
+       prefers-color-scheme media query if they never touched the toggle. -->
+  <script>try {{ var t = localStorage.getItem('clipxd:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); }} catch (e) {{}}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{title} — clipxd</title>
   <meta name="description" content="{og_desc}" />
@@ -2229,7 +2233,7 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
   <script>{js}</script>
 </body>
 </html>"##,
-        css       = SHARE_CSS,
+        css       = share_css(),
         js        = SHARE_JS,
         topbar    = share_topbar(&url),
         src_dot   = r#"<span class="dot sodium"></span>"#,
@@ -2543,10 +2547,41 @@ fn shorten_url(url: &str) -> String {
 }
 
 /// ============================================================================
-///  CSS — puffy clay system, light + dark via prefers-color-scheme.
+///  CSS — puffy clay system, light + dark via prefers-color-scheme, or an explicit
+///  `data-theme` override (see the inline theme-sync script in `share_html`) so a visitor
+///  who picked a theme in the app sees the same one here regardless of OS preference.
 ///  Inlined so the share page is self-contained (no external CSS).
 /// ============================================================================
-const SHARE_CSS: &str = r##"
+const SHARE_CSS_VARS_DARK: &str = r##"
+    --bg:#15121C; --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
+    --glass: rgba(54,46,78,.46);
+    --border: rgba(255,255,255,.10); --border-2: rgba(255,255,255,.2);
+    --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
+    --on-accent:#15121C;
+    --sodium-wash:rgba(255,122,89,.16);
+    --signal-wash:rgba(22,199,154,.20);
+    --sodium-text:#FFAD90; --signal-text:#5FE7C2;
+    --env:
+      radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.18), transparent 62%),
+      radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
+      radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.22), transparent 64%);
+    --clay: 0 18px 34px -14px rgba(0,0,0,.7), inset 0 2px 1px rgba(255,255,255,.14), inset 0 -9px 18px -7px rgba(0,0,0,.5);
+    --clay-sm: 0 11px 22px -12px rgba(0,0,0,.66), inset 0 2px 1px rgba(255,255,255,.12), inset 0 -6px 12px -6px rgba(0,0,0,.45);
+    --clay-in: inset 0 3px 8px rgba(0,0,0,.55), inset 0 -1px 1px rgba(255,255,255,.08);
+    --pop-signal: 0 16px 30px -12px rgba(22,199,154,.5), inset 0 2px 1px rgba(255,255,255,.4), inset 0 -8px 16px -6px rgba(0,70,52,.5);
+    --pop-sodium: 0 16px 30px -12px rgba(255,122,89,.45), inset 0 2px 1px rgba(255,255,255,.34), inset 0 -8px 16px -6px rgba(120,40,20,.5);
+    --shadow-float: 0 12px 30px -16px rgba(0,0,0,.66);
+"##;
+
+/// Builds the full share-page stylesheet. Uses plain `.replace()` on placeholder tokens
+/// rather than `format!()`: the CSS that follows is full of literal `{`/`}` braces, which
+/// `format!()` would require escaping as `{{`/`}}` throughout — far riskier to touch than
+/// substituting two markers into an otherwise-untouched template.
+fn share_css() -> String {
+    SHARE_CSS_TEMPLATE.replace("/*__DARK_VARS_MEDIA__*/", SHARE_CSS_VARS_DARK).replace("/*__DARK_VARS_EXPLICIT__*/", SHARE_CSS_VARS_DARK)
+}
+
+const SHARE_CSS_TEMPLATE: &str = r##"
 :root {
   --c-sodium:#FF7A59;  --c-signal:#16C79A;  --c-grape:#9B8CFF;
   --ease-clip: cubic-bezier(.34, 1.56, .42, 1);
@@ -2573,27 +2608,15 @@ const SHARE_CSS: &str = r##"
   --pop-sodium: 0 14px 26px -12px rgba(214,70,31,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(150,40,16,.4);
   --shadow-float: 0 12px 30px -16px rgba(80,54,112,.34);
 }
+/* OS-level dark preference — unless the user explicitly picked light in the app. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg:#15121C; --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
-    --glass: rgba(54,46,78,.46);
-    --border: rgba(255,255,255,.10); --border-2: rgba(255,255,255,.2);
-    --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
-    --on-accent:#15121C;
-    --sodium-wash:rgba(255,122,89,.16);
-    --signal-wash:rgba(22,199,154,.20);
-    --sodium-text:#FFAD90; --signal-text:#5FE7C2;
-    --env:
-      radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.18), transparent 62%),
-      radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
-      radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.22), transparent 64%);
-    --clay: 0 18px 34px -14px rgba(0,0,0,.7), inset 0 2px 1px rgba(255,255,255,.14), inset 0 -9px 18px -7px rgba(0,0,0,.5);
-    --clay-sm: 0 11px 22px -12px rgba(0,0,0,.66), inset 0 2px 1px rgba(255,255,255,.12), inset 0 -6px 12px -6px rgba(0,0,0,.45);
-    --clay-in: inset 0 3px 8px rgba(0,0,0,.55), inset 0 -1px 1px rgba(255,255,255,.08);
-    --pop-signal: 0 16px 30px -12px rgba(22,199,154,.5), inset 0 2px 1px rgba(255,255,255,.4), inset 0 -8px 16px -6px rgba(0,70,52,.5);
-    --pop-sodium: 0 16px 30px -12px rgba(255,122,89,.45), inset 0 2px 1px rgba(255,255,255,.34), inset 0 -8px 16px -6px rgba(120,40,20,.5);
-    --shadow-float: 0 12px 30px -16px rgba(0,0,0,.66);
+  :root:not([data-theme=light]) {
+/*__DARK_VARS_MEDIA__*/
   }
+}
+/* Explicit dark override (from the app's theme toggle) — applies regardless of OS preference. */
+:root[data-theme=dark] {
+/*__DARK_VARS_EXPLICIT__*/
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {

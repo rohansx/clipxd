@@ -44,6 +44,27 @@ function hasEnteredAppBefore(): boolean {
     return false;
   }
 }
+/** Persisted theme choice — same origin as the share page (`/clip/:id`), which reads this
+ *  key directly to match whatever the user picked in the app instead of only ever following
+ *  the OS-level `prefers-color-scheme` (see `share_html`'s inline theme script). */
+const THEME_KEY = "clipxd:theme";
+function initialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    /* storage may be unavailable */
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function saveTheme(t: Theme): void {
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {
+    /* storage may be unavailable */
+  }
+}
+
 function markEnteredApp(): void {
   try {
     localStorage.setItem(ENTERED_APP_KEY, "1");
@@ -55,7 +76,7 @@ function markEnteredApp(): void {
 export default function App() {
   const reduced = usePrefersReducedMotion();
   const deepLink = useMemo(initialClipId, []);
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(initialTheme);
   const [view, setView] = useState<View>(deepLink ? "cloud" : "landing");
   const [cloudView, setCloudView] = useState<CloudView>(deepLink ? "clip" : "library");
   const [activeClipId, setActiveClipId] = useState<string | null>(deepLink);
@@ -132,9 +153,11 @@ export default function App() {
     [reload],
   );
 
-  // Apply the theme on <html> so the env gradient + body vars resolve.
+  // Apply the theme on <html> so the env gradient + body vars resolve, and persist it so a
+  // refresh (and the separate server-rendered share page, same origin) sees the same choice.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    saveTheme(theme);
   }, [theme]);
 
   // Reflect the open clip in the URL (shareable/refreshable) without a reload.
