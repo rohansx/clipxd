@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { videoUrl } from "./api";
 import { fmt, type Index, type ZoomKeyframe } from "./types";
 import { RegionTrack } from "./RegionTrack";
@@ -63,6 +64,38 @@ export function WatchBody(p: WatchBodyProps) {
   const caption = moment && moment.d < 1.2 ? moment.m.caption : null;
   const zoomLabel = manualScale ? `✎ manual ${manualScale.toFixed(1)}×` : kf && kf.scale > 1.05 ? `◎ ${kf.scale.toFixed(1)}× auto-zoom` : null;
 
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [vdur, setVdur] = useState(0);
+
+  // Effective duration for the seek bar. A recording assembled from streamed MediaRecorder
+  // chunks has no duration header, so the <video> element reports `Infinity` and the index's
+  // own metadata.duration may be 0 on clips indexed before that was probed. Prefer the index
+  // value; fall back to whatever the browser resolves (see onLoadedMetadata).
+  const effDur = dur > 0 ? dur : vdur;
+  const shownT = effDur ? Math.min(t, effDur) : t; // clamp the brief spike during the resolve trick
+  const pct = effDur ? (shownT / effDur) * 100 : 0;
+
+  // Nudge the browser to compute a real duration for an Infinity-duration WebM, which also
+  // makes it seekable. Seek to a huge time; once the real duration is known, snap back to 0.
+  const onLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget;
+    if (v.duration === Infinity || Number.isNaN(v.duration)) {
+      const onUpdate = () => {
+        if (Number.isFinite(v.duration)) {
+          v.removeEventListener("timeupdate", onUpdate);
+          setVdur(v.duration);
+          v.currentTime = 0;
+        }
+      };
+      v.addEventListener("timeupdate", onUpdate);
+      v.currentTime = 1e101;
+    } else {
+      setVdur(v.duration);
+    }
+  };
+
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -70,9 +103,23 @@ export function WatchBody(p: WatchBodyProps) {
     else v.pause();
   };
 
+  const toggleMute = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+    setMuted(v.muted);
+  };
+
+  const toggleFullscreen = () => {
+    const el = frameRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  };
+
   const onScrub = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    seek(((e.clientX - r.left) / r.width) * dur);
+    seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * effDur);
   };
 
   return (
@@ -83,34 +130,51 @@ export function WatchBody(p: WatchBodyProps) {
             <span />
           </div>
         )}
-        <div className={"vframe" + (hasVideo ? "" : " mock")}>
+        <div ref={frameRef} className={"vframe" + (hasVideo ? " has-player" : " mock")}>
           {zoomLabel && <div className="zoom-badge">{zoomLabel}</div>}
           {speedRate ? <div className="zoom-badge" style={{ left: "auto", right: 12 }}>⏩ {speedRate}× speed</div> : null}
           {hasVideo ? (
-            <video ref={videoRef} src={videoUrl(p.id)} controls playsInline style={vstyle} />
+            <>
+              <video
+                ref={videoRef}
+                src={videoUrl(p.id)}
+                playsInline
+                style={vstyle}
+                onClick={togglePlay}
+                onLoadedMetadata={onLoadedMetadata}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onVolumeChange={(e) => setMuted((e.currentTarget as HTMLVideoElement).muted)}
+              />
+              {caption && <div className="cap-badge">{caption}</div>}
+              {/* single glass control bar — the whole player chrome, overlaid Loom-style */}
+              <div className="player-bar">
+                <button className="pbtn" onClick={togglePlay} title={playing ? "Pause" : "Play"} aria-label={playing ? "Pause" : "Play"}>
+                  {playing ? "❚❚" : "▶"}
+                </button>
+                <span className="ptime mono">{fmt(shownT)}</span>
+                <div className="pseek" onClick={onScrub} role="slider" aria-label="Seek" aria-valuenow={Math.round(shownT)} aria-valuemax={Math.round(effDur)}>
+                  <div className="pseek-fill" style={{ width: `${pct}%` }} />
+                  {index.visual_timeline.map((m, i) => (
+                    <span key={i} className="pseek-mark" title={m.caption} style={{ left: `${effDur ? (m.t / effDur) * 100 : 0}%` }} />
+                  ))}
+                  <div className="pseek-head" style={{ left: `${pct}%` }} />
+                </div>
+                <span className="ptime mono">{fmt(effDur)}</span>
+                <button className="pbtn" onClick={toggleMute} title={muted ? "Unmute" : "Mute"} aria-label={muted ? "Unmute" : "Mute"}>
+                  {muted ? "🔇" : "🔊"}
+                </button>
+                <button className="pbtn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Fullscreen">
+                  ⛶
+                </button>
+              </div>
+            </>
           ) : (
             <div style={{ padding: 40, color: "#888", fontFamily: "var(--font-mono)", textAlign: "center" }}>no video stream — index only</div>
           )}
-          {caption && <div className="cap-badge">{caption}</div>}
         </div>
       </div>
 
-      {/* scrubber with salient markers */}
-      <div className="scrubber">
-        <button className="pp" onClick={togglePlay} title="Play / pause">
-          ▶
-        </button>
-        <div className="scrub-track" onClick={onScrub}>
-          <div className="scrub-fill" style={{ width: `${dur ? (t / dur) * 100 : 0}%` }} />
-          {index.visual_timeline.map((m, i) => (
-            <span key={i} className="scrub-mark" title={m.caption} style={{ left: `${dur ? (m.t / dur) * 100 : 0}%` }} />
-          ))}
-          <div className="scrub-play" style={{ left: `${dur ? (t / dur) * 100 : 0}%` }} />
-        </div>
-        <span className="scrub-time">
-          {fmt(t)} / {fmt(dur)}
-        </span>
-      </div>
       <div className="salient-note">
         <span className="ok">●</span> salient markers — veyo emitted {index.visual_timeline.length} captioned moments
       </div>
