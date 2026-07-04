@@ -1900,7 +1900,7 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: 
         }
     }
     let views = bump_view_count(&s, &id).await;
-    share_page_body(&s, &id, &idx, &headers, views)
+    share_page_body(&s, &id, &idx, &headers, views, None)
 }
 
 /// Resolve /u/:username/clip/:id: ensure the clip is owned by that username, then render.
@@ -1912,7 +1912,7 @@ async fn share_page_for_user(
     let _ = check_owner(&s, &username, &id)?;
     let idx = load_index(&s, &id).await?;
     let views = bump_view_count(&s, &id).await;
-    share_page_body(&s, &id, &idx, &headers, views)
+    share_page_body(&s, &id, &idx, &headers, views, Some(&username))
 }
 
 /// `POST /clip/:id/view` — the SPA's ClipPage hits this once on mount (the server-rendered
@@ -2029,9 +2029,15 @@ fn share_page_body(
     idx: &Index,
     headers: &HeaderMap,
     views: u64,
+    username: Option<&str>,
 ) -> Result<Html<String>, WebErr> {
-    // Absolute URL of THIS page, for the "scan to open on your phone" QR: prefer the public
-    // tunnel origin if one is configured, else reconstruct from the request Host.
+    // Absolute URL of THIS page, for the "scan to open on your phone" QR and every
+    // "Copy link"/"Copy embed"/"Copy agent link" button: must match whatever's actually in the
+    // visitor's address bar (the canonical /u/<username>/... form when the clip is owned by a
+    // user with a slug), or copying the link hands out a *different* URL than the one the
+    // visitor is looking at — confusingly inconsistent even though the other form still
+    // resolves (it 30x's back here). Prefer the public tunnel origin if one is configured,
+    // else reconstruct from the request Host.
     let base = s.public_base.as_ref().map(|b| b.to_string()).unwrap_or_else(|| {
         let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
         let scheme = headers
@@ -2040,7 +2046,10 @@ fn share_page_body(
             .unwrap_or("https");
         format!("{scheme}://{host}")
     });
-    let url = format!("{base}/clip/{id}");
+    let url = match username {
+        Some(slug) => format!("{base}/u/{slug}/clip/{id}"),
+        None => format!("{base}/clip/{id}"),
+    };
     Ok(Html(share_html(&id, &idx, &url, views)))
 }
 
