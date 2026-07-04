@@ -147,6 +147,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/clip/:id/view", post(post_view))
+        .route("/clip/:id/comments", get(get_comments).post(post_comment))
         // Username-canonical share-link form: /u/:username/clip/:id and all the same
         // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
         .route("/u/:username/clip/:id", get(share_page_for_user))
@@ -162,6 +163,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/u/:username/clip/:id/video", get(get_video_for_user))
         .route("/u/:username/clip/:id/frames/:name", get(get_frame_for_user))
         .route("/u/:username/clip/:id/view", post(post_view_for_user))
+        .route("/u/:username/clip/:id/comments", get(get_comments_for_user).post(post_comment_for_user))
         .route("/net", get(get_net))
         // Multi-tenant MCP: "add clipxd.com as an MCP server" — every tool takes an explicit
         // clip_id, same unguessable-id security model as the read-only routes above (no
@@ -579,6 +581,125 @@ async fn bump_view_count(s: &AppState, id: &str) -> u64 {
     let _ = tokio::fs::write(s.clips_dir.join(&key), next.to_string()).await;
     write_object_best_effort(s, &key, next.to_string().into_bytes(), "text/plain").await;
     next
+}
+
+/// A timestamped comment on a clip — the unit of the Fathom-style "chat about this minute"
+/// thread. Anchored to `t` (seconds into the clip) so the UI can render it against the
+/// timeline and click-to-seek. `@m:ss` mentions inside `text` are parsed client-side into
+/// seek links; stored verbatim here.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct Comment {
+    id: String,
+    t: f64,
+    author: String,
+    text: String,
+    created_at: u64,
+}
+
+/// Read a clip's comment thread (empty if none yet). Stored as `<id>/comments.json` — a
+/// sibling side-file, same rationale as the view counter: it's conversation *about* the clip,
+/// not part of what the recording *is*, so it stays out of index.json and never races the
+/// enrichment that rewrites the index.
+async fn read_comments(s: &AppState, id: &str) -> Vec<Comment> {
+    read_object_or_local(s, &format!("{id}/comments.json"))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|b| serde_json::from_slice::<Vec<Comment>>(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Append a comment and persist. Read-modify-write is non-atomic across concurrent posters
+/// (same acceptable trade as the view counter — this is a discussion thread, not a ledger).
+async fn append_comment(s: &AppState, id: &str, c: &Comment) -> anyhow::Result<()> {
+    let mut all = read_comments(s, id).await;
+    all.push(c.clone());
+    let bytes = serde_json::to_vec(&all)?;
+    let key = format!("{id}/comments.json");
+    tokio::fs::write(s.clips_dir.join(&key), &bytes).await?;
+    write_object_best_effort(s, &key, bytes, "application/json").await;
+    Ok(())
+}
+
+/// Resolve the display name for a comment's author from the authenticated user: their
+/// username if they've set one, else the local-part of their email.
+fn author_name(s: &AppState, user: &AuthUser) -> String {
+    if let Some(a) = &s.auth {
+        if let Ok(Some(u)) = a.db.find_by_id(user.id) {
+            if let Some(name) = u.username.as_deref().filter(|n| !n.is_empty()) {
+                return name.to_string();
+            }
+        }
+    }
+    user.email.split('@').next().unwrap_or("someone").to_string()
+}
+
+#[derive(serde::Deserialize)]
+struct NewComment {
+    t: f64,
+    text: String,
+}
+
+/// `GET /clip/:id/comments` — public read of the thread.
+async fn get_comments(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let comments = read_comments(&s, &id).await;
+    Ok(Json(serde_json::json!({ "comments": comments })))
+}
+
+/// `POST /clip/:id/comments` — add a comment (login required; author is the caller). In local
+/// mode (no auth configured) posting is open and authored as "you".
+async fn post_comment(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NewComment>,
+) -> Result<Json<Comment>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "empty comment".into()));
+    }
+    if text.chars().count() > 2000 {
+        return Err((StatusCode::BAD_REQUEST, "comment too long (2000 char max)".into()));
+    }
+    load_index(&s, &id).await?; // 404 cleanly if the clip doesn't exist
+    let author = match require_user(&s, &headers)? {
+        Some(u) => author_name(&s, &u),
+        None => "you".to_string(), // local mode (auth disabled)
+    };
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let comment = Comment {
+        id: format!("cmt_{:x}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)),
+        t: body.t.max(0.0),
+        author,
+        text: text.to_string(),
+        created_at: now,
+    };
+    append_comment(&s, &id, &comment).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("save comment: {e}")))?;
+    Ok(Json(comment))
+}
+
+async fn get_comments_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    get_comments(State(s), Path(id)).await
+}
+
+async fn post_comment_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Json<NewComment>,
+) -> Result<Json<Comment>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    post_comment(State(s), Path(id), headers, body).await
 }
 
 /// Mirror a local clip directory to S3. Walks `<local_dir>` recursively and writes each
