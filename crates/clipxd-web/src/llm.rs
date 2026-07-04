@@ -39,9 +39,9 @@ pub async fn complete(prompt: &str, json_mode: bool) -> Result<(String, &'static
     let mut used = "none";
     let mut result: Option<Result<String>> = None;
     if has_env("NVIDIA_API_KEY") {
-        let r = call_nvidia(&client, prompt).await;
+        let r = call_nvidia_cascade(&client, prompt).await;
         if let Err(e) = &r {
-            eprintln!("llm: NVIDIA backend failed, falling back to Gemini: {e:#}");
+            eprintln!("llm: all NVIDIA models failed, falling back to Gemini: {e:#}");
         } else {
             used = "nvidia";
         }
@@ -58,16 +58,41 @@ pub async fn complete(prompt: &str, json_mode: bool) -> Result<(String, &'static
     Ok((text, used))
 }
 
-fn nvidia_model() -> String {
-    // kimi-k2.6 was fastest and highest quality of the three NVIDIA-hosted Chinese frontier
-    // models tested (kimi-k2.6, minimax-m3, qwen3.5-122b-a10b) on this task — see project memory.
-    std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "moonshotai/kimi-k2.6".into())
+/// Which NVIDIA-hosted models to try, in order, when `CLIPXD_NVIDIA_MODEL` isn't set to pin a
+/// single one. kimi-k2.6 was fastest and highest quality of these on this task in testing (see
+/// project memory) — minimax and glm are siblings on the same free tier, so a rate limit or
+/// outage on one is likely uncorrelated with the others, unlike retrying the same model.
+const NVIDIA_MODEL_CASCADE: &[&str] = &["moonshotai/kimi-k2.6", "minimaxai/minimax-m2.7", "z-ai/glm4.7"];
+
+fn nvidia_models() -> Vec<String> {
+    match std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.is_empty()) {
+        Some(pinned) => vec![pinned],
+        None => NVIDIA_MODEL_CASCADE.iter().map(|s| s.to_string()).collect(),
+    }
 }
 
-async fn call_nvidia(client: &reqwest::Client, prompt: &str) -> Result<String> {
+/// Try each NVIDIA model in turn, returning the first success. Distinct from the
+/// NVIDIA→Gemini fallback in `complete()`: this stays *within* the free NVIDIA tier before
+/// giving up on it entirely, since a single model being down/rate-limited doesn't mean the
+/// whole backend is unavailable.
+async fn call_nvidia_cascade(client: &reqwest::Client, prompt: &str) -> Result<String> {
+    let mut last_err = None;
+    for model in nvidia_models() {
+        match call_nvidia(client, prompt, &model).await {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                eprintln!("llm: nvidia model {model} failed, trying next: {e:#}");
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("no NVIDIA models configured")))
+}
+
+async fn call_nvidia(client: &reqwest::Client, prompt: &str, model: &str) -> Result<String> {
     let key = std::env::var("NVIDIA_API_KEY").context("NVIDIA_API_KEY")?;
     let body = serde_json::json!({
-        "model": nvidia_model(),
+        "model": model,
         "messages": [{ "role": "user", "content": prompt }],
         "temperature": 0.3,
         "max_tokens": 2048,

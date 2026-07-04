@@ -64,7 +64,12 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [importUrl, setImportUrl] = useState<string | undefined>(undefined);
 
-  const auth = useAuth(view === "cloud");
+  // Lazy by default (skip /auth/me while on the marketing landing — keeps it console-clean
+  // for first-time visitors and off the critical path for LCP). But a returning visitor who's
+  // been in the app before needs the real check to start immediately even while still on
+  // "landing", or the restore-on-refresh effect below has nothing to correct itself against
+  // and a valid session behind an OAuth redirect never gets discovered.
+  const auth = useAuth(view === "cloud" || hasEnteredAppBefore());
   const { clips, reload } = useClips();
 
   const toggleTheme = useCallback(() => {
@@ -81,6 +86,7 @@ export default function App() {
   }, []);
 
   const openClip = useCallback((id: string) => {
+    markEnteredApp();
     setActiveClipId(id);
     setCloudView("clip");
     setView("cloud");
@@ -111,17 +117,11 @@ export default function App() {
     [goCloud],
   );
 
-  // Called by Recording.tsx once the server hands us a clip id.
-  //
-  //   1. No auto-navigate.  The user just spent 30+ s recording; jumping
-  //      away from the "Link ready" card is hostile.  Recording's view
-  //      keeps the URL visible, the Copy / Open buttons reachable, AND
-  //      the Library banner live.
-  //   2. No toast (3 s toasts are invisible feedback).  The link-ready
-  //      card on Recording + the banner on Library do the work.
-  //
-  // We DO update the URL bar to `?clip=…` so a refresh keeps the user
-  // on their new clip (and the indexing banner stays mounted).
+  // Called by Recording.tsx once the server hands us a clip id (fires on Stop, not just once
+  // the final commit lands — by then Recording.tsx has usually already navigated the user to
+  // the clip itself via onOpenClip/stopAndOpen, since the instant link works from the moment
+  // recording started). This just keeps the URL bar (`?clip=…`) and library list in sync for
+  // whichever view the user's actually looking at.
   const afterCreate = useCallback(
     (id: string) => {
       reload();
@@ -148,6 +148,7 @@ export default function App() {
   // On login, reload the (now per-user) library and drop the user straight into the app.
   useEffect(() => {
     if (auth.user) {
+      markEnteredApp();
       reload();
       if (!deepLink) {
         setView("cloud");

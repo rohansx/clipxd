@@ -154,6 +154,15 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     setCopied("idle");
   };
 
+  // Stop, then go straight to the clip. The instant link already resolved the moment
+  // recording started (handleRecordingLink), so there's no reason to make the user sit on
+  // this page watching an "uploading" pill when the destination already works — the video
+  // finishes assembling and the index fills in live on the page they land on.
+  const stopAndOpen = () => {
+    stop();
+    if (lastClip && !lastClip.id.startsWith("pending_")) onOpenClip(lastClip.id);
+  };
+
   const copyAgain = async () => {
     if (!lastClip) return;
     try {
@@ -474,13 +483,19 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                   {recording
                     ? "Recording your screen…"
                     : processing
-                    ? "Uploading — link ready in a moment…"
+                    ? "Taking you to your clip…"
                     : failed
                     ? "Upload didn't complete."
                     : "Press record — pick a screen or window."}
                 </div>
                 <div style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
-                  The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too.
+                  {recording
+                    ? "System audio + your cursor are being captured. Hit Stop when you're done."
+                    : processing
+                    ? "The link already works — the full video finishes assembling in the background."
+                    : failed
+                    ? "See the card above for what to do next."
+                    : "The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too."}
                 </div>
               </div>
             )}
@@ -515,8 +530,8 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
             </button>
           )}
           {recording && (
-            <button className="btn-sodium btn-pill" onClick={stop} style={{ fontSize: 14, padding: "12px 22px" }}>
-              ■ Stop &amp; get link
+            <button className="btn-sodium btn-pill" onClick={stopAndOpen} style={{ fontSize: 14, padding: "12px 22px" }}>
+              ■ Stop &amp; open clip
             </button>
           )}
           {processing && (
