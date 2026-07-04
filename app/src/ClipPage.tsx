@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useClip } from "./useClipData";
-import { queryClip, renderClip, downloadBlob, shareLink, apiBase, reEnrichClip } from "./api";
+import { queryClip, renderClip, downloadBlob, shareLink, apiBase, reEnrichClip, bumpViewCount } from "./api";
 import { fmt, type QueryAnswer, type Index } from "./types";
 import { editAt, newEdit, newRegion, regionAt, toProject, type EditKind, type EditRegion, type ZoomRegion } from "./regions";
 import { Seo } from "./seo";
@@ -52,9 +52,18 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const [asking, setAsking] = useState(false);
   const [q, setQ] = useState("what happens in this clip and what's the key moment");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [views, setViews] = useState<number | null>(null);
 
   const dur = index?.metadata.duration ?? 0;
   const hasVideo = !!index?.metadata.has_video;
+
+  // One view per clip opened in the app — mirrors what the public share page counts
+  // server-side on its own page load, so a clip's view count is the same regardless of
+  // whether someone watched it logged-in or via the public link.
+  useEffect(() => {
+    if (!id) return;
+    bumpViewCount(id).then(setViews).catch(() => {});
+  }, [id]);
 
   // "develop" scan sweep whenever a new clip opens
   useEffect(() => {
@@ -237,6 +246,11 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
       <div className="clip-titlebar">
         <h1>{index.metadata.title || id}</h1>
         <span className="clip-url mono">/clip/{id}</span>
+        {views !== null && (
+          <span className="pill" title="views on this clip's link">
+            {views} view{views === 1 ? "" : "s"}
+          </span>
+        )}
         {index.status === "enriching" && (
           <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="The video is ready and shareable now; transcript, on-screen text and captions are still being built and will appear automatically.">
             <span className="spin" style={{ width: 10, height: 10 }} /> indexing…

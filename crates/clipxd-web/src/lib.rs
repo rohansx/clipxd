@@ -146,6 +146,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/events", get(get_events))
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
+        .route("/clip/:id/view", post(post_view))
         // Username-canonical share-link form: /u/:username/clip/:id and all the same
         // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
         .route("/u/:username/clip/:id", get(share_page_for_user))
@@ -160,6 +161,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/u/:username/clip/:id/events", get(get_events_for_user))
         .route("/u/:username/clip/:id/video", get(get_video_for_user))
         .route("/u/:username/clip/:id/frames/:name", get(get_frame_for_user))
+        .route("/u/:username/clip/:id/view", post(post_view_for_user))
         .route("/net", get(get_net))
         // Multi-tenant MCP: "add clipxd.com as an MCP server" — every tool takes an explicit
         // clip_id, same unguessable-id security model as the read-only routes above (no
@@ -550,6 +552,33 @@ async fn write_object_best_effort(state: &AppState, key: &str, body: Vec<u8>, co
             eprintln!("best-effort S3 write {key}: {e}");
         }
     }
+}
+
+/// Read a clip's current view count without incrementing it (0 if never viewed).
+async fn view_count(s: &AppState, id: &str) -> u64 {
+    read_object_or_local(s, &format!("{id}/views.txt"))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Record one view of a clip and return the new total. Kept as a plain counter file
+/// alongside the clip's other side-files (zoom.json, events.json) rather than a field on
+/// `Index` itself — views are ephemeral traffic metadata, not part of what the recording
+/// *is*, and folding them into index.json would mean every page view rewrites (and risks
+/// racing) the whole index during background enrichment. Read-modify-write isn't atomic
+/// across concurrent requests; an occasional lost increment under simultaneous viewers is an
+/// acceptable trade for staying a plain file instead of a database, since this is a rough
+/// traffic count, not a strict ledger.
+async fn bump_view_count(s: &AppState, id: &str) -> u64 {
+    let next = view_count(s, id).await + 1;
+    let key = format!("{id}/views.txt");
+    let _ = tokio::fs::write(s.clips_dir.join(&key), next.to_string()).await;
+    write_object_best_effort(s, &key, next.to_string().into_bytes(), "text/plain").await;
+    next
 }
 
 /// Mirror a local clip directory to S3. Walks `<local_dir>` recursively and writes each
@@ -1021,8 +1050,17 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             }
         })
         .await;
-        // Optional Tier-2 deep pass (Gemini whole-video → title/tldr/chapters). Off unless
-        // CLIPXD_DEEP_PASS=gemini + GEMINI_API_KEY are set — the local-first default sends
+        // Auto-title: unconditional (any LLM backend configured is enough) — cheap, one short
+        // prompt, and every clip deserves a real name instead of sitting in the library as
+        // "Screen recording" forever. Runs before the optional deep pass so a clip that only
+        // gets this (deep pass off) still gets named.
+        if llm::any_backend_configured() {
+            if let Err(e) = deeppass::generate_title(&clip_dir, &id).await {
+                eprintln!("auto-title for {id}: {e:#} (continuing)");
+            }
+        }
+        // Optional Tier-2 deep pass (NVIDIA/Gemini text-context → title/tldr/chapters). Off
+        // unless CLIPXD_DEEP_PASS=1 + a backend key are set — the local-first default sends
         // nothing anywhere. Runs before the final mirror so the merged index lands in S3.
         if deeppass::enabled() {
             if let Err(e) = deeppass::run(&clip_dir, &id).await {
@@ -1861,7 +1899,8 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: 
             }
         }
     }
-    share_page_body(&s, &id, &idx, &headers)
+    let views = bump_view_count(&s, &id).await;
+    share_page_body(&s, &id, &idx, &headers, views)
 }
 
 /// Resolve /u/:username/clip/:id: ensure the clip is owned by that username, then render.
@@ -1872,7 +1911,28 @@ async fn share_page_for_user(
 ) -> Result<Html<String>, WebErr> {
     let _ = check_owner(&s, &username, &id)?;
     let idx = load_index(&s, &id).await?;
-    share_page_body(&s, &id, &idx, &headers)
+    let views = bump_view_count(&s, &id).await;
+    share_page_body(&s, &id, &idx, &headers, views)
+}
+
+/// `POST /clip/:id/view` — the SPA's ClipPage hits this once on mount (the server-rendered
+/// share page above counts its own views directly, without a round trip). Returns the new
+/// total so the caller can display it without a second request.
+async fn post_view(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    load_index(&s, &id).await?; // 404s cleanly if the clip doesn't exist, instead of counting a view for it
+    let views = bump_view_count(&s, &id).await;
+    Ok(Json(serde_json::json!({ "views": views })))
+}
+
+async fn post_view_for_user(
+    State(s): State<AppState>,
+    Path((username, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    check_owner(&s, &username, &id)?;
+    post_view(State(s), Path(id)).await
 }
 
 /// Confirm `(username, clip_id)` is owned by `username`; 404 otherwise. Used by the
@@ -1968,6 +2028,7 @@ fn share_page_body(
     id: &str,
     idx: &Index,
     headers: &HeaderMap,
+    views: u64,
 ) -> Result<Html<String>, WebErr> {
     // Absolute URL of THIS page, for the "scan to open on your phone" QR: prefer the public
     // tunnel origin if one is configured, else reconstruct from the request Host.
@@ -1980,7 +2041,7 @@ fn share_page_body(
         format!("{scheme}://{host}")
     });
     let url = format!("{base}/clip/{id}");
-    Ok(Html(share_html(&id, &idx, &url)))
+    Ok(Html(share_html(&id, &idx, &url, views)))
 }
 
 fn redirect_to(headers: &HeaderMap, target: &str) -> Html<String> {
@@ -2085,7 +2146,7 @@ fn html_escape(s: &str) -> String {
 ///   3. two-column body: main (chapters, key moments, events, transcript) +
 ///      sidebar (ask-an-agent, share, QR)
 ///   4. small footer
-fn share_html(id: &str, idx: &Index, url: &str) -> String {
+fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
     let title = html_escape(&idx.metadata.title);
     let qr = qr_svg(url);
     // Prefer the deep pass's real tl;dr (content-aware — "what happens in this recording")
@@ -2141,6 +2202,7 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
       <span class="pill">{src_dot} Screen recording</span>
       <span class="pill sodium">{dur_lbl}</span>
       <span class="pill status-pill">{status}</span>
+      <span class="pill ghost" title="views">{views_lbl} view{views_plural}</span>
       <a class="pill ghost" href="/clip/{id}/index.json" target="_blank">index.json</a>
     </div>
     <div class="player">
@@ -2173,6 +2235,8 @@ fn share_html(id: &str, idx: &Index, url: &str) -> String {
         src_dot   = r#"<span class="dot sodium"></span>"#,
         dur_lbl   = fmt_duration(dur),
         status    = share_status_pill(&idx.status),
+        views_lbl = format_view_count(views),
+        views_plural = if views == 1 { "" } else { "s" },
         main      = main,
         aside     = aside,
         url       = url,
@@ -2188,6 +2252,16 @@ fn fmt_duration(d: f64) -> String {
     let (h, rem) = (total / 3600, total % 3600);
     let (m, s) = (rem / 60, rem % 60);
     if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+/// "1", "999", "1.2k", "45k" — matches the compact convention viewers already know from
+/// every other video platform, so it reads as a view count at a glance rather than a raw int.
+fn format_view_count(n: u64) -> String {
+    if n < 1000 {
+        n.to_string()
+    } else {
+        format!("{:.1}k", n as f64 / 1000.0).replace(".0k", "k")
+    }
 }
 
 /// "indexed" / "still indexing" / "partial" / "no index".  Visual tone follows
@@ -2860,8 +2934,18 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 
 #[cfg(test)]
 mod tests {
-    use super::{mint_clip_id, share_base, try_claim, ClipClaims};
+    use super::{format_view_count, mint_clip_id, share_base, try_claim, ClipClaims};
     use std::sync::{Arc, Mutex as StdMutex};
+
+    #[test]
+    fn view_count_formats_compactly_past_a_thousand() {
+        assert_eq!(format_view_count(0), "0");
+        assert_eq!(format_view_count(1), "1");
+        assert_eq!(format_view_count(999), "999");
+        assert_eq!(format_view_count(1000), "1k");
+        assert_eq!(format_view_count(1200), "1.2k");
+        assert_eq!(format_view_count(45_000), "45k");
+    }
 
     #[test]
     fn share_base_uses_host_port_and_lan_ip() {

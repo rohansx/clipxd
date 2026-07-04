@@ -166,6 +166,14 @@ export async function fetchIndex(id: string, base = apiBase()): Promise<Index> {
   return jsonOrThrow<Index>(await af(`${base}/clip/${id}/index.json`), `clip ${id}`);
 }
 
+/** Record one view of the clip; returns the new total. Fire-and-forget on the caller's
+ *  side (a failed view count shouldn't block or error the page). */
+export async function bumpViewCount(id: string, base = apiBase()): Promise<number> {
+  const r = await af(`${base}/clip/${id}/view`, { method: "POST" });
+  const j = (await r.json()) as { views?: number };
+  return j.views ?? 0;
+}
+
 export async function fetchZoom(id: string, base = apiBase()): Promise<ZoomKeyframe[]> {
   try {
     const r = await af(`${base}/clip/${id}/zoom.json`);

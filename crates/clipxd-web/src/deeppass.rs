@@ -20,6 +20,49 @@ pub fn enabled() -> bool {
     on && llm::any_backend_configured()
 }
 
+/// Auto-title generation, unlike the rest of the deep pass, runs unconditionally (no
+/// `CLIPXD_DEEP_PASS` gate) — it's genuinely cheap: one short prompt, plain-text answer, no
+/// JSON round trip. Every clip deserves a real name instead of sitting in the library as
+/// "Screen recording" forever; the fuller tldr/chapters synthesis stays opt-in since it costs
+/// more (bigger prompt, structured output) for something the library list doesn't show anyway.
+const TITLE_PROMPT_PREFIX: &str = "You are naming a screen recording so it's identifiable in a list of clips, \
+without watching the video. Below is the recording's already-extracted index: timestamped scene captions, \
+on-screen OCR text, and any transcribed speech. Reply with ONLY the title — one specific, concrete line (6-10 \
+words) naming what actually happens, no quotes, no markdown, no trailing period, no commentary before or after.\
+\n\nINDEX DATA:\n";
+
+/// Generate a title for the clip in `clip_dir` and merge it in, but only while the title is
+/// still the recorder's generic default (never stomp a user rename, and never re-spend a call
+/// on a clip that already got one — e.g. from a later, opt-in full deep pass).
+pub async fn generate_title(clip_dir: &Path, id: &str) -> Result<()> {
+    let index_path = clip_dir.join("index.json");
+    let idx: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
+    if idx.metadata.title != "Screen recording" {
+        return Ok(()); // already renamed (by a user or an earlier pass) — nothing to do
+    }
+    if !llm::any_backend_configured() {
+        bail!("no LLM backend configured");
+    }
+    let context = build_context(&idx);
+    if context.trim().is_empty() {
+        bail!("no transcript/OCR/captions yet to title from");
+    }
+    let prompt = format!("{TITLE_PROMPT_PREFIX}{context}");
+    let (text, used) = llm::complete(&prompt, false).await?;
+    let title = llm::strip_fence(&text).trim().trim_matches('"').to_string();
+    if title.is_empty() {
+        bail!("model returned an empty title");
+    }
+
+    let mut index: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
+    if index.metadata.title == "Screen recording" {
+        index.metadata.title = title.clone();
+        std::fs::write(&index_path, serde_json::to_string_pretty(&index)?)?;
+    }
+    eprintln!("auto-title ({used}): \"{title}\" for {id}");
+    Ok(())
+}
+
 /// What the deep pass asks for — matches the fields it is allowed to merge into the index.
 #[derive(serde::Deserialize)]
 struct DeepResult {
@@ -117,6 +160,38 @@ fn merge_into_index(clip_dir: &Path, deep: &DeepResult) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn generate_title_skips_a_clip_already_renamed() {
+        use clipxd_index::{Metadata, Source};
+        let tmp = std::env::temp_dir().join(format!("clipxd-titlegen-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut idx = Index::new(
+            "clp_1",
+            Source::Screen,
+            Metadata {
+                duration: 10.0,
+                resolution: [100, 100],
+                fps: 30.0,
+                created_at: "0".into(),
+                title: "Already renamed by the user".into(),
+                app_focus: vec![],
+                url_context: None,
+                has_video: true,
+            },
+        );
+        idx.summary.tldr = "not empty, so build_context wouldn't otherwise bail".into();
+        std::fs::write(tmp.join("index.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+
+        // No NVIDIA_API_KEY/GEMINI_API_KEY needed — the title-already-set guard must return Ok
+        // before any backend check, regardless of environment.
+        let result = generate_title(&tmp, "clp_1").await;
+        assert!(result.is_ok(), "{result:?}");
+        let after: Index = serde_json::from_str(&std::fs::read_to_string(tmp.join("index.json")).unwrap()).unwrap();
+        assert_eq!(after.metadata.title, "Already renamed by the user");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
     #[test]
     fn parse_deep_json_strips_markdown_fence() {
