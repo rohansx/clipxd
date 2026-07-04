@@ -57,13 +57,6 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
     anyhow::ensure!(out.status.success(), "ffprobe failed for {}", video.display());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing ffprobe JSON")?;
 
-    let duration_s = v
-        .get("format")
-        .and_then(|f| f.get("duration"))
-        .and_then(|d| d.as_str())
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
     let vstream = v
         .get("streams")
         .and_then(|s| s.as_array())
@@ -74,6 +67,32 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
         })
         .context("no video stream found")?;
 
+    let mut duration_s = v
+        .get("format")
+        .and_then(|f| f.get("duration"))
+        .and_then(|d| d.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|d| *d > 0.0)
+        .or_else(|| {
+            vstream
+                .get("duration")
+                .and_then(|d| d.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|d| *d > 0.0)
+        })
+        .unwrap_or(0.0);
+
+    // A recording assembled by concatenating streamed MediaRecorder chunks (see
+    // `concat_chunks`) is raw-byte-concatenated WebM, not a single re-muxed container — ffprobe
+    // has no reliable top-level *or* per-stream duration to read for it (confirmed: both are
+    // simply absent, not just zero). Fall back to actually walking the file: `-c copy` just
+    // remuxes (no re-encode cost), but ffmpeg still has to read every packet to do it, so its
+    // final progress line reports the real total time regardless of what the container's own
+    // metadata says.
+    if duration_s == 0.0 {
+        duration_s = probe_duration_via_decode(video).unwrap_or(0.0);
+    }
+
     let width = vstream.get("width").and_then(|w| w.as_u64()).unwrap_or(0) as u32;
     let height = vstream.get("height").and_then(|h| h.as_u64()).unwrap_or(0) as u32;
     let fps = vstream
@@ -83,6 +102,32 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
         .unwrap_or(0.0);
 
     Ok(MediaInfo { duration_s, width, height, fps })
+}
+
+/// Last-resort duration: remux the video stream to nowhere and read ffmpeg's own last
+/// `time=` progress line, which reflects real elapsed playback time regardless of whether
+/// the container's duration metadata is present, zero, or wrong.
+fn probe_duration_via_decode(video: &Path) -> Option<f64> {
+    let out = Command::new("ffmpeg")
+        .args(["-i"])
+        .arg(video)
+        .args(["-map", "0:v:0", "-c", "copy", "-f", "null", "-"])
+        .output()
+        .ok()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let last_time = stderr.rmatch_indices("time=").next().map(|(i, _)| &stderr[i + 5..])?;
+    let time_str = last_time.split_whitespace().next()?;
+    parse_ffmpeg_timestamp(time_str)
+}
+
+/// Parse ffmpeg's `HH:MM:SS.ms` progress timestamp into seconds.
+fn parse_ffmpeg_timestamp(s: &str) -> Option<f64> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let (h, m, sec) = match parts.as_slice() {
+        [h, m, s] => (h.parse::<f64>().ok()?, m.parse::<f64>().ok()?, s.parse::<f64>().ok()?),
+        _ => return None,
+    };
+    Some(h * 3600.0 + m * 60.0 + sec)
 }
 
 /// Parse an ffmpeg rational like `"30/1"` or `"30000/1001"` into fps.
@@ -218,5 +263,14 @@ mod tests {
         assert!((parse_rational("30000/1001") - 29.97).abs() < 0.01);
         assert_eq!(parse_rational("24"), 24.0);
         assert_eq!(parse_rational("5/0"), 0.0);
+    }
+
+    #[test]
+    fn ffmpeg_timestamp_parsing() {
+        assert_eq!(parse_ffmpeg_timestamp("00:00:48.97"), Some(48.97));
+        assert_eq!(parse_ffmpeg_timestamp("00:01:05.00"), Some(65.0));
+        assert_eq!(parse_ffmpeg_timestamp("01:00:00.00"), Some(3600.0));
+        assert_eq!(parse_ffmpeg_timestamp("garbage"), None);
+        assert_eq!(parse_ffmpeg_timestamp(""), None);
     }
 }
