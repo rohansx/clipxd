@@ -37,6 +37,23 @@ def log(msg: str) -> None:
     LOG(f"[yt-forwarder {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def resolve_yt_dlp() -> str:
+    """`shutil.which` first (respects whatever PATH the process actually has), then the
+    common `pip install --user` location — systemd user services get a minimal PATH that
+    usually excludes `~/.local/bin`, so a bare `"yt-dlp"` on PATH silently 404s here even
+    when it's genuinely installed."""
+    found = shutil.which("yt-dlp")
+    if found:
+        return found
+    fallback = pathlib.Path.home() / ".local" / "bin" / "yt-dlp"
+    if fallback.exists():
+        return str(fallback)
+    raise FileNotFoundError(
+        "yt-dlp not found on PATH or in ~/.local/bin — install it with "
+        "`pip install --user yt-dlp` (or `pipx install yt-dlp`)"
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A002
         log(format % args)
@@ -80,7 +97,16 @@ class Handler(BaseHTTPRequestHandler):
         # Block in the handler — clipxd-web's SPA already shows an "importing…" UI, so
         # waiting up to ~5 min for yt-dlp is fine, and we can return {id} synchronously
         # which makes error reporting much cleaner than a fire-and-forget callback model.
-        result = self._download_and_post_back(url, callback)
+        try:
+            result = self._download_and_post_back(url, callback)
+        except Exception as e:
+            # Last-resort net: an unhandled exception here previously killed the request
+            # thread with no HTTP response at all (the box saw a hung connection, surfaced
+            # to the user as "forwarder offline" even though the process was alive). Always
+            # send *something* back.
+            log(f"unhandled forwarder error for {url}: {e}")
+            self._json(502, {"error": f"forwarder crashed: {e}"})
+            return
         if result is None:
             self._json(502, {"error": "yt-dlp or callback failed; see forwarder logs"})
             return
@@ -90,8 +116,14 @@ class Handler(BaseHTTPRequestHandler):
         log(f"yt-dlp: {url}")
         tmpdir = tempfile.mkdtemp(prefix="clipxd-yt-")
         out_tpl = pathlib.Path(tmpdir) / "%(id)s.%(ext)s"
+        try:
+            yt_dlp_bin = resolve_yt_dlp()
+        except FileNotFoundError as e:
+            log(str(e))
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None
         cmd = [
-            "yt-dlp",
+            yt_dlp_bin,
             "--no-playlist",
             "--no-progress",
             "--no-part",
@@ -105,6 +137,13 @@ class Handler(BaseHTTPRequestHandler):
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
             log(f"yt-dlp timed out for {url}")
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None
+        except OSError as e:
+            # Covers FileNotFoundError and friends if the resolved path stops working
+            # between resolve_yt_dlp() and here (e.g. removed mid-run) — never let a
+            # subprocess-launch failure crash the handler thread silently.
+            log(f"yt-dlp failed to launch for {url}: {e}")
             shutil.rmtree(tmpdir, ignore_errors=True)
             return None
         if proc.returncode != 0:

@@ -64,7 +64,12 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [importUrl, setImportUrl] = useState<string | undefined>(undefined);
 
-  const auth = useAuth(view === "cloud");
+  // Lazy by default (skip /auth/me while on the marketing landing — keeps it console-clean
+  // for first-time visitors and off the critical path for LCP). But a returning visitor who's
+  // been in the app before needs the real check to start immediately even while still on
+  // "landing", or the restore-on-refresh effect below has nothing to correct itself against
+  // and a valid session behind an OAuth redirect never gets discovered.
+  const auth = useAuth(view === "cloud" || hasEnteredAppBefore());
   const { clips, reload } = useClips();
 
   const toggleTheme = useCallback(() => {
@@ -81,6 +86,7 @@ export default function App() {
   }, []);
 
   const openClip = useCallback((id: string) => {
+    markEnteredApp();
     setActiveClipId(id);
     setCloudView("clip");
     setView("cloud");
@@ -148,6 +154,7 @@ export default function App() {
   // On login, reload the (now per-user) library and drop the user straight into the app.
   useEffect(() => {
     if (auth.user) {
+      markEnteredApp();
       reload();
       if (!deepLink) {
         setView("cloud");
