@@ -3,15 +3,18 @@ const recBtn = $("rec");
 const statusEl = $("status");
 const hostIn = $("host");
 const tokenIn = $("token");
+const camIn = $("cam");
 
 // load config
-chrome.storage.local.get(["host", "token"]).then((c) => {
+chrome.storage.local.get(["host", "token", "includeCamera"]).then((c) => {
   hostIn.value = c.host || "https://clipxd.com";
   tokenIn.value = c.token || "";
+  camIn.checked = !!c.includeCamera;
 });
-const saveCfg = () => chrome.storage.local.set({ host: hostIn.value.trim(), token: tokenIn.value.trim() });
+const saveCfg = () => chrome.storage.local.set({ host: hostIn.value.trim(), token: tokenIn.value.trim(), includeCamera: camIn.checked });
 hostIn.addEventListener("change", saveCfg);
 tokenIn.addEventListener("change", saveCfg);
+camIn.addEventListener("change", saveCfg);
 
 function paint(st) {
   const on = st && st.recording;

@@ -3,9 +3,14 @@
 // turns it into a MediaStream, records it, and PUTs chunks straight to the existing chunked
 // streaming-ingest endpoint (/ingest/stage/:id) as they're produced — no video ever passes
 // back through the message bus, only small JSON acks do.
+//
+// Optionally composites a circular webcam "bubble" over the tab video (Loom-style) and mixes
+// the presenter's mic narration in with the tab's own audio, when the caller asks for a camera.
 
 let mediaRecorder = null;
 let audioCtx = null;
+let compositeRaf = null;
+let tracksToStop = [];
 let seq = 0;
 let host = "";
 let token = "";
@@ -28,29 +33,104 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-async function startCapture({ streamId, host: h, token: t, clipId: id }) {
+async function startCapture({ streamId, host: h, token: t, clipId: id, includeCamera }) {
   host = h;
   token = t;
   clipId = id;
   seq = 0;
+  tracksToStop = [];
 
-  const stream = await navigator.mediaDevices.getUserMedia({
+  const tabStream = await navigator.mediaDevices.getUserMedia({
     audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
     video: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
   });
+  tracksToStop.push(...tabStream.getTracks());
 
   // Capturing a tab's audio mutes its normal output; route it back to the speakers so the
   // person recording still hears their own tab while capture is running.
   audioCtx = new AudioContext();
-  audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+  audioCtx.createMediaStreamSource(tabStream).connect(audioCtx.destination);
 
-  mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8,opus" });
+  let recordStream = tabStream;
+
+  if (includeCamera) {
+    let camStream = null;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 320 }, audio: true });
+    } catch (e) {
+      // Camera/mic denied or unavailable — fall back to tab-only, don't fail the whole recording.
+      camStream = null;
+    }
+    if (camStream) {
+      tracksToStop.push(...camStream.getTracks());
+      recordStream = await compositeWithCameraBubble(tabStream, camStream, audioCtx);
+    }
+  }
+
+  mediaRecorder = new MediaRecorder(recordStream, { mimeType: "video/webm;codecs=vp8,opus" });
   mediaRecorder.ondataavailable = (e) => {
     if (e.data && e.data.size > 0) lastUploadPromise = uploadChunk(e.data);
   };
   // 4s timeslice: small enough that a mid-recording crash loses little, matches the cadence
   // the web recorder already streams at.
   mediaRecorder.start(4000);
+}
+
+/// Draw the tab video full-frame onto a canvas, with the webcam feed clipped into a circle in
+/// the bottom-right corner (Loom's "camera bubble"), and mix the tab's own audio with the
+/// mic's narration into one track. Returns the combined MediaStream to actually record.
+async function compositeWithCameraBubble(tabStream, camStream, ctx) {
+  const tabVideoEl = document.createElement("video");
+  tabVideoEl.srcObject = new MediaStream(tabStream.getVideoTracks());
+  tabVideoEl.muted = true;
+  await tabVideoEl.play();
+
+  const camVideoEl = document.createElement("video");
+  camVideoEl.srcObject = new MediaStream(camStream.getVideoTracks());
+  camVideoEl.muted = true;
+  await camVideoEl.play();
+
+  const w = tabVideoEl.videoWidth || 1280;
+  const h = tabVideoEl.videoHeight || 720;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const draw2d = canvas.getContext("2d");
+
+  const bubbleR = Math.round(Math.min(w, h) * 0.12); // ~12% of the shorter side
+  const cx = w - bubbleR - 24;
+  const cy = h - bubbleR - 24;
+
+  const drawFrame = () => {
+    draw2d.drawImage(tabVideoEl, 0, 0, w, h);
+    draw2d.save();
+    draw2d.beginPath();
+    draw2d.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+    draw2d.closePath();
+    draw2d.clip();
+    // cover-fit the (roughly square) camera feed into the circle
+    const camAspect = (camVideoEl.videoWidth || 1) / (camVideoEl.videoHeight || 1);
+    const side = bubbleR * 2;
+    let dw = side, dh = side;
+    if (camAspect > 1) dw = side * camAspect;
+    else dh = side / camAspect;
+    draw2d.drawImage(camVideoEl, cx - dw / 2, cy - dh / 2, dw, dh);
+    draw2d.restore();
+    compositeRaf = requestAnimationFrame(drawFrame);
+  };
+  drawFrame();
+
+  const canvasStream = canvas.captureStream(30);
+
+  // Mix tab audio + mic audio into one track (MediaRecorder only takes one audio track per
+  // stream cleanly) via a destination node; the tab audio is already connected to speakers
+  // above, this just ALSO taps it into the mix.
+  const dest = ctx.createMediaStreamDestination();
+  if (tabStream.getAudioTracks().length) ctx.createMediaStreamSource(new MediaStream(tabStream.getAudioTracks())).connect(dest);
+  if (camStream.getAudioTracks().length) ctx.createMediaStreamSource(new MediaStream(camStream.getAudioTracks())).connect(dest);
+
+  const combined = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  return combined;
 }
 
 async function uploadChunk(blob) {
@@ -73,7 +153,16 @@ async function stopCapture() {
     mediaRecorder.stop(); // triggers one final ondataavailable before onstop fires
   });
   await lastUploadPromise; // make sure that final chunk's PUT has actually completed
+  if (compositeRaf) {
+    cancelAnimationFrame(compositeRaf);
+    compositeRaf = null;
+  }
+  // Stop both the underlying source tracks (tab/cam, tracked separately since compositing
+  // wraps them in new stream objects) and whatever the recorder itself was actually fed
+  // (the raw tab stream when not compositing; the canvas+mixed-audio stream when it is).
   mediaRecorder.stream.getTracks().forEach((tr) => tr.stop());
+  tracksToStop.forEach((tr) => tr.stop());
+  tracksToStop = [];
   mediaRecorder = null;
   if (audioCtx) {
     await audioCtx.close().catch(() => {});

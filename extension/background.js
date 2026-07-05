@@ -17,8 +17,8 @@ const state = {
   videoCaptured: false,
 };
 
-const DEFAULTS = { host: "https://clipxd.com", token: "" };
-const cfg = async () => ({ ...DEFAULTS, ...(await chrome.storage.local.get(["host", "token"])) });
+const DEFAULTS = { host: "https://clipxd.com", token: "", includeCamera: false };
+const cfg = async () => ({ ...DEFAULTS, ...(await chrome.storage.local.get(["host", "token", "includeCamera"])) });
 
 // Track the last real (non-extension) page that was active, rather than querying "the active
 // tab" at Record time. A default_popup isn't part of chrome.tabs in real usage — but this
@@ -127,7 +127,7 @@ async function start() {
   if (/^chrome:|^edge:|^about:|chrome\.google\.com\/webstore/.test(tab.url || "")) {
     return { error: "can't record browser-internal pages" };
   }
-  const { host, token } = await cfg();
+  const { host, token, includeCamera } = await cfg();
 
   // Try tab video+audio capture first. If it's possible, mint the clip up front (instant-link
   // architecture — the share URL exists from record-start) and stream to it; if not, this
@@ -141,7 +141,7 @@ async function start() {
       if (r.ok) {
         clipId = (await r.json()).id;
         await ensureOffscreen();
-        const resp = await chrome.runtime.sendMessage({ target: "offscreen", cmd: "start", streamId, host, token, clipId });
+        const resp = await chrome.runtime.sendMessage({ target: "offscreen", cmd: "start", streamId, host, token, clipId, includeCamera: !!includeCamera });
         videoCaptured = !!(resp && resp.ok);
       }
     } catch (e) {

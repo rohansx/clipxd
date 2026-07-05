@@ -19,11 +19,14 @@
       .status a { color: #16c79a; font-weight: 600; }
       .err { color: #d6461f; }
       details { margin-top: 12px; } summary { font-size: 11.5px; color: #7c7398; cursor: pointer; }
+      .cam-toggle { display: flex; align-items: center; gap: 7px; margin: 10px 0 12px; font-size: 12.5px; }
+      .cam-toggle input { width: auto; margin: 0; }
     </style>
   </head>
   <body>
     <h1><span class="dot"></span> clipxd capture</h1>
     <p class="sub">Record this tab into an agent-queryable clip.</p>
+    <label class="cam-toggle"><input type="checkbox" id="cam" /> Include camera bubble</label>
     <button id="rec">● Record this tab</button>
     <div class="status" id="status"></div>
     <details>
