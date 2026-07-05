@@ -2518,6 +2518,26 @@ fn share_main(id: &str, idx: &Index) -> String {
         s.push_str(&h);
     }
 
+    // Discussion — the public face of the Fathom-style @-mention chat. The thread is
+    // rendered client-side (see SHARE_JS) from GET /clip/:id/comments so it stays live; the
+    // compose box POSTs to the same endpoint (login-gated — a logged-in viewer on this
+    // same-origin page has the session cookie; logged-out gets a "log in to comment" nudge).
+    s.push_str(&format!(
+        r##"<section class="card discussion" data-cmt-url="/clip/{id}/comments">
+  <h3>Discussion</h3>
+  <div class="cmt-thread" id="cmtThread"><div class="cmt-loading">Loading the conversation…</div></div>
+  <div class="cmt-form">
+    <textarea id="cmtInput" rows="2" placeholder="Comment on the moment you're watching…  (type @0:12 to link a time)"></textarea>
+    <div class="cmt-form-row">
+      <button type="button" id="cmtAt" class="cmt-at">@ this moment</button>
+      <span class="cmt-status" id="cmtStatus" aria-live="polite"></span>
+      <button type="button" id="cmtPost" class="cmt-post-btn">Comment</button>
+    </div>
+  </div>
+</section>"##,
+        id = id,
+    ));
+
     s
 }
 
@@ -2957,6 +2977,41 @@ a:hover { text-decoration: underline; }
   font: 500 11px var(--font-mono, "JetBrains Mono", monospace); color: var(--text-3); }
 .ask-foot-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-signal); opacity: .5; }
 
+/* discussion (comments) */
+.cmt-thread { display: flex; flex-direction: column; margin-bottom: 14px; }
+.cmt-loading { font-size: 13px; color: var(--text-3); padding: 6px 0; }
+.cmt-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+.cmt-ts { font: 500 11.5px var(--font-mono, "JetBrains Mono", monospace); color: var(--signal-text); flex: none; width: 42px; text-decoration: none; padding-top: 2px; }
+.cmt-ts:hover { text-decoration: underline; }
+.cmt-b { min-width: 0; }
+.cmt-who { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
+.cmt-tx { font-size: 13.5px; color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.cmt-mention { font: 500 12.5px var(--font-mono, "JetBrains Mono", monospace); color: var(--sodium-text); background: var(--sodium-wash); border-radius: 6px; padding: 0 5px; text-decoration: none; }
+.cmt-mention:hover { text-decoration: underline; }
+.cmt-form textarea {
+  width: 100%; resize: vertical; padding: 10px 12px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  font: 13.5px 'Space Grotesk', system-ui; line-height: 1.5; outline: none;
+}
+.cmt-form textarea:focus { border-color: color-mix(in oklab, var(--c-signal) 50%, var(--border)); }
+.cmt-form-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.cmt-at {
+  font: 500 11.5px var(--font-mono, "JetBrains Mono", monospace); color: var(--text-3);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 5px 10px; cursor: pointer;
+}
+.cmt-at:hover { color: var(--text); }
+.cmt-status { flex: 1; font-size: 12px; color: var(--text-3); }
+.cmt-status a { color: var(--signal-text); }
+.cmt-post-btn {
+  background: var(--c-signal); color: var(--on-accent);
+  font: 600 13px 'Space Grotesk', system-ui;
+  border: none; border-radius: var(--r-pill); padding: 7px 16px; cursor: pointer; box-shadow: var(--pop-signal);
+}
+.cmt-post-btn:hover { transform: translateY(-1px); }
+.cmt-post-btn:disabled { opacity: .6; cursor: not-allowed; }
+
 /* share */
 .share-card {
   background: var(--panel); border: 1px solid var(--border);
@@ -3083,6 +3138,115 @@ async function doAsk() {
 }
 if (askBtn) askBtn.addEventListener('click', doAsk);
 if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAsk(); });
+
+// ---- Discussion (Fathom-style @-mention comments) ----
+(function () {
+  const root = document.querySelector('.discussion');
+  if (!root) return;
+  const cmtUrl = root.getAttribute('data-cmt-url');
+  const thread = document.getElementById('cmtThread');
+  const input = document.getElementById('cmtInput');
+  const postBtn = document.getElementById('cmtPost');
+  const atBtn = document.getElementById('cmtAt');
+  const statusEl = document.getElementById('cmtStatus');
+  const video = document.querySelector('video');
+  const STAMP = /@(\d{1,2}:)?\d{1,2}:\d{2}/g; // @m:ss or @h:mm:ss
+
+  const fmtT = (s) => {
+    s = Math.max(0, Math.floor(s || 0));
+    const m = Math.floor(s / 60), ss = String(s % 60).padStart(2, '0');
+    return m + ':' + ss;
+  };
+  const parseStamp = (str) => str.split(':').reduce((a, p) => a * 60 + Number(p), 0);
+
+  // Append comment text as safe DOM nodes — text via textNodes, @m:ss as seek links.
+  // Never innerHTML user content (this is a public page rendering untrusted input).
+  function appendText(parent, text) {
+    let last = 0, m;
+    STAMP.lastIndex = 0;
+    while ((m = STAMP.exec(text)) !== null) {
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const stamp = m[0].slice(1);
+      const a = document.createElement('a');
+      a.href = '#t=' + parseStamp(stamp);
+      a.className = 'cmt-mention';
+      a.textContent = '@' + stamp;
+      parent.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function row(c) {
+    const el = document.createElement('div');
+    el.className = 'cmt-row';
+    const ts = document.createElement('a');
+    ts.className = 'cmt-ts';
+    ts.href = '#t=' + (c.t || 0);
+    ts.textContent = fmtT(c.t);
+    const body = document.createElement('div');
+    body.className = 'cmt-b';
+    const who = document.createElement('div');
+    who.className = 'cmt-who';
+    who.textContent = c.author || 'someone';
+    const txt = document.createElement('div');
+    txt.className = 'cmt-tx';
+    appendText(txt, c.text || '');
+    body.appendChild(who); body.appendChild(txt);
+    el.appendChild(ts); el.appendChild(body);
+    return el;
+  }
+
+  function render(list) {
+    thread.textContent = '';
+    if (!list.length) {
+      const e = document.createElement('div');
+      e.className = 'cmt-loading';
+      e.textContent = 'No comments yet — start the conversation.';
+      thread.appendChild(e);
+      return;
+    }
+    list.sort((a, b) => (a.t || 0) - (b.t || 0)).forEach((c) => thread.appendChild(row(c)));
+  }
+
+  async function load() {
+    try {
+      const r = await fetch(cmtUrl);
+      const j = await r.json();
+      render(j.comments || []);
+    } catch (e) { thread.textContent = ''; }
+  }
+
+  async function post() {
+    const text = (input.value || '').trim();
+    if (!text) return;
+    postBtn.disabled = true; statusEl.textContent = '';
+    try {
+      const r = await fetch(cmtUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ t: video ? video.currentTime : 0, text }),
+      });
+      if (r.status === 401) { statusEl.innerHTML = '<a href="https://clipxd.com">Log in</a> to comment'; return; }
+      if (!r.ok) { statusEl.textContent = 'Could not post (' + r.status + ')'; return; }
+      const c = await r.json();
+      if (thread.querySelector('.cmt-loading')) thread.textContent = '';
+      // keep the thread time-ordered: reload is simplest and cheap
+      input.value = '';
+      await load();
+    } catch (e) { statusEl.textContent = 'Could not post — network error'; }
+    finally { postBtn.disabled = false; }
+  }
+
+  if (atBtn) atBtn.addEventListener('click', () => {
+    const t = video ? video.currentTime : 0;
+    input.value = (input.value && !input.value.endsWith(' ') ? input.value + ' ' : input.value) + '@' + fmtT(t) + ' ';
+    input.focus();
+  });
+  if (postBtn) postBtn.addEventListener('click', post);
+  if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) post(); });
+  load();
+})();
 "##;
 
 #[cfg(test)]
