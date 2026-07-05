@@ -2673,7 +2673,11 @@ fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
         url        = url,
         agent_md_url = agent_md_url,
         gif_embed  = html_escape(&gif_embed),
-        embed      = embed,
+        // Attribute-escape the iframe string (it contains `"`), or its quotes break out of
+        // `data-copy="…"` and leak `" type="button">` as visible text. `getAttribute` decodes
+        // the entities back, so the copied value is still the raw iframe HTML. (gif_embed above
+        // was already escaped; embed was the one that slipped through.)
+        embed      = html_escape(&embed),
         qr         = qr,
         id         = id,
         n_ost      = idx.on_screen_text.len(),
