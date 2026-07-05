@@ -3,22 +3,26 @@ const recBtn = $("rec");
 const statusEl = $("status");
 const hostIn = $("host");
 const tokenIn = $("token");
+const camIn = $("cam");
 
 // load config
-chrome.storage.local.get(["host", "token"]).then((c) => {
+chrome.storage.local.get(["host", "token", "includeCamera"]).then((c) => {
   hostIn.value = c.host || "https://clipxd.com";
   tokenIn.value = c.token || "";
+  camIn.checked = !!c.includeCamera;
 });
-const saveCfg = () => chrome.storage.local.set({ host: hostIn.value.trim(), token: tokenIn.value.trim() });
+const saveCfg = () => chrome.storage.local.set({ host: hostIn.value.trim(), token: tokenIn.value.trim(), includeCamera: camIn.checked });
 hostIn.addEventListener("change", saveCfg);
 tokenIn.addEventListener("change", saveCfg);
+camIn.addEventListener("change", saveCfg);
 
 function paint(st) {
   const on = st && st.recording;
   recBtn.textContent = on ? "■ Stop & save clip" : "● Record this tab";
   recBtn.classList.toggle("on", !!on);
   if (on) {
-    statusEl.textContent = "Recording… " + (st.count || 0) + " events captured";
+    const kind = st.videoCaptured ? "video + " + (st.count || 0) + " events" : (st.count || 0) + " events (no video — tab capture unavailable)";
+    statusEl.textContent = "Recording… " + kind;
     statusEl.className = "status";
   } else if (st && st.lastResult) {
     const r = st.lastResult;
@@ -27,7 +31,8 @@ function paint(st) {
       statusEl.textContent = r.error;
       statusEl.className = "status err";
     } else {
-      statusEl.innerHTML = 'Saved ' + (r.count || 0) + ' events → <a href="' + r.url + '" target="_blank">open clip ↗</a>';
+      const kind = r.hasVideo ? "clip (video + " + (r.count || 0) + " events)" : (r.count || 0) + " events (trace only, no video)";
+      statusEl.innerHTML = 'Saved ' + kind + ' → <a href="' + r.url + '" target="_blank">open clip ↗</a>';
       statusEl.className = "status";
     }
   } else {

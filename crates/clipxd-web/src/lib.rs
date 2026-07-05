@@ -283,7 +283,7 @@ async fn sweep_abandoned_stages(s: &AppState) {
             })
             .await;
             match promoted {
-                Ok(Ok(video)) => spawn_phase2(s, id, clip_dir, video, incremental, claim),
+                Ok(Ok(video)) => spawn_phase2(s, id, clip_dir, video, incremental, claim, None),
                 Ok(Err(e)) => eprintln!("sweeper: salvage failed for {id}: {e:#}"),
                 Err(e) => eprintln!("sweeper: salvage task died for {id}: {e}"),
             }
@@ -1135,7 +1135,7 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremen
         let _ = a.db.set_clip_owner(&id, u.id);
     }
 
-    spawn_phase2(&s, id.clone(), dir.join(&id), video, incremental, claim);
+    spawn_phase2(&s, id.clone(), dir.join(&id), video, incremental, claim, None);
 
     Ok(Json(serde_json::json!({ "id": id })))
 }
@@ -1148,7 +1148,26 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremen
 /// — is held for the entire background job and only drops (releasing the id) once every write
 /// to `clip_dir` here is done, so no other finalizer for the same id can start until this one
 /// truly finishes. `permits` bounds how many of these run at once on the box.
-fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard) {
+/// Fuse a Browser-mode capture trace into a video clip's already-enriched index: the video
+/// enrichment gave us transcript/frame-OCR/captions; the trace adds the real interaction event
+/// track (clicks/input/console/network/navigation) plus DOM text/snapshots that pixels can't
+/// carry. We keep the video index's transcript/frames and graft the trace's streams on, then
+/// re-clean (dedup + rebuild the agent search corpus).
+fn merge_browser_trace_into_clip(clip_dir: &std::path::Path, id: &str, trace_json: &str) -> anyhow::Result<()> {
+    let index_path = clip_dir.join("index.json");
+    let mut idx: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
+    let created_at = idx.metadata.created_at.clone();
+    let b = clipxd_browser::ingest_str(trace_json, id, &created_at, &clipxd_browser::SalienceOpts::default())?;
+    idx.event_track.extend(b.event_track);
+    idx.event_track.sort_by(|x, y| x.t.partial_cmp(&y.t).unwrap_or(std::cmp::Ordering::Equal));
+    idx.on_screen_text.extend(b.on_screen_text);
+    idx.visual_timeline.extend(b.visual_timeline);
+    clipxd_index::clean_index(&mut idx); // dedup streams + rebuild search.events/screen_text
+    std::fs::write(&index_path, serde_json::to_string_pretty(&idx)?)?;
+    Ok(())
+}
+
+fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard, browser_trace: Option<String>) {
     let storage_arc = s.storage.clone();
     let permits = s.phase2_permits.clone();
     tokio::spawn(async move {
@@ -1172,6 +1191,20 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             }
         })
         .await;
+        // Browser-mode fusion: if the extension recorded this tab's video WITH a structured
+        // trace, merge the trace's interaction/DOM streams into the just-built video index —
+        // AFTER enrichment (same task, so it never races the finalize that writes index.json).
+        // Runs before auto-title so the title sees the real event/DOM context too. One clip is
+        // now both watchable (video/transcript/frames) and queryable (clicks/console/network).
+        if let Some(trace) = browser_trace {
+            let (md, mid) = (clip_dir.clone(), id.clone());
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(e) = merge_browser_trace_into_clip(&md, &mid, &trace) {
+                    eprintln!("browser-trace merge for {mid}: {e:#} (continuing)");
+                }
+            })
+            .await;
+        }
         // Auto-title: unconditional (any LLM backend configured is enough) — cheap, one short
         // prompt, and every clip deserves a real name instead of sitting in the library as
         // "Screen recording" forever. Runs before the optional deep pass so a clip that only
@@ -1357,11 +1390,17 @@ async fn ingest_stage_commit(
     State(s): State<AppState>,
     Path(session): Path<String>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<serde_json::Value>, WebErr> {
     let user = require_user(&s, &headers)?;
     if !session.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return Err((StatusCode::BAD_REQUEST, "invalid session id".into()));
     }
+    // Optional commit body: a Browser-mode capture trace. The web recorder sends no body; the
+    // extension sends the tab's BrowserTrace here so the finalized clip is both watchable
+    // (the streamed video) and queryable (the trace's interaction/DOM events) — merged in
+    // spawn_phase2 after enrichment, so there's no race with the index write.
+    let browser_trace = (!body.is_empty()).then(|| String::from_utf8_lossy(&body).into_owned());
     let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
     if !dir.exists() {
         return Err((StatusCode::NOT_FOUND, "session not found; call POST /ingest/stage first".into()));
@@ -1423,7 +1462,7 @@ async fn ingest_stage_commit(
         }
     }
 
-    spawn_phase2(&s, id.clone(), clip_dir, video, incremental, claim);
+    spawn_phase2(&s, id.clone(), clip_dir, video, incremental, claim, browser_trace);
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
@@ -1710,7 +1749,7 @@ async fn ingest_tunneled(
     // forwarder only POSTs once yt-dlp's download is complete) → deep pass → re-mirror. This
     // is the same path /ingest and staged commits use, so it already carries every enrich_clip
     // speedup (oar-ocr, phash dedup, concurrent captions, parallel transcript) automatically.
-    spawn_phase2(&s, id.clone(), dir.join(&id), video, None, claim);
+    spawn_phase2(&s, id.clone(), dir.join(&id), video, None, claim, None);
 
     Ok(Response::builder()
         .status(StatusCode::ACCEPTED)
@@ -3302,8 +3341,55 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 
 #[cfg(test)]
 mod tests {
-    use super::{format_view_count, mint_clip_id, share_base, try_claim, ClipClaims};
+    use super::{format_view_count, merge_browser_trace_into_clip, mint_clip_id, share_base, try_claim, ClipClaims};
     use std::sync::{Arc, Mutex as StdMutex};
+
+    #[test]
+    fn browser_trace_merge_grafts_events_onto_a_video_clip_without_losing_video_fields() {
+        use clipxd_index::{Index, Metadata, Source};
+        let tmp = std::env::temp_dir().join(format!("clipxd-trace-merge-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut idx = Index::new(
+            "clp_1",
+            Source::Screen,
+            Metadata {
+                duration: 12.5,
+                resolution: [1920, 1080],
+                fps: 30.0,
+                created_at: "1700000000".into(),
+                title: "Screen recording".into(),
+                app_focus: vec![],
+                url_context: None,
+                has_video: true,
+            },
+        );
+        idx.status = clipxd_index::Status::Complete;
+        std::fs::write(tmp.join("index.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+
+        let trace = r#"{
+            "clipxd_trace_version": "1", "session_id": "clp_1", "captured_by": "test",
+            "started_at_ms": 1700000000000, "viewport": {"w": 1280, "h": 800},
+            "url": "https://example.com",
+            "events": [
+                {"type": "click", "t_ms": 1700000001000, "click_kind": "left", "target": "button", "label": "Go"},
+                {"type": "console", "t_ms": 1700000002000, "level": "error", "text": "boom", "uncaught": true}
+            ]
+        }"#;
+        merge_browser_trace_into_clip(&tmp, "clp_1", trace).unwrap();
+
+        let after: Index = serde_json::from_str(&std::fs::read_to_string(tmp.join("index.json")).unwrap()).unwrap();
+        // video-derived fields untouched
+        assert_eq!(after.metadata.duration, 12.5);
+        assert_eq!(after.metadata.resolution, [1920, 1080]);
+        assert!(after.metadata.has_video);
+        // trace's events grafted on and the search corpus rebuilt to include them
+        assert_eq!(after.event_track.len(), 2);
+        assert!(after.event_track.iter().any(|e| e.kind == "click"));
+        assert!(after.event_track.iter().any(|e| e.kind == "console_error"));
+        assert!(after.search.as_ref().unwrap().events.contains("boom"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
     #[test]
     fn view_count_formats_compactly_past_a_thousand() {
