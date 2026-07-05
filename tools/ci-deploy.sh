@@ -38,6 +38,13 @@ echo "$(ts) BEGIN  original='${SSH_ORIGINAL_COMMAND:-<none>}' cksum='$(cksum /ho
 
 cd /home/clipxd/clipxd
 
+# Discard build-regenerated lockfile drift before the fast-forward. `./deploy/deploy.sh`
+# runs `cargo build`, which can rewrite Cargo.lock in the working tree; that leftover then
+# blocks the next `--ff-only` merge whenever an incoming commit also touches Cargo.lock
+# ("Your local changes to Cargo.lock would be overwritten by merge" → exit 2). The committed
+# lockfile is authoritative, so restoring it is safe and idempotent (no-op when already clean).
+git checkout -- Cargo.lock 2>/dev/null || true
+
 # Fast-forward local master to origin/master (the new push tip).
 # --ff-only refuses to merge if the histories diverged, so we don't
 # silently overwrite local dev work on master.
