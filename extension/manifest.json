@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "clipxd — Browser capture",
+  "version": "0.1.0",
+  "description": "Record a browser session into a clipxd BrowserTrace (clicks, input, console, network, navigation) — the agent-queryable index screen recording can't produce for other pages.",
+  "permissions": ["webRequest", "storage", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "clipxd capture" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    }
+  ]
+}
