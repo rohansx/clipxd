@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { width: 288px; margin: 0; font: 13px/1.45 -apple-system, system-ui, sans-serif; padding: 14px; background: #fbf7f4; color: #211b2b; }
+      @media (prefers-color-scheme: dark) { body { background: #1b1726; color: #f4f1fb; } .field input { background: #241d33; color: #f4f1fb; border-color: #3a3350; } }
+      h1 { font-size: 14px; margin: 0 0 2px; display: flex; align-items: center; gap: 6px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff7a59; }
+      .sub { color: #7c7398; font-size: 11.5px; margin: 0 0 12px; }
+      button { width: 100%; padding: 10px; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; }
+      #rec { background: #ff7a59; color: #fff; }
+      #rec.on { background: #16c79a; }
+      .field { margin-top: 10px; }
+      .field label { display: block; font-size: 11px; color: #7c7398; margin-bottom: 3px; }
+      .field input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #e4d6f0; border-radius: 8px; font-size: 12px; }
+      .status { margin-top: 12px; font-size: 12px; min-height: 18px; }
+      .status a { color: #16c79a; font-weight: 600; }
+      .err { color: #d6461f; }
+      details { margin-top: 12px; } summary { font-size: 11.5px; color: #7c7398; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1><span class="dot"></span> clipxd capture</h1>
+    <p class="sub">Record this tab into an agent-queryable clip.</p>
+    <button id="rec">● Record this tab</button>
+    <div class="status" id="status"></div>
+    <details>
+      <summary>Settings</summary>
+      <div class="field"><label>clipxd host</label><input id="host" placeholder="https://clipxd.com" /></div>
+      <div class="field"><label>Bearer token (from clipxd.com)</label><input id="token" placeholder="paste your token" /></div>
+    </details>
+    <script src="popup.js"></script>
+  </body>
+</html>
