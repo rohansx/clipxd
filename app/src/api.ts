@@ -4,7 +4,7 @@
 // For local dev we keep the old default of `http://localhost:8787` so the SPA on :5173 can
 // still talk to a backend on :8787 — override with `?api=…` to point at a remote host.
 
-import type { Index, ZoomKeyframe, ClipSummary, QueryAnswer, TextHit } from "./types";
+import type { Index, ZoomKeyframe, ClipSummary, QueryAnswer, TextHit, Comment } from "./types";
 
 // One Bearer token kept in module-local storage (lives in memory; cleared on reload).
 let TOKEN: string | null = null;
@@ -172,6 +172,31 @@ export async function bumpViewCount(id: string, base = apiBase()): Promise<numbe
   const r = await af(`${base}/clip/${id}/view`, { method: "POST" });
   const j = (await r.json()) as { views?: number };
   return j.views ?? 0;
+}
+
+export async function fetchComments(id: string, base = apiBase()): Promise<Comment[]> {
+  try {
+    const r = await af(`${base}/clip/${id}/comments`);
+    const j = (await r.json()) as { comments?: Comment[] };
+    return j.comments ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Post a comment anchored to `t` seconds. Throws with a readable message on failure
+ *  (e.g. 401 when login is required) so the caller can surface it. */
+export async function postComment(id: string, t: number, text: string, base = apiBase()): Promise<Comment> {
+  const r = await af(`${base}/clip/${id}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ t, text }),
+  });
+  if (!r.ok) {
+    const msg = r.status === 401 ? "Log in to comment" : `Couldn't post (${r.status})`;
+    throw new Error(msg);
+  }
+  return (await r.json()) as Comment;
 }
 
 export async function fetchZoom(id: string, base = apiBase()): Promise<ZoomKeyframe[]> {

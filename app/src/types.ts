@@ -52,6 +52,14 @@ export interface Chapter {
   title: string;
 }
 
+export interface Comment {
+  id: string;
+  t: number;
+  author: string;
+  text: string;
+  created_at: number;
+}
+
 export interface Summary {
   tldr: string;
   chapters?: Chapter[];
