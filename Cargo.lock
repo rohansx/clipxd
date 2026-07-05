@@ -1066,6 +1066,7 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "clap",
+ "clipxd-browser",
  "clipxd-index",
  "clipxd-recorder",
  "futures-util",

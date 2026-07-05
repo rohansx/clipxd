@@ -202,7 +202,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     // We expose it even when auth is off (so a single-user LAN setup can use the tunnel too);
     // auth is the `?token=<shared-secret>` query param matching CLIPXD_YT_TUNNEL_URL.
     router = router
-        .route("/ingest/tunneled", post(ingest_tunneled));
+        .route("/ingest/tunneled", post(ingest_tunneled))
+        .route("/ingest/browser-trace", post(ingest_browser_trace));
     // Reap abandoned instant-link sessions (tab closed mid-recording → a `recording` stub +
     // stage dir that will never see a commit). Guarded: `app()` is also built in tests with
     // no runtime.
@@ -1805,6 +1806,52 @@ async fn import_url(State(s): State<AppState>, headers: HeaderMap, Json(req): Js
     if let Ok(st) = s.storage.make_storage().await {
         if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &import_clip_dir).await {
             eprintln!("import_url post-mirror: {e}");
+        }
+    }
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// `POST /ingest/browser-trace` — accept a Browser-mode capture (a `BrowserTrace` JSON:
+/// clicks, DOM snapshots/mutations, console, network, navigation, input, scroll) and turn it
+/// into a clipxd index via the clean-room [`clipxd_browser`] ingester, returning the new clip
+/// id. This is the hosted counterpart of the CLI's `clipxd ingest-browser`, and the missing
+/// server half of Browser mode: Screen recording can only see input while the pointer is over
+/// the clipxd tab (a `getDisplayMedia` limit), so a recording of *another* page/app has no
+/// interaction track. A trace captured in that page — by the extension — does, and this is
+/// where it lands. Body is the raw trace JSON (login required; the clip is owned by the caller).
+async fn ingest_browser_trace(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> Result<Json<serde_json::Value>, WebErr> {
+    let user = require_user(&s, &headers)?;
+    let json = String::from_utf8(body.to_vec()).map_err(|_| (StatusCode::BAD_REQUEST, "trace body must be UTF-8 JSON".into()))?;
+    if json.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "empty trace".into()));
+    }
+    let id = mint_clip_id();
+    let clips_dir = s.clips_dir.clone();
+    let id_for_job = id.clone();
+    // Salience derivation + index build is pure CPU over the (possibly large) trace — off the
+    // async runtime.
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let created_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs().to_string()).unwrap_or_else(|_| "0".into());
+        let mut index = clipxd_browser::ingest_str(&json, &id_for_job, &created_at, &clipxd_browser::SalienceOpts::default())?;
+        // Build the flat search corpus (incl. the event stream) so a browser clip is as
+        // agent-greppable as a screen clip — the ingester doesn't run this itself.
+        clipxd_index::clean_index(&mut index);
+        let clip_dir = clips_dir.join(&id_for_job);
+        std::fs::create_dir_all(&clip_dir)?;
+        std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::BAD_REQUEST, format!("could not ingest trace: {e:#}")))?;
+
+    if let (Some(a), Some(u)) = (&s.auth, &user) {
+        let _ = a.db.set_clip_owner(&id, u.id);
+    }
+    let clip_dir = s.clips_dir.join(&id);
+    if let Ok(st) = s.storage.make_storage().await {
+        if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &clip_dir).await {
+            eprintln!("browser-trace post-mirror: {e}");
         }
     }
     Ok(Json(serde_json::json!({ "id": id })))
