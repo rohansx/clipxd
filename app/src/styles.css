@@ -1478,6 +1478,16 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 .settings-username{border-top:1px solid var(--border);padding-top:14px}
 .settings-username-row{display:flex;gap:8px}
 .settings-username-row .input{flex:1}
+.settings-key-row{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:14px}
+.settings-mode-toggle{display:flex;gap:8px;flex-wrap:wrap}
+.settings-mode-toggle button{
+  flex:1;min-width:180px;padding:10px 14px;border-radius:12px;cursor:pointer;
+  font-family:var(--font-ui);font-weight:600;font-size:12.5px;text-align:left;
+  border:1px solid var(--border);background:var(--panel-2);color:var(--text-2);
+}
+.settings-mode-toggle button:hover:not(:disabled):not(.on){border-color:var(--border-2);color:var(--text)}
+.settings-mode-toggle button.on{color:var(--signal-text);background:var(--signal-wash);border-color:color-mix(in oklab,var(--signal) 35%,transparent)}
+.settings-mode-toggle button:disabled{opacity:.6;cursor:default}
 
 .auth-card{
   width:min(400px,94vw);background:var(--panel);border:1px solid var(--border);

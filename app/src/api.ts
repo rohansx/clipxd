@@ -150,6 +150,48 @@ export async function logout(base = apiBase()): Promise<void> {
 /** Where to send the browser to start GitHub OAuth (full-page navigation). */
 export const githubLoginUrl = (base = apiBase()) => `${base}/auth/github`;
 
+// ---- BYOK settings (per-user NVIDIA/Gemini/Moondream keys + caption mode) ----
+
+/** Presence/absence of the caller's BYOK keys + their caption mode. Never carries key values —
+ *  see `saveKeys`/`fetchKeyStatus` (the server enforces this; there is no endpoint that returns
+ *  the actual stored key). */
+export interface KeyStatus {
+  has_nvidia: boolean;
+  has_gemini: boolean;
+  has_moondream: boolean;
+  caption_mode: "server" | "local";
+}
+
+/** Any subset of BYOK keys to set (a string) or clear (`null`), plus an optional caption_mode
+ *  change. Fields omitted are left untouched server-side. */
+export interface KeysUpdate {
+  nvidia_api_key?: string | null;
+  gemini_api_key?: string | null;
+  moondream_api_key?: string | null;
+  caption_mode?: "server" | "local";
+}
+
+/** GET /settings/keys — the caller's key presence/absence + caption mode. Requires auth. */
+export async function fetchKeyStatus(base = apiBase()): Promise<KeyStatus> {
+  return jsonOrThrow<KeyStatus>(await af(`${base}/settings/keys`), "settings/keys");
+}
+
+/** POST /settings/keys — set/clear any subset of BYOK keys and/or caption_mode.
+ *  Returns the caller's fresh `KeyStatus`. Throws with the server's message on failure
+ *  (e.g. an invalid caption_mode). */
+export async function saveKeys(update: KeysUpdate, base = apiBase()): Promise<KeyStatus> {
+  const r = await af(`${base}/settings/keys`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(update),
+  });
+  if (!r.ok) {
+    const msg = await r.text().catch(() => "");
+    throw new Error(msg || `HTTP ${r.status}`);
+  }
+  return (await r.json()) as KeyStatus;
+}
+
 // ---- clips ----
 
 /** GET /clips — the library list (your clips, in auth mode), newest first. */
