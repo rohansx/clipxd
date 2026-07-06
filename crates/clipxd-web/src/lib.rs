@@ -181,6 +181,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/clip/:id/cursor", post(set_cursor))
             .route("/clip/:id/claim", post(clip_claim))
             .route("/clip/:id/re-enrich", post(clip_re_enrich))
+            .route("/clip/:id/local-captions", post(post_local_captions))
             .route("/ingest", post(ingest))
             .route("/ingest/stage", post(ingest_stage_create))
             .route("/ingest/stage/:session", put(ingest_stage_append))
@@ -1233,6 +1234,27 @@ fn owner_llm_keys(auth: &Option<AuthState>, id: &str) -> (Option<String>, Option
     a.db.llm_keys(owner_id).unwrap_or((None, None))
 }
 
+/// The clip owner's caption backend override, if any — `None` means "use the server's own
+/// env-driven cascade unchanged" (see [`veyo_enrich::Enricher::with_local_defaults`]).
+/// `caption_mode: local` wins outright (fully offline heuristic captions, no VLM/network at
+/// all for this clip); otherwise an owner-set Moondream cloud key overrides just the captioner
+/// — everything else (OCR, transcript) is untouched and every *other* owner's clips are
+/// unaffected, since this is looked up per clip id rather than mutating shared process env.
+fn owner_caption_source(auth: &Option<AuthState>, id: &str) -> Option<veyo_enrich::CaptionSource> {
+    let a = auth.as_ref()?;
+    let owner_id = a.db.clip_owner(id).ok().flatten()?;
+    let status = a.db.key_status(owner_id).ok()?;
+    if status.caption_mode == "local" {
+        return Some(veyo_enrich::CaptionSource::Local);
+    }
+    if status.has_moondream {
+        if let Some(token) = a.db.moondream_key(owner_id).ok().flatten() {
+            return Some(veyo_enrich::CaptionSource::MoondreamKey(token));
+        }
+    }
+    None
+}
+
 fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard, browser_trace: Option<String>) {
     let storage_arc = s.storage.clone();
     let permits = s.phase2_permits.clone();
@@ -1247,10 +1269,13 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
         }
         let bg_id = id.clone();
         let bg_dir = clip_dir.clone();
+        // BYOK/local-mode caption override for the from-scratch path — the incremental path
+        // already baked this into `indexer` back at `/ingest/stage` creation time.
+        let caption_source = owner_caption_source(&auth, &bg_id);
         let _ = tokio::task::spawn_blocking(move || {
             let result = match incremental {
                 Some(indexer) => indexer.finalize(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
-                None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0).map(|_| ()),
+                None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0, caption_source).map(|_| ()),
             };
             if let Err(e) = result {
                 eprintln!("background enrich failed for {bg_id}: {e:#}");
@@ -1381,7 +1406,10 @@ async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> R
         async move { write_object_best_effort(&s, &key, index_json.into_bytes(), "application/json").await }
     });
 
-    let indexer = IncrementalIndexer::new(stage_frames_dir(&id), 4.0);
+    // Owner is already recorded (just above) — decide the BYOK/local-mode caption override
+    // once, up front, so every incremental pass for this session uses the same captioner.
+    let caption_source = owner_caption_source(&s.auth, &id);
+    let indexer = IncrementalIndexer::new(stage_frames_dir(&id), 4.0, caption_source);
     s.stage_sessions.lock().await.insert(id.clone(), Arc::new(StdMutex::new(Some(indexer))));
     Ok(Json(serde_json::json!({ "id": id, "session": id })))
 }
@@ -1642,8 +1670,9 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
     let bg_id = id.clone();
     let bg_dir = clip_dir.clone();
     let bg_storage = s.storage.clone();
+    let caption_source = owner_caption_source(&s.auth, &id);
     tokio::spawn(async move {
-        if let Err(e) = clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0) {
+        if let Err(e) = clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0, caption_source) {
             eprintln!("background re-enrich failed for {bg_id}: {e:#}");
             if let Ok(s) = std::fs::read_to_string(bg_dir.join("index.json")) {
                 if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
@@ -1687,6 +1716,77 @@ async fn set_cursor(State(s): State<AppState>, Path(id): Path<String>, headers: 
     write_object_best_effort(&s, &format!("{id}/zoom.json"), zoom_bytes, "application/json").await;
     write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
     Ok(Json(serde_json::json!({ "ok": true, "keyframes": zoom.len(), "events": index.event_track.len() })))
+}
+
+/// One client-submitted caption in a `POST /clip/:id/local-captions` body.
+#[derive(serde::Deserialize)]
+struct LocalCaptionIn {
+    /// Seconds into the clip.
+    t: f64,
+    caption: String,
+}
+
+#[derive(serde::Deserialize)]
+struct LocalCaptionsBody {
+    captions: Vec<LocalCaptionIn>,
+}
+
+/// `POST /clip/:id/local-captions` — accept client-submitted captions (e.g. from a
+/// fully-client-side/WebGPU captioner, for a clip owner whose `caption_mode` is `local` and so
+/// never got server-side VLM captions) and graft them into the clip's `visual_timeline`. Mirrors
+/// `merge_browser_trace_into_clip`'s exact pattern: read `index.json`, extend the stream, re-run
+/// `clean_index` (dedup + rebuild the agent search corpus), write back — just over
+/// `visual_timeline` alone rather than a whole browser trace's several streams. Login +
+/// ownership required, same `require_clip_access` gate as `clip_re_enrich`/`set_cursor`.
+async fn post_local_captions(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<LocalCaptionsBody>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    require_clip_access(&s, &headers, &id)?;
+    if body.captions.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "no captions supplied".into()));
+    }
+    if body.captions.len() > 500 {
+        return Err((StatusCode::BAD_REQUEST, "too many captions (500 max per call)".into()));
+    }
+
+    let mut index = load_index(&s, &id).await?;
+    let mut added = 0usize;
+    for c in &body.captions {
+        if !c.t.is_finite() {
+            return Err((StatusCode::BAD_REQUEST, "caption 't' must be a finite number".into()));
+        }
+        let text = c.caption.trim();
+        if text.is_empty() {
+            continue; // skip blanks rather than fail the whole batch
+        }
+        index.visual_timeline.push(clipxd_index::VisualMoment {
+            t: c.t.max(0.0),
+            // Trusted, explicit client input — high salience so `clean_index`'s MAX_MOMENTS
+            // trim keeps these over lower-confidence auto-generated moments.
+            salience: 1.0,
+            caption: text.chars().take(2000).collect(),
+            delta: "local_caption".to_string(),
+            frame_ref: None,
+        });
+        added += 1;
+    }
+    if added == 0 {
+        return Err((StatusCode::BAD_REQUEST, "no non-empty captions supplied".into()));
+    }
+
+    clipxd_index::clean_index(&mut index); // dedup streams + rebuild search corpus
+    let dir = s.clips_dir.join(&id);
+    let index_json = serde_json::to_string_pretty(&index).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(dir.join("index.json"), &index_json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "added": added, "visual_timeline": index.visual_timeline.len() })))
 }
 
 /// Resolve the `clipxd` CLI: a sibling release build (fast), then the debug sibling, then PATH.

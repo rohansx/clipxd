@@ -15,7 +15,7 @@ use clipxd_index::{Index, Metadata, Source, Status};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use veyo_core::CodecConfig;
-use veyo_enrich::{EnrichInput, Enricher};
+use veyo_enrich::{CaptionSource, EnrichInput, Enricher};
 
 pub struct RecordOutput {
     pub clip_dir: PathBuf,
@@ -31,7 +31,9 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     std::fs::create_dir_all(&clip_dir)?;
     let title = title_of(video);
     let _ = std::fs::copy(video, clip_dir.join("video.mp4"));
-    let index = enrich_clip(video, &clip_dir, &id, &title, events, sample_fps)?;
+    // No per-owner BYOK context here (CLI has no concept of a clip owner) — the server's
+    // env-driven caption cascade applies unchanged.
+    let index = enrich_clip(video, &clip_dir, &id, &title, events, sample_fps, None)?;
     let zoom_keyframes = std::fs::read_to_string(clip_dir.join("zoom.json"))
         .ok()
         .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok())
@@ -112,8 +114,19 @@ pub fn promote_recording_stub(clip_dir: &Path, video: &Path, id: &str, title: &s
 /// **Phase 2:** the heavy part — frames → veyo gate → enrich (OCR/caption) → index, written
 /// into an existing `clip_dir` (overwriting any stub). Used by both `record_from_video` and the
 /// async ingest's background task. If `events` is empty, a sibling `events.json` (e.g. from a
-/// browser cursor POST) is honored so the camera still follows the cursor.
-pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events: &EventTrack, sample_fps: f32) -> Result<Index> {
+/// browser cursor POST) is honored so the camera still follows the cursor. `caption_source`,
+/// when `Some`, overrides which captioner backs this one clip (BYOK Moondream key or a
+/// `caption_mode: local` clip owner) — see [`veyo_enrich::CaptionSource`]; `None` reproduces the
+/// server's usual env-driven cascade.
+pub fn enrich_clip(
+    video: &Path,
+    clip_dir: &Path,
+    id: &str,
+    title: &str,
+    events: &EventTrack,
+    sample_fps: f32,
+    caption_source: Option<CaptionSource>,
+) -> Result<Index> {
     ensure!(video.exists(), "no such video: {}", video.display());
     let info = media::probe(video)?;
     let frames = media::extract_frames(video, &clip_dir.join("frames"), sample_fps)?;
@@ -127,7 +140,7 @@ pub fn enrich_clip(video: &Path, clip_dir: &Path, id: &str, title: &str, events:
         let tx_handle = scope.spawn(|| audio.as_deref().map(crate::transcribe::transcribe).unwrap_or_default());
         let visual = (|| -> Result<(gate::GateOutput, veyo_enrich::Enrichment)> {
             let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
-            let enricher = Enricher::with_local_defaults();
+            let enricher = Enricher::with_caption_source(caption_source);
             let (tb, ob, cb) = enricher.backends();
             eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
             let enrichment = enricher.enrich(&EnrichInput {
