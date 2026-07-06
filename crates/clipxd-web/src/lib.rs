@@ -195,7 +195,8 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/auth/me", get(auth_me))
             .route("/auth/username", post(auth_set_username))
             .route("/auth/github", get(github_start))
-            .route("/auth/github/callback", get(github_callback));
+            .route("/auth/github/callback", get(github_callback))
+            .route("/settings/keys", get(get_settings_keys).post(post_settings_keys));
     }
     // Tunneled ingest: only meaningful when `CLIPXD_YT_TUNNEL_URL` is set. The forwarder
     // (your home box) calls this with the video bytes it pulled via yt-dlp.
@@ -452,6 +453,62 @@ async fn auth_set_username(
     let user = a.db.find_by_id(principal.id).ok().flatten()
         .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "user vanished".into()))?;
     Ok(Json(user_json(&user)))
+}
+
+/// `GET /settings/keys` — presence/absence of each BYOK key + caption mode for the caller.
+/// Never returns the actual key values (see [`auth::KeyStatus`]).
+async fn get_settings_keys(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<auth::KeyStatus>, WebErr> {
+    let a = auth_of(&s)?;
+    let principal = auth::authenticate(&a.jwt_secret, &headers).ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    let status = a.db.key_status(principal.id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(status))
+}
+
+/// A raw JSON-value field: parsed as "leave unchanged" (key absent from the body), "clear"
+/// (`null`, or a string that's empty/all-whitespace once trimmed), or "set" (a non-empty
+/// trimmed string) — a plain `Option<String>` can't distinguish "absent" from "explicit null",
+/// so the body is read as a generic object and each field inspected directly instead of via a
+/// `#[derive(Deserialize)]` struct.
+fn norm_key_field(v: &serde_json::Value) -> Result<Option<String>, WebErr> {
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            Ok(if t.is_empty() { None } else { Some(t.to_string()) })
+        }
+        _ => Err((StatusCode::BAD_REQUEST, "expected a string or null".into())),
+    }
+}
+
+/// `POST /settings/keys` — set/clear any subset of the caller's BYOK keys and/or caption mode.
+/// Body: `{"nvidia_api_key"?: string|null, "gemini_api_key"?: string|null,
+/// "moondream_api_key"?: string|null, "caption_mode"?: "server"|"local"}`. Fields absent from
+/// the body are left untouched; `null` (or an all-whitespace string) clears that key. Returns
+/// the caller's fresh [`auth::KeyStatus`] — never the raw key values.
+async fn post_settings_keys(State(s): State<AppState>, headers: HeaderMap, Json(body): Json<serde_json::Value>) -> Result<Json<auth::KeyStatus>, WebErr> {
+    let a = auth_of(&s)?;
+    let principal = auth::authenticate(&a.jwt_secret, &headers).ok_or((StatusCode::UNAUTHORIZED, "not logged in".into()))?;
+    let obj = body.as_object().ok_or((StatusCode::BAD_REQUEST, "expected a JSON object body".into()))?;
+
+    if let Some(v) = obj.get("nvidia_api_key") {
+        let key = norm_key_field(v)?;
+        a.db.set_nvidia_key(principal.id, key.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = obj.get("gemini_api_key") {
+        let key = norm_key_field(v)?;
+        a.db.set_gemini_key(principal.id, key.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = obj.get("moondream_api_key") {
+        let key = norm_key_field(v)?;
+        a.db.set_moondream_key(principal.id, key.as_deref()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = obj.get("caption_mode") {
+        let mode = v.as_str().ok_or((StatusCode::BAD_REQUEST, "caption_mode must be a string".into()))?;
+        a.db.set_caption_mode(principal.id, mode).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
+
+    let status = a.db.key_status(principal.id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(status))
 }
 
 async fn auth_logout(State(s): State<AppState>) -> Result<Response, WebErr> {
@@ -1167,9 +1224,19 @@ fn merge_browser_trace_into_clip(clip_dir: &std::path::Path, id: &str, trace_jso
     Ok(())
 }
 
+/// The clip owner's own NVIDIA/Gemini BYOK keys, if auth is on and the clip has a known owner
+/// who set any — `(None, None)` otherwise, which tells `llm::complete_with_keys` to fall back
+/// to the server's env-configured keys.
+fn owner_llm_keys(auth: &Option<AuthState>, id: &str) -> (Option<String>, Option<String>) {
+    let Some(a) = auth else { return (None, None) };
+    let Some(owner_id) = a.db.clip_owner(id).ok().flatten() else { return (None, None) };
+    a.db.llm_keys(owner_id).unwrap_or((None, None))
+}
+
 fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard, browser_trace: Option<String>) {
     let storage_arc = s.storage.clone();
     let permits = s.phase2_permits.clone();
+    let auth = s.auth.clone();
     tokio::spawn(async move {
         let _claim = claim; // held until this async block ends
         let _permit = permits.acquire_owned().await.ok();
@@ -1205,21 +1272,27 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             })
             .await;
         }
+        // BYOK: use the clip owner's own NVIDIA/Gemini keys if they've set any, so their usage
+        // lands on their own account/quota instead of the server's shared one. `None` for
+        // either falls back to the server's env-configured key inside `llm::complete_with_keys`.
+        let (nvidia_key, gemini_key) = owner_llm_keys(&auth, &id);
+        let has_llm_key = nvidia_key.is_some() || gemini_key.is_some() || llm::any_backend_configured();
         // Auto-title + description: unconditional (any LLM backend configured is enough) —
         // cheap, one short prompt, one small JSON reply. Every clip deserves a real name and a
         // one-line library-card description instead of sitting there as "Screen recording"
         // forever. Runs before the optional deep pass so a clip that only gets this (deep pass
         // off) still gets named.
-        if llm::any_backend_configured() {
-            if let Err(e) = deeppass::generate_title_and_description(&clip_dir, &id).await {
+        if has_llm_key {
+            if let Err(e) = deeppass::generate_title_and_description(&clip_dir, &id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
                 eprintln!("auto-title for {id}: {e:#} (continuing)");
             }
         }
         // Optional Tier-2 deep pass (NVIDIA/Gemini text-context → title/tldr/chapters). Off
-        // unless CLIPXD_DEEP_PASS=1 + a backend key are set — the local-first default sends
-        // nothing anywhere. Runs before the final mirror so the merged index lands in S3.
-        if deeppass::enabled() {
-            if let Err(e) = deeppass::run(&clip_dir, &id).await {
+        // unless CLIPXD_DEEP_PASS=1 + a backend key (server- or owner-supplied) are available —
+        // the local-first default sends nothing anywhere. Runs before the final mirror so the
+        // merged index lands in S3.
+        if deeppass::enabled(nvidia_key.is_some() || gemini_key.is_some()) {
+            if let Err(e) = deeppass::run(&clip_dir, &id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
                 eprintln!("deep pass for {id}: {e:#} (continuing)");
             }
         }

@@ -65,6 +65,16 @@ pub struct AuthUser {
     pub email: String,
 }
 
+/// Presence/absence of a user's BYOK keys + their caption mode — the shape the settings UI
+/// reads. Never carries the actual key values (see [`Db::key_status`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyStatus {
+    pub has_nvidia: bool,
+    pub has_gemini: bool,
+    pub has_moondream: bool,
+    pub caption_mode: String,
+}
+
 /// SQLite-backed user + clip-ownership store. Cloned cheaply (Arc); ops are short and synchronous.
 #[derive(Clone)]
 pub struct Db {
@@ -101,6 +111,17 @@ impl Db {
         conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL;",
         )?;
+        // BYOK: a user's own NVIDIA/Gemini/Moondream keys, used instead of the server's shared
+        // ones for their own clips — so their usage lands on their own account/quota, not ours.
+        // `caption_mode` picks between the server's captioner and fully client-side captioning
+        // (WebGPU Moondream in the browser/extension — no network call to anyone). Stored
+        // plaintext, same trust boundary as the server's own keys in its env file (filesystem
+        // permissions, not app-level encryption) — never echoed back over HTTP, only
+        // presence/absence booleans (see `Db::key_status`).
+        for col in ["nvidia_api_key", "gemini_api_key", "moondream_api_key"] {
+            let _ = conn.execute(&format!("ALTER TABLE users ADD COLUMN {col} TEXT"), []);
+        }
+        let _ = conn.execute("ALTER TABLE users ADD COLUMN caption_mode TEXT NOT NULL DEFAULT 'server'", []);
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -166,6 +187,50 @@ impl Db {
             anyhow::anyhow!(e)
         })?;
         Ok(())
+    }
+
+    /// Presence/absence of each BYOK key + the caption mode — what the settings UI shows.
+    /// Never returns the actual key values (see [`Db::llm_keys`]/[`Db::moondream_key`], which
+    /// are for internal use only, right before making the call they're for).
+    pub fn key_status(&self, user_id: i64) -> Result<KeyStatus> {
+        let c = self.lock();
+        c.query_row(
+            "SELECT nvidia_api_key IS NOT NULL, gemini_api_key IS NOT NULL, moondream_api_key IS NOT NULL, caption_mode FROM users WHERE id = ?1",
+            [user_id],
+            |r| Ok(KeyStatus { has_nvidia: r.get(0)?, has_gemini: r.get(1)?, has_moondream: r.get(2)?, caption_mode: r.get(3)? }),
+        ).map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Set (or, with `None`, clear) one of the BYOK keys / the caption mode. `field` is one of
+    /// `nvidia_api_key` / `gemini_api_key` / `moondream_api_key` / `caption_mode` — a fixed,
+    /// internally-controlled set (never built from request input), so interpolating it into the
+    /// column name here is safe from injection.
+    fn set_field(&self, user_id: i64, field: &str, value: Option<&str>) -> Result<()> {
+        self.lock().execute(&format!("UPDATE users SET {field} = ?1 WHERE id = ?2"), rusqlite::params![value, user_id])?;
+        Ok(())
+    }
+    pub fn set_nvidia_key(&self, user_id: i64, key: Option<&str>) -> Result<()> { self.set_field(user_id, "nvidia_api_key", key) }
+    pub fn set_gemini_key(&self, user_id: i64, key: Option<&str>) -> Result<()> { self.set_field(user_id, "gemini_api_key", key) }
+    pub fn set_moondream_key(&self, user_id: i64, key: Option<&str>) -> Result<()> { self.set_field(user_id, "moondream_api_key", key) }
+    pub fn set_caption_mode(&self, user_id: i64, mode: &str) -> Result<()> {
+        anyhow::ensure!(matches!(mode, "server" | "local"), "caption_mode must be 'server' or 'local'");
+        self.set_field(user_id, "caption_mode", Some(mode))
+    }
+
+    /// The user's own NVIDIA/Gemini keys for making an LLM call on their behalf — `None` for
+    /// either means "use the server's own env-configured key instead" (see `llm::complete`).
+    pub fn llm_keys(&self, user_id: i64) -> Result<(Option<String>, Option<String>)> {
+        Ok(self.lock().query_row(
+            "SELECT nvidia_api_key, gemini_api_key FROM users WHERE id = ?1",
+            [user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).optional()?.unwrap_or((None, None)))
+    }
+
+    /// The user's own Moondream cloud API key (`x-moondream-auth`) — `None` means "use the
+    /// server's own `CLIPXD_TOKEN` instead".
+    pub fn moondream_key(&self, user_id: i64) -> Result<Option<String>> {
+        Ok(self.lock().query_row("SELECT moondream_api_key FROM users WHERE id = ?1", [user_id], |r| r.get(0)).optional()?.flatten())
     }
 
     /// Find or create the user for a GitHub identity. Links to an existing account by email.
@@ -430,5 +495,80 @@ impl AuthState {
         let app_base = std::env::var("CLIPXD_PUBLIC_BASE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "http://localhost:8787".to_string());
         let cookie_secure = app_base.starts_with("https://");
         Ok(Self { db, jwt_secret: Arc::new(jwt_secret), github: GithubCfg::from_env(), app_base: Arc::new(app_base), cookie_secure })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh `Db` backed by a throwaway file under the system temp dir, unique per test (by
+    /// name) so parallel `cargo test` runs never collide on the same SQLite file.
+    fn test_db(name: &str) -> (Db, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("clipxd-auth-test-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        let db = Db::open(&path).expect("open test db");
+        (db, dir)
+    }
+
+    #[test]
+    fn key_status_reflects_set_and_clear() {
+        let (db, dir) = test_db("key-status");
+        let user = db.create_password_user("byok@example.com", "hash", None, None).unwrap();
+
+        // fresh user: nothing set, default caption_mode
+        let status = db.key_status(user.id).unwrap();
+        assert!(!status.has_nvidia);
+        assert!(!status.has_gemini);
+        assert!(!status.has_moondream);
+        assert_eq!(status.caption_mode, "server");
+
+        // set all three keys
+        db.set_nvidia_key(user.id, Some("nvidia-secret")).unwrap();
+        db.set_gemini_key(user.id, Some("gemini-secret")).unwrap();
+        db.set_moondream_key(user.id, Some("moondream-secret")).unwrap();
+        let status = db.key_status(user.id).unwrap();
+        assert!(status.has_nvidia);
+        assert!(status.has_gemini);
+        assert!(status.has_moondream);
+
+        // clear just nvidia — the others stay set
+        db.set_nvidia_key(user.id, None).unwrap();
+        let status = db.key_status(user.id).unwrap();
+        assert!(!status.has_nvidia);
+        assert!(status.has_gemini);
+        assert!(status.has_moondream);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_caption_mode_rejects_an_invalid_mode() {
+        let (db, dir) = test_db("caption-mode-invalid");
+        let user = db.create_password_user("mode@example.com", "hash", None, None).unwrap();
+
+        let err = db.set_caption_mode(user.id, "cloud").unwrap_err();
+        assert!(err.to_string().contains("caption_mode must be"), "{err}");
+        // rejected write must not have changed anything
+        assert_eq!(db.key_status(user.id).unwrap().caption_mode, "server");
+
+        db.set_caption_mode(user.id, "local").unwrap();
+        assert_eq!(db.key_status(user.id).unwrap().caption_mode, "local");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn llm_keys_default_to_none_for_a_user_who_never_set_any() {
+        let (db, dir) = test_db("llm-keys-default");
+        let user = db.create_password_user("nokeys@example.com", "hash", None, None).unwrap();
+
+        let (nvidia, gemini) = db.llm_keys(user.id).unwrap();
+        assert_eq!(nvidia, None);
+        assert_eq!(gemini, None);
+        assert_eq!(db.moondream_key(user.id).unwrap(), None);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
