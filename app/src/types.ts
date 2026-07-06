@@ -12,6 +12,8 @@ export interface Metadata {
   fps: number;
   created_at: string;
   title: string;
+  /** AI-derived one-sentence description, for library cards. Empty until auto-title runs. */
+  description?: string;
   app_focus?: { start: number; end: number; app: string; window: string }[];
   url_context?: string;
   has_video: boolean;

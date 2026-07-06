@@ -104,6 +104,10 @@ pub struct Metadata {
     pub created_at: String,
     /// AI-derived, human-editable title.
     pub title: String,
+    /// AI-derived one-sentence description, for library cards. Empty until the auto-title
+    /// pass runs (or for clips recorded before this field existed).
+    #[serde(default)]
+    pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_focus: Vec<AppFocus>,
     /// Browser mode: the page(s) involved.
@@ -235,6 +239,7 @@ mod tests {
             fps: 30.0,
             created_at: "1700000000".into(),
             title: "t".into(),
+            description: String::new(),
             app_focus: vec![],
             url_context: None,
             has_video: true,

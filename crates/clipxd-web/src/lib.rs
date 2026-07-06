@@ -1205,12 +1205,13 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             })
             .await;
         }
-        // Auto-title: unconditional (any LLM backend configured is enough) — cheap, one short
-        // prompt, and every clip deserves a real name instead of sitting in the library as
-        // "Screen recording" forever. Runs before the optional deep pass so a clip that only
-        // gets this (deep pass off) still gets named.
+        // Auto-title + description: unconditional (any LLM backend configured is enough) —
+        // cheap, one short prompt, one small JSON reply. Every clip deserves a real name and a
+        // one-line library-card description instead of sitting there as "Screen recording"
+        // forever. Runs before the optional deep pass so a clip that only gets this (deep pass
+        // off) still gets named.
         if llm::any_backend_configured() {
-            if let Err(e) = deeppass::generate_title(&clip_dir, &id).await {
+            if let Err(e) = deeppass::generate_title_and_description(&clip_dir, &id).await {
                 eprintln!("auto-title for {id}: {e:#} (continuing)");
             }
         }
@@ -1279,6 +1280,7 @@ async fn ingest_stage_create(State(s): State<AppState>, headers: HeaderMap) -> R
                     fps: 0.0,
                     created_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs().to_string()).unwrap_or_else(|_| "0".into()),
                     title: "Screen recording".to_string(),
+                    description: String::new(),
                     app_focus: Vec::new(),
                     url_context: None,
                     has_video: true,
@@ -3358,6 +3360,7 @@ mod tests {
                 fps: 30.0,
                 created_at: "1700000000".into(),
                 title: "Screen recording".into(),
+                description: String::new(),
                 app_focus: vec![],
                 url_context: None,
                 has_video: true,

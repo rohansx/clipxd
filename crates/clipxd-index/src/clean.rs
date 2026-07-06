@@ -289,6 +289,7 @@ mod tests {
             fps: 30.0,
             created_at: "1700000000".into(),
             title: "t".into(),
+            description: String::new(),
             app_focus: vec![],
             url_context: None,
             has_video: true,

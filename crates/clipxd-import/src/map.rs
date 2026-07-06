@@ -28,6 +28,7 @@ pub fn to_index(
             fps: media.fps,
             created_at: created_at.to_string(),
             title: title.to_string(),
+            description: String::new(),
             app_focus: Vec::new(),
             url_context: None,
             has_video: true,

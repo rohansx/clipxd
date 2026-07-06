@@ -61,7 +61,11 @@ export function WatchBody(p: WatchBodyProps) {
     },
     null,
   );
-  const caption = moment && moment.d < 1.2 ? moment.m.caption : null;
+  // Cap the live caption badge's length — an older clip's caption (predating the server-side
+  // repetition-collapse fix) or just a genuinely long one otherwise overflows the whole video
+  // (no natural max-height for text sitting over playback controls).
+  const rawCaption = moment && moment.d < 1.2 ? moment.m.caption : null;
+  const caption = rawCaption && rawCaption.length > 140 ? rawCaption.slice(0, 140).trimEnd() + "…" : rawCaption;
   const zoomLabel = manualScale ? `✎ manual ${manualScale.toFixed(1)}×` : kf && kf.scale > 1.05 ? `◎ ${kf.scale.toFixed(1)}× auto-zoom` : null;
 
   const frameRef = useRef<HTMLDivElement>(null);

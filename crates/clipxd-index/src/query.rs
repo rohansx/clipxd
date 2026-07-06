@@ -322,6 +322,7 @@ mod tests {
                 fps: 30.0,
                 created_at: "0".into(),
                 title: "Checkout 500".into(),
+                description: String::new(),
                 app_focus: vec![],
                 url_context: None,
                 has_video: true,

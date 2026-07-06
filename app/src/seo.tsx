@@ -110,9 +110,15 @@ export const SEO_VIEWS = {
   },
   settings: {
     title: "Settings",
-    description: "Manage your clipxd account, username, and appearance.",
+    description: "Manage your clipxd account, username, appearance, and bring-your-own-key settings.",
     path: "/settings",
     noindex: true,
+  },
+  docs: {
+    title: "Docs",
+    description:
+      "How clipxd works: recording modes, the structured index, the MCP server, sharing, comments, the cinematic editor, the browser extension, and bring-your-own-key options.",
+    path: "/docs",
   },
   auth: {
     title: "Sign in",

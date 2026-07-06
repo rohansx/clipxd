@@ -21,9 +21,10 @@ const Recording = lazy(() => import("./Recording").then((m) => ({ default: m.Rec
 const ImportView = lazy(() => import("./Import").then((m) => ({ default: m.ImportView })));
 const Chat = lazy(() => import("./Chat").then((m) => ({ default: m.Chat })));
 const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
+const Docs = lazy(() => import("./Docs").then((m) => ({ default: m.Docs })));
 
 export type View = "landing" | "auth" | "cloud";
-export type CloudView = "library" | "recording" | "import" | "chat" | "clip" | "settings";
+export type CloudView = "library" | "recording" | "import" | "chat" | "clip" | "settings" | "docs";
 export type Theme = "light" | "dark";
 
 /** A seek request from the topbar search → consumed by the open ClipPage (nonce forces re-fire). */
@@ -458,6 +459,11 @@ function ViewBody(p: {
               onLogout={p.auth.logout}
               showToast={p.showToast}
             />
+          </motion.div>
+        )}
+        {p.cloudView === "docs" && (
+          <motion.div key="docs" {...baseProps}>
+            <Docs />
           </motion.div>
         )}
       </AnimatePresence>
