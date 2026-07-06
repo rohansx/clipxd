@@ -64,6 +64,7 @@ const ClipCard = memo(function ClipCard({ c, onOpen }: { c: ClipSummary; onOpen:
       </div>
       <div className="clip-body">
         <div className="clip-name">{c.metadata.title || c.id}</div>
+        {c.metadata.description && <div className="clip-desc">{c.metadata.description}</div>}
         <div className="clip-meta">
           {c.status === "recording" ? (
             <>

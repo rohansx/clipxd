@@ -100,7 +100,7 @@ mod tests {
         let mut idx = Index::new(
             "clp_1",
             Source::Screen,
-            Metadata { duration: 10.0, resolution: [100, 100], fps: 30.0, created_at: "0".into(), title: "t".into(), app_focus: vec![], url_context: None, has_video: true },
+            Metadata { duration: 10.0, resolution: [100, 100], fps: 30.0, created_at: "0".into(), title: "t".into(), description: String::new(), app_focus: vec![], url_context: None, has_video: true },
         );
         idx.visual_timeline = moments;
         idx

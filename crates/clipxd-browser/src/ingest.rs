@@ -39,6 +39,7 @@ pub fn build_index(trace: &BrowserTrace, id: &str, created_at: &str, opts: &Opts
             fps: 0.0,
             created_at: created_at.to_string(),
             title,
+            description: String::new(),
             app_focus: Vec::new(),
             url_context: Some(url_context),
             has_video: false,
