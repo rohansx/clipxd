@@ -74,12 +74,23 @@ function markEnteredApp(): void {
   }
 }
 
+/** Docs is the one cloud view with a real, addressable URL — /docs works as a direct link,
+ *  bookmark, or refresh, the same way `?clip=` already does for the clip view. */
+function initialIsDocsPath(): boolean {
+  try {
+    return window.location.pathname === "/docs";
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const reduced = usePrefersReducedMotion();
   const deepLink = useMemo(initialClipId, []);
+  const isDocsPath = useMemo(initialIsDocsPath, []);
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [view, setView] = useState<View>(deepLink ? "cloud" : "landing");
-  const [cloudView, setCloudView] = useState<CloudView>(deepLink ? "clip" : "library");
+  const [view, setView] = useState<View>(deepLink || isDocsPath ? "cloud" : "landing");
+  const [cloudView, setCloudView] = useState<CloudView>(deepLink ? "clip" : isDocsPath ? "docs" : "library");
   const [activeClipId, setActiveClipId] = useState<string | null>(deepLink);
   const [toast, setToast] = useState<string | null>(null);
   const [seekTo, setSeekTo] = useState<SeekRequest | null>(null);
@@ -161,11 +172,15 @@ export default function App() {
     saveTheme(theme);
   }, [theme]);
 
-  // Reflect the open clip in the URL (shareable/refreshable) without a reload.
+  // Reflect the open clip and the docs view in the URL (shareable/refreshable) without a
+  // reload. Docs gets a real pathname (not a query param) since it's plain content, not a
+  // per-session deep link — matches the /docs entry already in SEO_VIEWS.
   useEffect(() => {
     const u = new URL(location.href);
     if (view === "cloud" && cloudView === "clip" && activeClipId) u.searchParams.set("clip", activeClipId);
     else u.searchParams.delete("clip");
+    if (view === "cloud" && cloudView === "docs") u.pathname = "/docs";
+    else if (u.pathname === "/docs") u.pathname = "/";
     history.replaceState(null, "", u.toString());
   }, [view, cloudView, activeClipId]);
 
@@ -406,7 +421,7 @@ function ViewBody(p: {
     >
       <AnimatePresence mode="wait" initial={false}>
         {p.cloudView === "library" && (
-          <motion.div key="library" {...baseProps}>
+          <motion.div key="library" className="cloud-view-wrap" {...baseProps}>
             <Library
               clips={p.clips}
               filter={p.filter}
@@ -419,12 +434,12 @@ function ViewBody(p: {
           </motion.div>
         )}
         {p.cloudView === "clip" && (
-          <motion.div key={"clip-" + (p.activeClipId ?? "none")} {...baseProps}>
+          <motion.div key={"clip-" + (p.activeClipId ?? "none")} className="cloud-view-wrap" {...baseProps}>
             <ClipPage id={p.activeClipId} seekTo={p.seekTo} showToast={p.showToast} />
           </motion.div>
         )}
         {p.cloudView === "recording" && (
-          <motion.div key="recording" {...baseProps}>
+          <motion.div key="recording" className="cloud-view-wrap" {...baseProps}>
             <Recording
               onClipReady={p.afterCreate}
               showToast={p.showToast}
@@ -434,7 +449,7 @@ function ViewBody(p: {
           </motion.div>
         )}
         {p.cloudView === "import" && (
-          <motion.div key="import" {...baseProps}>
+          <motion.div key="import" className="cloud-view-wrap" {...baseProps}>
             <ImportView
               initialUrl={p.importUrl}
               onDone={p.afterCreate}
@@ -443,12 +458,12 @@ function ViewBody(p: {
           </motion.div>
         )}
         {p.cloudView === "chat" && (
-          <motion.div key="chat" {...baseProps}>
+          <motion.div key="chat" className="cloud-view-wrap" {...baseProps}>
             <Chat clips={p.clips} onOpen={p.openClip} />
           </motion.div>
         )}
         {p.cloudView === "settings" && (
-          <motion.div key="settings" {...baseProps}>
+          <motion.div key="settings" className="cloud-view-wrap" {...baseProps}>
             <Settings
               authEnabled={p.auth.authEnabled}
               user={p.auth.user}
@@ -462,7 +477,7 @@ function ViewBody(p: {
           </motion.div>
         )}
         {p.cloudView === "docs" && (
-          <motion.div key="docs" {...baseProps}>
+          <motion.div key="docs" className="cloud-view-wrap" {...baseProps}>
             <Docs />
           </motion.div>
         )}

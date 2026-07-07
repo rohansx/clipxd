@@ -718,6 +718,13 @@ h2.section-title{
 
 /* main column + topbar */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+/* AnimatePresence's motion.div wrapper around each cloud view sits directly between .main
+   and .view — without this, it's an unstyled block div, so .view's flex:1/min-height:0 never
+   apply (they only mean anything on a flex item), .view grows to its full content height
+   instead of the viewport's remaining space, and the page becomes unscrollable by wheel/
+   trackpad (only programmatic scrollIntoView still reaches it, which is why TOC links "worked"
+   while normal scrolling didn't). This restores the flex chain: .main -> .cloud-view-wrap -> .view. */
+.cloud-view-wrap{display:flex;flex-direction:column;flex:1;min-height:0}
 .topbar{
   display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--border);
 }
