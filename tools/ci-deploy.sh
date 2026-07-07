@@ -10,7 +10,11 @@
 #   1. log start (with cksum so we can prove the wrapper itself wasn't edited)
 #   2. fast-forward local master to origin/master (idempotent, never destructive)
 #   3. refuse if the fast-forward isn't possible (unmerged local commits)
-#   4. delegate to the existing deploy/deploy.sh — it builds SPA + Rust
+#   4. fast-forward the sibling /home/clipxd/veyo checkout the same way — clipxd-web/
+#      clipxd-recorder depend on it via path deps, so a stale veyo checkout can fail the
+#      build outright (a type the new clipxd code needs doesn't exist yet) or, worse,
+#      silently ship an old enrichment pipeline under a new clipxd binary
+#   5. delegate to the existing deploy/deploy.sh — it builds SPA + Rust
 #      binaries, restarts the systemd unit, reloads Caddy
 #
 # Logging: /var/log/clipxd-ci-deploy.log — one line per state change.
@@ -62,6 +66,32 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     echo "Local master and origin/master have diverged. Resolve manually." >&2
     exit 2
   fi
+fi
+
+# Fast-forward the sibling veyo checkout the same way (clipxd's Cargo.toml path-deps into
+# it, so a stale checkout there can break or silently stale-out the build). Best-effort: warn
+# and continue if the directory is missing rather than failing the whole deploy over it, but
+# a real divergence there is just as fatal as one in clipxd itself.
+VEYO_DIR=/home/clipxd/veyo
+if [ -d "$VEYO_DIR/.git" ]; then
+  echo "$(ts) fetching+ff veyo" >>"$LOG"
+  (
+    cd "$VEYO_DIR"
+    VEYO_LOCAL=$(git rev-parse master)
+    git fetch --quiet origin master >>"$LOG" 2>&1
+    VEYO_REMOTE=$(git rev-parse origin/master)
+    if [ "$VEYO_LOCAL" != "$VEYO_REMOTE" ]; then
+      if git merge --ff-only origin/master >>"$LOG" 2>&1; then
+        echo "$(ts) veyo fast-forwarded $VEYO_LOCAL -> $(git rev-parse master)" >>"$LOG"
+      else
+        echo "$(ts) FAIL: veyo local master diverged from origin/master (local=$VEYO_LOCAL remote=$VEYO_REMOTE)" >>"$LOG"
+        echo "veyo (sibling repo) master has diverged from origin/master. Resolve manually." >&2
+        exit 2
+      fi
+    fi
+  )
+else
+  echo "$(ts) WARN: $VEYO_DIR not found — skipping veyo sync (clipxd build may fail if it needs newer veyo code)" >>"$LOG"
 fi
 
 # Sanity: deploy only from master (we already fast-forwarded). Print the SHA
