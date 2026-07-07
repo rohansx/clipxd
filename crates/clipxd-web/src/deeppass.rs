@@ -15,9 +15,11 @@ use anyhow::{bail, Context, Result};
 use clipxd_index::Index;
 use std::path::Path;
 
-pub fn enabled() -> bool {
+/// `has_byok_key` is true when the clip's owner supplied their own NVIDIA/Gemini key — that
+/// alone is enough to run even if the server itself has no env-configured backend.
+pub fn enabled(has_byok_key: bool) -> bool {
     let on = std::env::var("CLIPXD_DEEP_PASS").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-    on && llm::any_backend_configured()
+    on && (has_byok_key || llm::any_backend_configured())
 }
 
 /// Auto-title-and-description, unlike the rest of the deep pass, runs unconditionally (no
@@ -47,13 +49,16 @@ struct TitleResult {
 /// only while the title is still the recorder's generic default (never stomp a user rename,
 /// and never re-spend a call on a clip that already got one — e.g. from a later, opt-in full
 /// deep pass).
-pub async fn generate_title_and_description(clip_dir: &Path, id: &str) -> Result<()> {
+///
+/// `nvidia_key`/`gemini_key` are the clip owner's own BYOK keys (looked up by the caller via
+/// `Db::llm_keys`), if any — `None` falls back to the server's env-configured keys.
+pub async fn generate_title_and_description(clip_dir: &Path, id: &str, nvidia_key: Option<&str>, gemini_key: Option<&str>) -> Result<()> {
     let index_path = clip_dir.join("index.json");
     let idx: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
     if idx.metadata.title != "Screen recording" {
         return Ok(()); // already renamed (by a user or an earlier pass) — nothing to do
     }
-    if !llm::any_backend_configured() {
+    if nvidia_key.is_none() && gemini_key.is_none() && !llm::any_backend_configured() {
         bail!("no LLM backend configured");
     }
     let context = build_context(&idx);
@@ -61,7 +66,7 @@ pub async fn generate_title_and_description(clip_dir: &Path, id: &str) -> Result
         bail!("no transcript/OCR/captions yet to title from");
     }
     let prompt = format!("{TITLE_PROMPT_PREFIX}{context}");
-    let (text, used) = llm::complete(&prompt, true).await?;
+    let (text, used) = llm::complete_with_keys(&prompt, true, nvidia_key, gemini_key).await?;
     let cleaned = llm::strip_fence(&text);
     let parsed: TitleResult = serde_json::from_str(cleaned)
         .with_context(|| format!("title/description JSON parse: {cleaned:.200}"))?;
@@ -114,7 +119,9 @@ what happens in order, naming visible apps, actions, and any errors verbatim. `c
 /// Run the deep pass for the clip in `clip_dir` and merge the result into its `index.json`.
 /// Merge rules are conservative: the title is only set while it's still the recorder's
 /// default (never stomp a user edit), tl;dr/chapters only when the model returned something.
-pub async fn run(clip_dir: &Path, id: &str) -> Result<()> {
+///
+/// `nvidia_key`/`gemini_key` are the clip owner's own BYOK keys, if any — see [`generate_title`].
+pub async fn run(clip_dir: &Path, id: &str, nvidia_key: Option<&str>, gemini_key: Option<&str>) -> Result<()> {
     let index_path = clip_dir.join("index.json");
     let idx: Index = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
     let context = build_context(&idx);
@@ -123,7 +130,7 @@ pub async fn run(clip_dir: &Path, id: &str) -> Result<()> {
     }
     let prompt = format!("{PROMPT_PREFIX}{context}");
 
-    let (text, used) = llm::complete(&prompt, true).await?;
+    let (text, used) = llm::complete_with_keys(&prompt, true, nvidia_key, gemini_key).await?;
     let deep = parse_deep_json(&text)?;
 
     merge_into_index(clip_dir, &deep)?;
@@ -206,7 +213,7 @@ mod tests {
 
         // No NVIDIA_API_KEY/GEMINI_API_KEY needed — the title-already-set guard must return Ok
         // before any backend check, regardless of environment.
-        let result = generate_title_and_description(&tmp, "clp_1").await;
+        let result = generate_title_and_description(&tmp, "clp_1", None, None).await;
         assert!(result.is_ok(), "{result:?}");
         let after: Index = serde_json::from_str(&std::fs::read_to_string(tmp.join("index.json")).unwrap()).unwrap();
         assert_eq!(after.metadata.title, "Already renamed by the user");

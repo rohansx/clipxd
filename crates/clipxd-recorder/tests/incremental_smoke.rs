@@ -62,7 +62,7 @@ fn incremental_matches_batch_on_delta_and_moment_coverage() {
 
     // --- incremental path: 3 growing prefixes through IncrementalIndexer ---
     let frames_dir = tmp.join("incr-frames");
-    let mut indexer = IncrementalIndexer::new(frames_dir.clone(), 4.0);
+    let mut indexer = IncrementalIndexer::new(frames_dir.clone(), 4.0, None);
     for seconds in [2.0, 4.0, 6.0] {
         let prefix = tmp.join(format!("prefix-{seconds}.webm"));
         make_prefix(&full, &prefix, seconds);
@@ -75,7 +75,7 @@ fn incremental_matches_batch_on_delta_and_moment_coverage() {
     // --- batch path: enrich_clip on the same final video, from scratch ---
     let batch_dir = tmp.join("clip_batch");
     std::fs::create_dir_all(&batch_dir).unwrap();
-    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch", "Screen recording", &EventTrack::default(), 4.0).expect("batch enrich should succeed");
+    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch", "Screen recording", &EventTrack::default(), 4.0, None).expect("batch enrich should succeed");
 
     eprintln!("=== incremental moments ===");
     for m in &incremental_index.visual_timeline {
@@ -151,7 +151,7 @@ fn incremental_matches_batch_with_real_deltas_and_uneven_chunk_boundaries() {
     // the keyframe floor's 2000ms cadence, and not evenly spaced -- to stress the watermark
     // logic against realistic, arbitrary 15s-ish real-world chunk timing.
     let frames_dir = tmp.join("incr-frames");
-    let mut indexer = IncrementalIndexer::new(frames_dir.clone(), 4.0);
+    let mut indexer = IncrementalIndexer::new(frames_dir.clone(), 4.0, None);
     for seconds in [1.3, 2.7, 3.4, 5.05, 6.2, 7.0] {
         let prefix = tmp.join(format!("prefix-{seconds}.webm"));
         make_prefix(&full, &prefix, seconds);
@@ -163,7 +163,7 @@ fn incremental_matches_batch_with_real_deltas_and_uneven_chunk_boundaries() {
 
     let batch_dir = tmp.join("clip_batch");
     std::fs::create_dir_all(&batch_dir).unwrap();
-    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch2", "Screen recording", &EventTrack::default(), 4.0).expect("batch enrich should succeed");
+    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch2", "Screen recording", &EventTrack::default(), 4.0, None).expect("batch enrich should succeed");
 
     eprintln!("=== incremental (uneven chunks) ===");
     for m in &incremental_index.visual_timeline {
@@ -226,7 +226,7 @@ fn incremental_transcribes_live_when_whisper_is_installed() {
     make_video_with_tone(&full, 12);
 
     let frames_dir = tmp.join("incr-frames");
-    let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+    let mut indexer = IncrementalIndexer::new(frames_dir, 4.0, None);
     // Two increments -- exercises the holdback-then-catch-up path the same way real ~15s
     // streaming chunks do, not just a single finalize-only pass.
     for seconds in [6.0, 12.0] {

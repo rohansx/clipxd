@@ -6,6 +6,11 @@
 //
 // Optionally composites a circular webcam "bubble" over the tab video (Loom-style) and mixes
 // the presenter's mic narration in with the tab's own audio, when the caller asks for a camera.
+//
+// Optionally also samples the tab video every few seconds and runs it through a fully local,
+// in-browser Moondream2 (WebGPU/wasm via Transformers.js — see local-captioner.js) when the
+// caller's account has `caption_mode: "local"` — buffered captions are handed back on stop() so
+// background.js can POST them to /clip/:id/local-captions after the trace commit.
 
 let mediaRecorder = null;
 let audioCtx = null;
@@ -16,6 +21,7 @@ let host = "";
 let token = "";
 let clipId = "";
 let lastUploadPromise = Promise.resolve();
+let localCaptioningActive = false;
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || msg.target !== "offscreen") return;
@@ -27,13 +33,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.cmd === "stop") {
     stopCapture()
-      .then(() => sendResponse({ ok: true }))
+      .then((captions) => sendResponse({ ok: true, captions: captions || [] }))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
   }
 });
 
-async function startCapture({ streamId, host: h, token: t, clipId: id, includeCamera }) {
+async function startCapture({ streamId, host: h, token: t, clipId: id, includeCamera, includeLocalCaptioning }) {
   host = h;
   token = t;
   clipId = id;
@@ -64,6 +70,18 @@ async function startCapture({ streamId, host: h, token: t, clipId: id, includeCa
     if (camStream) {
       tracksToStop.push(...camStream.getTracks());
       recordStream = await compositeWithCameraBubble(tabStream, camStream, audioCtx);
+    }
+  }
+
+  localCaptioningActive = false;
+  if (includeLocalCaptioning) {
+    if (typeof ClipxdLocalCaptioner === "undefined") {
+      console.warn("clipxd: local-captioner.js did not load — skipping local captioning");
+    } else {
+      localCaptioningActive = true;
+      // Fire-and-forget: model loading can take a while (first-time download), and must never
+      // delay/block the recording itself — see local-captioner.js.
+      ClipxdLocalCaptioner.start(tabStream);
     }
   }
 
@@ -147,7 +165,11 @@ async function uploadChunk(blob) {
 }
 
 async function stopCapture() {
-  if (!mediaRecorder) return;
+  // Stop sampling first (before tearing down tracks below) and grab whatever got buffered —
+  // returned to background.js regardless of what happens to the rest of the recorder teardown.
+  const localCaptions = localCaptioningActive && typeof ClipxdLocalCaptioner !== "undefined" ? ClipxdLocalCaptioner.stop() : [];
+  localCaptioningActive = false;
+  if (!mediaRecorder) return localCaptions;
   await new Promise((resolve) => {
     mediaRecorder.onstop = resolve;
     mediaRecorder.stop(); // triggers one final ondataavailable before onstop fires
@@ -168,4 +190,5 @@ async function stopCapture() {
     await audioCtx.close().catch(() => {});
     audioCtx = null;
   }
+  return localCaptions;
 }

@@ -19,7 +19,7 @@ use clipxd_import::{gate, map, media};
 use clipxd_index::{Index, Source, TranscriptSegment};
 use std::path::{Path, PathBuf};
 use veyo_core::{CodecConfig, Delta};
-use veyo_enrich::{EnrichInput, Enricher, Enrichment};
+use veyo_enrich::{CaptionSource, EnrichInput, Enricher, Enrichment};
 
 /// How much of the newest audio each incremental pass leaves untouched. Whisper is given a
 /// `[watermark, boundary - HOLDBACK)` slice, never the raw tail — an utterance can still be
@@ -46,6 +46,10 @@ const TRANSCRIBE_HOLDBACK_MS: u64 = 3_000;
 pub struct IncrementalIndexer {
     frames_dir: PathBuf,
     sample_fps: f32,
+    /// BYOK/local-mode override for this session's owner, decided once at session creation
+    /// (the owner is already known by then — see `ingest_stage_create`) and applied to every
+    /// incremental pass and the final one alike. `None` = the server's usual env-driven cascade.
+    caption_source: Option<CaptionSource>,
     enrichment: Enrichment,
     all_deltas: Vec<Delta>,
     /// `None` means nothing committed yet — distinct from `Some(0)` (the frame/delta *at*
@@ -66,10 +70,11 @@ pub struct IncrementalIndexer {
 }
 
 impl IncrementalIndexer {
-    pub fn new(frames_dir: PathBuf, sample_fps: f32) -> Self {
+    pub fn new(frames_dir: PathBuf, sample_fps: f32, caption_source: Option<CaptionSource>) -> Self {
         Self {
             frames_dir,
             sample_fps,
+            caption_source,
             enrichment: Enrichment::default(),
             all_deltas: Vec::new(),
             max_delta_ms: None,
@@ -201,7 +206,7 @@ impl IncrementalIndexer {
             .collect();
 
         if !new_deltas.is_empty() || !new_frames.is_empty() {
-            let enricher = Enricher::with_local_defaults();
+            let enricher = Enricher::with_caption_source(self.caption_source.clone());
             let partial = enricher.enrich(&EnrichInput { deltas: &new_deltas, frames: &new_frames, audio: None })?;
             self.covered_ms.extend(partial.visual_timeline.iter().map(|m| m.t_ms));
             self.enrichment.on_screen_text.extend(partial.on_screen_text);
@@ -318,7 +323,7 @@ mod tests {
         // finalize call sequence run_pass (via extract_frames) always creates it first. This
         // test isolates transcribe_pass alone, so create it explicitly to match that invariant.
         std::fs::create_dir_all(&frames_dir).unwrap();
-        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0, None);
         indexer.transcribe_pass(&video, true);
         let after_holdback = indexer.max_transcript_ms.expect("a 10s clip minus the 3s holdback should commit some watermark");
         assert_eq!(
@@ -363,7 +368,7 @@ mod tests {
 
         let frames_dir = tmp.join("frames");
         std::fs::create_dir_all(&frames_dir).unwrap();
-        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0);
+        let mut indexer = IncrementalIndexer::new(frames_dir, 4.0, None);
         indexer.transcribe_pass(&video, true);
         assert_eq!(indexer.max_transcript_ms, None, "no audio track -> watermark stays unset, never fails/panics");
         assert!(indexer.transcript.is_empty());

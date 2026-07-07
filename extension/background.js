@@ -15,6 +15,7 @@ const state = {
   lastResult: null, // { id, url, count, hasVideo } | { error }
   clipId: null, // set once /ingest/stage mints the id (only when tab capture is possible)
   videoCaptured: false,
+  includeLocalCaptioning: false, // this recording's caption_mode was "local" AND video capture worked
 };
 
 const DEFAULTS = { host: "https://clipxd.com", token: "", includeCamera: false };
@@ -121,6 +122,25 @@ function getTabCaptureStreamId(tabId) {
   });
 }
 
+/// Fetch the caller's `caption_mode` preference (`GET /settings/keys`) so a "local" account
+/// setting turns into fully client-side WebGPU captioning for this recording instead of the
+/// server's own VLM. Best-effort: no auth configured on this server (route 404s), no token set,
+/// or a network hiccup all just mean "server" mode (i.e. no local captioning) — never blocks
+/// starting the recording over this.
+async function fetchCaptionMode(host, token) {
+  if (!token) return "server";
+  try {
+    const r = await fetch(host.replace(/\/$/, "") + "/settings/keys", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!r.ok) return "server";
+    const j = await r.json();
+    return j && j.caption_mode === "local" ? "local" : "server";
+  } catch (e) {
+    return "server";
+  }
+}
+
 async function start() {
   const tab = lastActiveTabId != null ? await chrome.tabs.get(lastActiveTabId).catch(() => null) : null;
   if (!tab || !tab.id) return { error: "no page to record — click into the tab you want first" };
@@ -128,6 +148,8 @@ async function start() {
     return { error: "can't record browser-internal pages" };
   }
   const { host, token, includeCamera } = await cfg();
+  const captionMode = await fetchCaptionMode(host, token);
+  const includeLocalCaptioning = captionMode === "local";
 
   // Try tab video+audio capture first. If it's possible, mint the clip up front (instant-link
   // architecture — the share URL exists from record-start) and stream to it; if not, this
@@ -141,7 +163,16 @@ async function start() {
       if (r.ok) {
         clipId = (await r.json()).id;
         await ensureOffscreen();
-        const resp = await chrome.runtime.sendMessage({ target: "offscreen", cmd: "start", streamId, host, token, clipId, includeCamera: !!includeCamera });
+        const resp = await chrome.runtime.sendMessage({
+          target: "offscreen",
+          cmd: "start",
+          streamId,
+          host,
+          token,
+          clipId,
+          includeCamera: !!includeCamera,
+          includeLocalCaptioning,
+        });
         videoCaptured = !!(resp && resp.ok);
       }
     } catch (e) {
@@ -158,6 +189,7 @@ async function start() {
   state.lastResult = null;
   state.clipId = clipId;
   state.videoCaptured = videoCaptured;
+  state.includeLocalCaptioning = includeLocalCaptioning && videoCaptured;
   try {
     const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => ({ w: window.innerWidth, h: window.innerHeight }) });
     if (result) state.viewport = result;
@@ -191,9 +223,11 @@ async function stop() {
       /* tab may be gone */
     }
   }
+  let localCaptions = [];
   if (state.videoCaptured) {
     try {
-      await chrome.runtime.sendMessage({ target: "offscreen", cmd: "stop" });
+      const resp = await chrome.runtime.sendMessage({ target: "offscreen", cmd: "stop" });
+      if (resp && Array.isArray(resp.captions)) localCaptions = resp.captions;
     } catch (e) {
       /* offscreen doc may already be gone */
     }
@@ -234,11 +268,35 @@ async function stop() {
       return state.lastResult;
     }
     const j = await r.json();
+    if (localCaptions.length && j.id) {
+      await postLocalCaptions(host, authHeader, j.id, localCaptions);
+    }
     state.lastResult = { id: j.id, url: host.replace(/\/$/, "") + "/clip/" + j.id, count: trace.events.length, hasVideo: state.videoCaptured };
     return state.lastResult;
   } catch (e) {
     state.lastResult = { error: "network error reaching " + host };
     return state.lastResult;
+  }
+}
+
+/// POST the buffered local (fully client-side WebGPU/wasm) captions to
+/// /clip/:id/local-captions, chunked to the server's 500-per-call max. Best-effort: a failure
+/// here just means the clip is missing some visual-timeline detail, not a failed recording — the
+/// clip itself already committed successfully by the time this runs.
+async function postLocalCaptions(host, authHeader, clipId, captions) {
+  const CHUNK = 500;
+  for (let i = 0; i < captions.length; i += CHUNK) {
+    const batch = captions.slice(i, i + CHUNK);
+    try {
+      const r = await fetch(`${host.replace(/\/$/, "")}/clip/${clipId}/local-captions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ captions: batch }),
+      });
+      if (!r.ok) console.error("clipxd: local-captions upload failed", r.status);
+    } catch (e) {
+      console.error("clipxd: local-captions upload failed", e);
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchNet, githubLoginUrl, type AuthUser, type NetInfo } from "./api";
+import { fetchKeyStatus, fetchNet, githubLoginUrl, saveKeys, type AuthUser, type KeyStatus, type NetInfo } from "./api";
 import type { Theme } from "./App";
 
 interface SettingsProps {
@@ -38,6 +38,8 @@ export function Settings({ authEnabled, user, clipCount, theme, toggleTheme, onS
         {authEnabled && user && (
           <AccountCard user={user} onSetUsername={onSetUsername} onLogout={onLogout} showToast={showToast} net={net} />
         )}
+
+        {authEnabled && user && <KeysCard showToast={showToast} />}
 
         <div className="settings-card">
           <div className="settings-card-head">
@@ -201,6 +203,174 @@ function AccountCard({
           {loggingOut ? <span className="spin" /> : "Sign out"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** BYOK: per-user NVIDIA/Gemini/Moondream keys + the server-vs-local captioning toggle. Key
+ *  values are write-only from the client's point of view — the server only ever reports
+ *  presence/absence (`KeyStatus`), never the stored key, so this card never renders one back. */
+function KeysCard({ showToast }: { showToast: (m: string) => void }) {
+  const [status, setStatus] = useState<KeyStatus | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeErr, setModeErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetchKeyStatus().then((s) => { if (live) setStatus(s); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  const saveField = async (field: "nvidia_api_key" | "gemini_api_key" | "moondream_api_key", value: string | null) => {
+    const next = await saveKeys({ [field]: value });
+    setStatus(next);
+    showToast(value ? "Key saved." : "Key cleared.");
+  };
+
+  const setMode = async (mode: "server" | "local") => {
+    if (!status || status.caption_mode === mode || modeBusy) return;
+    setModeErr(null);
+    setModeBusy(true);
+    try {
+      setStatus(await saveKeys({ caption_mode: mode }));
+    } catch (e) {
+      setModeErr(e instanceof Error ? e.message : "Couldn't change caption mode.");
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  if (!status) return null;
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-head">
+        <span className="settings-card-icon" aria-hidden>⚿</span>
+        <b>Bring your own keys</b>
+      </div>
+      <p className="settings-note" style={{ margin: 0 }}>
+        Use your own NVIDIA / Gemini / Moondream keys instead of the shared server ones — your
+        usage lands on your own account, not ours. A saved key is never sent back to the
+        browser; this page only ever shows whether one is configured.
+      </p>
+
+      <KeyRow
+        label="NVIDIA API key"
+        hint="Powers title / tl;dr / chapters (kimi-k2.6 → minimax-m2.7 → glm4.7 cascade)."
+        configured={status.has_nvidia}
+        onSave={(v) => saveField("nvidia_api_key", v)}
+        onClear={() => saveField("nvidia_api_key", null)}
+      />
+      <KeyRow
+        label="Gemini API key"
+        hint="Fallback LLM backend, used if NVIDIA isn't configured or a call fails."
+        configured={status.has_gemini}
+        onSave={(v) => saveField("gemini_api_key", v)}
+        onClear={() => saveField("gemini_api_key", null)}
+      />
+      <KeyRow
+        label="Moondream API key"
+        hint="Overrides the server's shared Moondream cloud key for this account's captions."
+        configured={status.has_moondream}
+        onSave={(v) => saveField("moondream_api_key", v)}
+        onClear={() => saveField("moondream_api_key", null)}
+      />
+
+      <div className="settings-username">
+        <div className="settings-row-label">Captioning</div>
+        <div className="settings-row-hint" style={{ marginBottom: 8 }}>Where frame captions get generated for your clips.</div>
+        <div className="settings-mode-toggle">
+          <button className={status.caption_mode === "server" ? "on" : ""} onClick={() => setMode("server")} disabled={modeBusy}>
+            Server default
+          </button>
+          <button className={status.caption_mode === "local" ? "on" : ""} onClick={() => setMode("local")} disabled={modeBusy}>
+            Run captioning locally in my browser
+          </button>
+        </div>
+        {status.caption_mode === "local" && (
+          <p className="settings-note" style={{ marginTop: 10 }}>
+            Captions are generated on your own device via WebGPU instead of our server — needs a
+            WebGPU-capable browser. Falls back to no local captions if your browser doesn't
+            support it.
+          </p>
+        )}
+        {modeErr && <div className="auth-err" style={{ marginTop: 8 }}>{modeErr}</div>}
+      </div>
+    </div>
+  );
+}
+
+interface KeyRowProps {
+  label: string;
+  hint: string;
+  configured: boolean;
+  onSave: (value: string) => Promise<void>;
+  onClear: () => Promise<void>;
+}
+
+function KeyRow({ label, hint, configured, onSave, onClear }: KeyRowProps) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState<"save" | "clear" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!value.trim() || busy) return;
+    setErr(null);
+    setBusy("save");
+    try {
+      await onSave(value.trim());
+      setValue("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't save that key.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clear = async () => {
+    if (busy) return;
+    setErr(null);
+    setBusy("clear");
+    try {
+      await onClear();
+      setValue("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't clear that key.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="settings-key-row">
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">{label}</div>
+          <div className="settings-row-hint">{hint}</div>
+        </div>
+        <span className={`pill${configured ? " signal" : ""}`}>{configured ? "✓ configured" : "not set"}</span>
+      </div>
+      <div className="settings-username-row">
+        <input
+          className="input mono"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={configured ? "set — enter a new key to replace it" : "paste your key"}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+        />
+        <button className="btn btn-pill" onClick={save} disabled={!value.trim() || !!busy} style={{ padding: "0 16px" }}>
+          {busy === "save" ? <span className="spin" /> : "Save"}
+        </button>
+        {configured && (
+          <button className="btn btn-ghost btn-pill" onClick={clear} disabled={!!busy} style={{ padding: "0 14px" }}>
+            {busy === "clear" ? <span className="spin" /> : "Clear"}
+          </button>
+        )}
+      </div>
+      {err && <div className="auth-err" style={{ marginTop: 8 }}>{err}</div>}
     </div>
   );
 }
