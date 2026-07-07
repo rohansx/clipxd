@@ -184,12 +184,14 @@ export default function App() {
     history.replaceState(null, "", u.toString());
   }, [view, cloudView, activeClipId]);
 
-  // On login, reload the (now per-user) library and drop the user straight into the app.
+  // On login, reload the (now per-user) library and drop the user straight into the app --
+  // unless the load itself was a deep link (?clip=) or a direct /docs visit, either of which
+  // already picked the right cloudView before auth even resolved and shouldn't get stomped.
   useEffect(() => {
     if (auth.user) {
       markEnteredApp();
       reload();
-      if (!deepLink) {
+      if (!deepLink && !isDocsPath) {
         setView("cloud");
         setCloudView("library");
       }
