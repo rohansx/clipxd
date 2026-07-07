@@ -16,13 +16,22 @@ hostIn.addEventListener("change", saveCfg);
 tokenIn.addEventListener("change", saveCfg);
 camIn.addEventListener("change", saveCfg);
 
+/** Turn { state, device } from local-captioner.js into one short, human phrase. */
+function localCaptioningLabel(lc) {
+  if (!lc) return "";
+  if (lc.state === "loading") return " · Local captions: loading model…";
+  if (lc.state === "ready") return lc.device === "webgpu" ? " · Local captions: GPU ⚡" : " · Local captions: CPU (slower, no GPU found)";
+  if (lc.state === "unavailable") return " · Local captions: unavailable on this device";
+  return "";
+}
+
 function paint(st) {
   const on = st && st.recording;
   recBtn.textContent = on ? "■ Stop & save clip" : "● Record this tab";
   recBtn.classList.toggle("on", !!on);
   if (on) {
     const kind = st.videoCaptured ? "video + " + (st.count || 0) + " events" : (st.count || 0) + " events (no video — tab capture unavailable)";
-    statusEl.textContent = "Recording… " + kind;
+    statusEl.textContent = "Recording… " + kind + localCaptioningLabel(st.localCaptioning);
     statusEl.className = "status";
   } else if (st && st.lastResult) {
     const r = st.lastResult;
