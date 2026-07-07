@@ -4,6 +4,8 @@
   <body>
     <!-- Invisible, DOM-only context: MV3 service workers have no DOM and can't run
          getUserMedia/MediaRecorder, so tab capture happens here instead. -->
+    <!-- local-captioner.js must load before offscreen.js, which calls into it. -->
+    <script src="local-captioner.js"></script>
     <script src="offscreen.js"></script>
   </body>
 </html>

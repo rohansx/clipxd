@@ -5,6 +5,9 @@
   "description": "Record a browser tab's video+audio AND a clipxd BrowserTrace (clicks, input, console, network, navigation) — one clip that's both watchable and agent-queryable, which screen recording alone can't produce for other pages.",
   "permissions": ["webRequest", "storage", "tabs", "activeTab", "scripting", "tabCapture", "offscreen"],
   "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "clipxd capture" },
   "content_scripts": [
