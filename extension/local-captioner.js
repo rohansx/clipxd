@@ -22,6 +22,9 @@ const ClipxdLocalCaptioner = (() => {
 
   /** @type {"idle"|"loading"|"ready"|"unavailable"} */
   let state = "idle";
+  /** @type {"webgpu"|"wasm"|null} which device the model actually ended up loaded on, once
+   *  state reaches "ready" -- null while idle/loading, and stays null if state is "unavailable". */
+  let device = null;
   let modelLoadPromise = null;
   let model = null;
   let processor = null;
@@ -96,6 +99,7 @@ const ClipxdLocalCaptioner = (() => {
           triedWebgpu = true;
           await loadModel("webgpu");
           state = "ready";
+          device = "webgpu";
           log("model ready on webgpu");
           return true;
         }
@@ -109,11 +113,13 @@ const ClipxdLocalCaptioner = (() => {
     try {
       await loadModel("wasm");
       state = "ready";
+      device = "wasm";
       log("model ready on wasm" + (triedWebgpu ? " (webgpu attempt failed)" : ""));
       return true;
     } catch (e) {
       warn("model load failed on both webgpu and wasm — local captioning disabled for this recording", e);
       state = "unavailable";
+      device = null;
       return false;
     }
   }
@@ -223,5 +229,12 @@ const ClipxdLocalCaptioner = (() => {
     return buffer.slice();
   }
 
-  return { start, stop, peek };
+  /** Current { state, device } — the thing the popup polls so a user can actually see whether
+   *  local captioning landed on real GPU acceleration, slower CPU fallback, or didn't load at
+   *  all, instead of that only ever showing up in this offscreen document's own devtools console. */
+  function status() {
+    return { state, device };
+  }
+
+  return { start, stop, peek, status };
 })();

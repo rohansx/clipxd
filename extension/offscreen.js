@@ -37,6 +37,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
   }
+  if (msg.cmd === "local-caption-status") {
+    const status = localCaptioningActive && typeof ClipxdLocalCaptioner !== "undefined"
+      ? ClipxdLocalCaptioner.status()
+      : { state: "idle", device: null };
+    sendResponse(status);
+    return true;
+  }
 });
 
 async function startCapture({ streamId, host: h, token: t, clipId: id, includeCamera, includeLocalCaptioning }) {

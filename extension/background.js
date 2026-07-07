@@ -87,7 +87,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return; // no response needed
   }
   if (msg && msg.cmd === "status") {
-    sendResponse({ recording: state.recording, count: state.events.length, videoCaptured: state.videoCaptured, lastResult: state.lastResult });
+    (async () => {
+      let localCaptioning = null;
+      if (state.recording && state.includeLocalCaptioning) {
+        try {
+          localCaptioning = await chrome.runtime.sendMessage({ target: "offscreen", cmd: "local-caption-status" });
+        } catch (e) {
+          /* offscreen doc may not be up yet — leave localCaptioning null, popup just omits the line */
+        }
+      }
+      sendResponse({ recording: state.recording, count: state.events.length, videoCaptured: state.videoCaptured, lastResult: state.lastResult, localCaptioning });
+    })();
     return true;
   }
   if (msg && msg.cmd === "start") {
