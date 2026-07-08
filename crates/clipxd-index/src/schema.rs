@@ -54,6 +54,102 @@ pub struct Index {
     /// fields change shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchCorpus>,
+
+    /// v2.1: per-word emphasis for styled captions, produced at indexing time by the
+    /// Ollama-Cloud-first LLM pass (`clipxd-web::emphasis`). Absent when no LLM backend
+    /// is configured or the pass failed — never blocks the clip completing. Consumed by
+    /// the Karaoke/Bold subtitle designs and the burned-in caption render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle_emphasis: Option<SubtitleEmphasis>,
+
+    /// v2.1: the user-chosen caption design + knobs, set via `POST /clip/:id/subtitle-style`.
+    /// Absent until the user picks a design on the clip page. Pure presentation metadata —
+    /// does not affect agent queryability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle_style: Option<SubtitleStyle>,
+}
+
+/// Per-word emphasis for one transcript segment, produced by the indexing-time LLM pass.
+/// `text` is the word verbatim; `emphasis` is how strongly a caption should highlight it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmphasisWord {
+    pub text: String,
+    pub emphasis: Emphasis,
+}
+
+/// How strongly a word should be highlighted in a styled caption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Emphasis {
+    /// The key word to focus on — largest/brightest in Karaoke, bold in Bold.
+    Primary,
+    /// A supporting term — secondary highlight.
+    Secondary,
+    /// No special emphasis.
+    None,
+}
+
+impl Default for Emphasis {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// A transcript span with per-word emphasis, aligned to the transcript's own timestamps.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmphasisSegment {
+    pub start: f64,
+    pub end: f64,
+    pub words: Vec<EmphasisWord>,
+}
+
+/// The indexing-time LLM emphasis pass output, stored on the index as `subtitle_emphasis`.
+/// `generated_by` records which backend answered (for logging/debugging), matching the
+/// `used` string the deep pass returns from `llm::complete_with_keys`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubtitleEmphasis {
+    pub generated_by: String,
+    pub generated_at: String,
+    pub segments: Vec<EmphasisSegment>,
+}
+
+/// The user-chosen caption design. Pure presentation — saved from the clip page, consumed by
+/// the render path and the live caption preview. `design` is the preset name; the rest are
+/// knobs the preset defaults but the user can override.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubtitleStyle {
+    /// One of the preset names: `classic`, `bold`, `karaoke`, `minimal`, `boxed`, `glow`.
+    pub design: String,
+    /// Caption font scale, 0.8 .. 1.6. 1.0 = preset default.
+    #[serde(default = "one_f32")]
+    pub font_scale: f32,
+    /// Vertical anchor for the caption band.
+    #[serde(default = "pos_bottom")]
+    pub position: String,
+    /// Whether to honor `subtitle_emphasis` (Karaoke highlight / Bold weighting).
+    #[serde(default = "default_true")]
+    pub emphasis: bool,
+}
+
+fn one_f32() -> f32 {
+    1.0
+}
+fn pos_bottom() -> String {
+    "bottom".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+
+impl Default for SubtitleStyle {
+    fn default() -> Self {
+        Self {
+            design: "classic".to_string(),
+            font_scale: 1.0,
+            position: "bottom".to_string(),
+            emphasis: true,
+        }
+    }
 }
 
 /// A single string per kind — easy to grep, easy to embed, easy to score
@@ -89,6 +185,8 @@ impl Index {
             summary: Summary::default(),
             redaction: Redaction::default(),
             search: None,
+            subtitle_emphasis: None,
+            subtitle_style: None,
         }
     }
 }

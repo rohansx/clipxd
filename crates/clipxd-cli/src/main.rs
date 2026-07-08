@@ -74,6 +74,10 @@ enum Cmd {
         /// Apply a .clipxd project (manual zoom regions, trim cuts, speed ramps).
         #[arg(long)]
         project: Option<PathBuf>,
+        /// Burn styled captions from a clip's index.json (transcript + subtitle_style +
+        /// subtitle_emphasis). Implies the user picked a design on the clip page.
+        #[arg(long)]
+        captions: Option<PathBuf>,
     },
     /// Ingest a captured browser trace (DOM/console/network/a11y) into a clip index.
     IngestBrowser {
@@ -208,8 +212,8 @@ fn main() -> Result<()> {
             );
             println!("  index:  {}", r.clip_dir.join("index.json").display());
         }
-        Cmd::Beautify { video, events, out, padding, bg, mockup, format, zoom, project } => {
-            beautify::beautify(&video, events.as_deref(), &out, &beautify::BeautifyOpts { padding, bg, mockup, format, zoom, project })?;
+        Cmd::Beautify { video, events, out, padding, bg, mockup, format, zoom, project, captions } => {
+            beautify::beautify(&video, events.as_deref(), &out, &beautify::BeautifyOpts { padding, bg, mockup, format, zoom, project, captions })?;
             println!("✓ beautified → {}", out.display());
         }
         Cmd::Query { clip, question } => {

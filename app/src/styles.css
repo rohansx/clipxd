@@ -1288,6 +1288,36 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 }
 .cam-bubble video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
 
+/* Capture mode toggle (screen vs voice-only) in the recorder toolbar. */
+.mode-toggle{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.mode-toggle button{background:var(--panel);color:var(--text-3);border:0;padding:10px 16px;font-weight:600;font-family:inherit;cursor:pointer;font-size:13px}
+.mode-toggle button.on{background:var(--signal-wash);color:var(--signal)}
+
+/* Camera filters + background popover (live, baked into the recording). */
+.cam-settings{
+  position:fixed;right:24px;bottom:190px;width:280px;z-index:58;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  box-shadow:var(--raise);overflow:hidden;
+}
+.cam-settings .cam-settings-body{padding:12px 14px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow:auto}
+.cam-settings .lbl{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
+.cam-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.cam-preset{background:linear-gradient(135deg,#3a3a3a,#1a1a1a);color:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 0;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit}
+.cam-slider{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
+.cam-slider input[type=range]{flex:1}
+.cam-color{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
+.cam-color input[type=color]{width:34px;height:24px;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer}
+.cam-bg-kinds{display:flex;gap:6px}
+.cam-bg-kinds button{flex:1;background:var(--panel-2);color:var(--text-3);border:1px solid var(--border);border-radius:10px;padding:7px 0;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-transform:capitalize}
+.cam-bg-kinds button.on{background:var(--signal-wash);color:var(--signal);border-color:color-mix(in oklab,var(--signal) 40%,var(--border))}
+.cam-bg-presets{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.cam-bg-swatch{height:40px;border-radius:8px;border:2px solid transparent;cursor:pointer;position:relative;overflow:hidden;display:flex;align-items:flex-end}
+.cam-bg-swatch span{font-size:9px;color:#fff;background:rgba(0,0,0,.4);padding:1px 4px;border-radius:4px;width:100%;text-align:center}
+.cam-bg-swatch.on{border-color:var(--signal)}
+.cam-up{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3);cursor:pointer}
+.cam-up input[type=file]{flex:1;font-size:11px}
+.cam-up input[type=file]::file-selector-button{background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:11px}
+
 /* ------------------------------------------------------------------------
    "Link ready" card — the visible outcome of a successful recording.
    Sticks to the top of the Recording view so the user sees the URL the
@@ -1383,6 +1413,9 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 
 /* ------------------------------------------------------------------------
    teleprompter overlay (shown on the recording screen)
+   The transparent variant (.prompter-glass) repositions to eye-line top-center,
+   floats over the screen with a presenter-set opacity, and never enters the recorded
+   canvas (it's a DOM node on the clipxd tab; the recorder draws screen + camera only).
    ------------------------------------------------------------------------ */
 .prompter{
   position:fixed;left:50%;bottom:28px;transform:translateX(-50%);
@@ -1390,6 +1423,17 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   border:1px solid var(--border);border-radius:var(--r);
   box-shadow:var(--raise);z-index:60;overflow:hidden;
 }
+.prompter-glass{
+  bottom:auto;top:14vh;width:min(760px,90vw);
+  background:rgba(10,12,16,.55);backdrop-filter:blur(2px);
+  border-color:rgba(255,255,255,.14);
+  box-shadow:0 12px 40px rgba(0,0,0,.45);
+}
+.prompter-glass .prompter-bar{background:rgba(20,22,28,.78);border-bottom-color:rgba(255,255,255,.12)}
+.prompter-glass .prompter-bar b,.prompter-glass .prompter-bar button{color:#fff}
+.prompter-glass .prompter-bar button{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}
+.prompter-glass .prompter-bar .pspeed{color:rgba(255,255,255,.7)}
+.prompter-hint{font-family:var(--font-mono);font-size:10.5px;color:rgba(255,255,255,.6);padding:4px 14px 0;text-align:center}
 .prompter-bar{
   display:flex;align-items:center;gap:12px;padding:10px 14px;
   border-bottom:1px solid var(--border);
@@ -1413,8 +1457,36 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 .prompter-scroll p{
   margin:0 0 14px;font-size:26px;line-height:1.5;font-weight:600;color:var(--text);
 }
+.prompter-scroll-glass{position:relative;height:34vh;min-height:200px;max-height:360px;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.85)}
+.prompter-scroll-glass p{color:#fff}
+.prompter-reading-line{position:absolute;left:0;right:0;height:26%;pointer-events:none;background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.16),rgba(255,255,255,0));border-top:1px solid rgba(255,255,255,.25);border-bottom:1px solid rgba(255,255,255,.25)}
 
 .auth-screen{min-height:100vh;display:grid;align-content:center;justify-items:center;padding:24px;background:var(--env),var(--bg)}
+
+/* Styled subtitles (SubtitleLayer) — rendered over the video / voice-only frame. The
+   per-design wrap style is set inline; this positions the band + sizes the words. */
+.subtitle-layer{position:absolute;left:0;right:0;text-align:center;padding:0 10%;pointer-events:none;font-size:1.05em;line-height:1.4;z-index:20;font-weight:700;letter-spacing:.005em}
+.subtitle-layer .sub-word{display:inline-block;margin:0 .04em;transition:color .12s ease}
+.sub-minimal{font-weight:500;letter-spacing:0;text-transform:lowercase}
+.sub-boxed{display:inline-block;left:50%;right:auto;transform:translateX(-50%);border-radius:10px}
+
+/* Subtitle design selection bar (ClipPage). */
+.subtitle-style-bar{margin-top:14px;border:1px solid var(--border);border-radius:var(--r);background:var(--panel);box-shadow:var(--clay-sm);padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.ssb-head{display:flex;align-items:center;gap:10px}
+.ssb-head b{font-size:13.5px;font-weight:600}
+.ssb-note{font-family:var(--font-mono);font-size:11px;color:var(--text-3)}
+.ssb-designs{display:flex;flex-wrap:wrap;gap:8px}
+.ssb-chip{background:var(--panel-2);color:var(--text-3);border:1px solid var(--border);border-radius:999px;padding:8px 16px;font-weight:600;font-size:13px;cursor:pointer;font-family:inherit}
+.ssb-chip.on{background:var(--signal-wash);color:var(--signal);border-color:color-mix(in oklab,var(--signal) 40%,var(--border))}
+.ssb-controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.ssb-positions{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.ssb-positions button{background:var(--panel);color:var(--text-3);border:0;padding:7px 14px;font-weight:600;font-family:inherit;cursor:pointer;font-size:12px}
+.ssb-positions button.on{background:var(--signal-wash);color:var(--signal)}
+.ssb-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);cursor:pointer}
+.ssb-preview{background:linear-gradient(135deg,#2a2d33,#111317);border-radius:var(--r-sm);padding:28px 14px;min-height:70px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.ssb-preview .subtitle-layer{position:static;padding:0}
+.ssb-preview .sub-boxed{position:static;transform:none}
+.ssb-preview-empty{color:var(--text-3);font-family:var(--font-mono);font-size:12px}
 /* ------------------------------------------------------------------------
    Settings — account, appearance, server info. Card grid, same tokens as
    the rest of the app (var(--panel)/var(--border)/var(--clay-sm)).

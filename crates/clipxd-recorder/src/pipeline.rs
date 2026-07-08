@@ -129,9 +129,17 @@ pub fn enrich_clip(
 ) -> Result<Index> {
     ensure!(video.exists(), "no such video: {}", video.display());
     let info = media::probe(video)?;
-    let frames = media::extract_frames(video, &clip_dir.join("frames"), sample_fps)?;
-    ensure!(!frames.is_empty(), "no frames extracted from {}", video.display());
     let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
+
+    // Voice-only mode: an audio-only container (mic-only webm) yields no frames and a probe
+    // with zero dimensions. There is nothing to gate/OCR/caption — the clip's value is its
+    // transcript + the styled captions the user picks afterward. Run the transcript thread
+    // alone and write a has_video=false index, skipping the visual gate entirely.
+    let frames = media::extract_frames(video, &clip_dir.join("frames"), sample_fps)?;
+    let audio_only = frames.is_empty() || (info.width == 0 && info.height == 0);
+    if audio_only {
+        return enrich_audio_only(&info, clip_dir, id, title, audio.as_deref());
+    }
 
     // The transcript (whisper over audio.wav, CPU-bound and often the longest single stage)
     // and the visual enrichment (gate → OCR → caption network calls) share no data — run
@@ -182,6 +190,49 @@ pub fn enrich_clip(
     clipxd_index::clean_index(&mut index); // dedup noisy streams + build the search corpus
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     std::fs::write(clip_dir.join("zoom.json"), serde_json::to_string(&zoom)?)?;
+    Ok(index)
+}
+
+/// Voice-only / audio-only enrichment: no frames to gate, no on-screen text to OCR, no
+/// visual captions. The clip's value is its transcript (whisper over the extracted audio) —
+/// which is exactly what the styled-subtitle layer and the indexing-time emphasis pass consume.
+/// Produces a `has_video: false` index with `status: complete`. `info` is the probe of the
+/// audio-only container (duration populated, width/height/fps zero).
+fn enrich_audio_only(
+    info: &media::MediaInfo,
+    clip_dir: &Path,
+    id: &str,
+    title: &str,
+    audio: Option<&Path>,
+) -> Result<Index> {
+    let tx = audio.map(crate::transcribe::transcribe).unwrap_or_default();
+    let mut index = Index::new(
+        id,
+        Source::Screen,
+        Metadata {
+            duration: info.duration_s,
+            resolution: [info.width, info.height],
+            fps: info.fps,
+            created_at: unix_secs(),
+            title: title.to_string(),
+            description: String::new(),
+            app_focus: Vec::new(),
+            url_context: None,
+            has_video: false,
+        },
+    );
+    if !tx.is_empty() {
+        index.transcript = tx;
+    }
+    index.summary.tldr = if index.transcript.is_empty() {
+        "Voice-only recording — no transcript could be produced (transcriber unavailable).".into()
+    } else {
+        "Voice-only recording — transcript ready; pick a subtitle design to style it.".into()
+    };
+    clipxd_index::clean_index(&mut index);
+    std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
+    // no zoom track for an audio-only clip
+    std::fs::write(clip_dir.join("zoom.json"), "[]")?;
     Ok(index)
 }
 

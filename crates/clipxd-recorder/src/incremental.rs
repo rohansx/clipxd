@@ -150,8 +150,12 @@ impl IncrementalIndexer {
         self.run_pass(video, title, false)?;
         self.transcribe_pass(video, false);
         let info = media::probe(video)?;
+        let audio_only = info.width == 0 && info.height == 0;
 
         let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &self.enrichment);
+        if audio_only {
+            index.metadata.has_video = false;
+        }
 
         let track = if !events.is_empty() {
             events.clone()
@@ -165,7 +169,7 @@ impl IncrementalIndexer {
         }
 
         let focus = if track.is_empty() { autofocus::focus_track_from_deltas(&self.all_deltas, info.width, info.height) } else { track };
-        let zoom = cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() });
+        let zoom = if audio_only { Vec::new() } else { cinematic_track(&focus, info.duration_s, &ZoomConfig { fps: info.fps as f64, ..Default::default() }) };
 
         let target_frames = clip_dir.join("frames");
         if self.frames_dir != target_frames {

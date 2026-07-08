@@ -16,6 +16,7 @@ function emptyIndex(i: Index): boolean {
 import { WatchBody } from "./WatchBody";
 import { ReadBody } from "./ReadBody";
 import { ShareModal } from "./ShareModal";
+import { SubtitleStyleBar } from "./SubtitleStyle";
 import type { SeekRequest } from "./App";
 
 type Seam = "watch" | "split" | "read";
@@ -130,7 +131,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
     if (!id) return;
     setRendering(true);
     try {
-      const blob = await renderClip(id, { format: "mp4", mockup: true, bg, project: toProject(id, regions, edits) });
+      const blob = await renderClip(id, { format: "mp4", mockup: true, bg, captions: true, project: toProject(id, regions, edits) });
       downloadBlob(`${id}.mp4`, blob);
       showToast("Rendered video downloaded");
     } catch {
@@ -350,6 +351,12 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
         />
         <ReadBody id={id} index={index} t={t} seek={seek} />
       </div>
+
+      {/* Subtitle design selection — only meaningful once the transcript exists (the designs
+          act on speech, and the Karaoke/Bold highlight needs the indexing-time emphasis pass). */}
+      {index && (index.transcript?.length ?? 0) > 0 && (
+        <SubtitleStyleBar id={id ?? ""} index={index} showToast={showToast} />
+      )}
 
       <div className="agent-rail">
         <span className="led-on" style={{ flex: "none" }} />

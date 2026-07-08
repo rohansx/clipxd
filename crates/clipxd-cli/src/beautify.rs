@@ -9,6 +9,7 @@ use clipxd_cinematic::{
     annotations_at, browser_in, compute_zoom_track, crop_rect, frame_layout, keystroke_pills, pill_at, Annotation,
     Background, Click, CursorSample, FrameLayout, SceneConfig, ZoomConfig,
 };
+use clipxd_index::{Emphasis, Index, SubtitleStyle};
 use clipxd_recorder::BlurRegion;
 use image::{imageops, Rgba, RgbaImage};
 use rayon::prelude::*;
@@ -28,6 +29,11 @@ pub struct BeautifyOpts {
     /// Apply a `.clipxd` project: manual zoom regions (override the auto-zoom), trim cuts
     /// (drop spans), and speed ramps (decimate spans) — bake the editor's edits into output.
     pub project: Option<PathBuf>,
+    /// Burn styled captions into the output. Path to the clip's `index.json`; reads
+    /// `transcript` + `subtitle_emphasis` + `subtitle_style` (the design the user picked on
+    /// the clip page + the Ollama indexing-time focus-word pass). No-op if no transcript or
+    /// no `subtitle_style` is set.
+    pub captions: Option<PathBuf>,
 }
 
 pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &BeautifyOpts) -> Result<()> {
@@ -54,6 +60,16 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         }
     }
     let pills = keystroke_pills(&ev.keys, 0.4, 1.2);
+    // Styled captions: load the clip's index.json (transcript + the user's subtitle_style +
+    // the indexing-time subtitle_emphasis). Only burn captions when the user actually picked
+    // a design (subtitle_style present) AND there's a transcript to caption.
+    let captions = opts.captions.as_deref().and_then(load_captions);
+    if let Some(c) = captions.as_ref() {
+        eprintln!(
+            "captions: design={} emphasis={} segments={}",
+            c.style.design, c.emphasis.is_some(), c.transcript.len()
+        );
+    }
     let font = text::load_font();
     eprintln!(
         "{}x{} @ {:.0}fps {:.1}s → {} keyframes, {} clicks, {} pills, {} blur; bg={} mockup={} format={}",
@@ -140,6 +156,12 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         let anns = annotations_at(&ev.anns, t);
         if !anns.is_empty() {
             draw_annotations(&mut canvas, &layout, font.as_ref(), &anns);
+        }
+
+        // styled captions (burn the user's chosen subtitle design + the indexing-time focus
+        // words into the export). Drawn on top of everything but the cursor FX.
+        if let (Some(caps), Some(f)) = (captions.as_ref(), font.as_ref()) {
+            draw_caption(&mut canvas, &layout, f, caps, t);
         }
 
         // cursor effects — a soft spotlight + click ripples, mapped through the zoom crop so
@@ -533,4 +555,250 @@ fn mesh(w: u32, h: u32, base: [u8; 3], blobs: &[(f32, f32, f32, [u8; 3])]) -> Rg
 fn run(c: &mut Command) -> Result<()> {
     ensure!(c.stdout(Stdio::null()).stderr(Stdio::null()).status()?.success(), "ffmpeg failed");
     Ok(())
+}
+
+
+// ---- styled captions (burned into the export) ---------------------------------
+// Mirrors app/src/SubtitleStyle.tsx: 6 designs, per-word emphasis from the indexing-time
+// Ollama pass (subtitle_emphasis), and the user's chosen style (subtitle_style). Drawn with
+// the same single-color ab_glyph rasterizer the keystroke pills use, one word at a time so
+// each word can carry its own emphasis colour.
+
+struct Captions {
+    transcript: Vec<clipxd_index::TranscriptSegment>,
+    emphasis: Option<clipxd_index::SubtitleEmphasis>,
+    style: SubtitleStyle,
+}
+
+/// Load `index.json` and pull out exactly what the caption layer needs. Returns `None` when
+/// the user hasn't picked a design yet (`subtitle_style` absent) or there's no transcript —
+/// in either case there's nothing to burn in.
+fn load_captions(p: &Path) -> Option<Captions> {
+    let idx: Index = serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()?;
+    let style = idx.subtitle_style?;
+    if idx.transcript.is_empty() {
+        return None;
+    }
+    Some(Captions { transcript: idx.transcript, emphasis: idx.subtitle_emphasis, style })
+}
+
+/// The transcript segment active at `t` — the one that contains it. A segment with `end == 0`
+/// is treated as open-ended (still active from its start). During a silence gap between
+/// segments this returns `None`, so the burn path draws no caption rather than lingering
+/// the previous one over dead air.
+fn active_transcript<'a>(tx: &'a [clipxd_index::TranscriptSegment], t: f64) -> Option<&'a clipxd_index::TranscriptSegment> {
+    for s in tx {
+        if s.start <= t && (s.end == 0.0 || t <= s.end) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// The emphasis segment matching `seg` — exact-ish start match first, then overlapping.
+fn emphasis_seg<'a>(em: &'a clipxd_index::SubtitleEmphasis, seg: &clipxd_index::TranscriptSegment) -> Option<&'a clipxd_index::EmphasisSegment> {
+    em.segments.iter().find(|s| (s.start - seg.start).abs() < 0.4).or_else(|| {
+        em.segments
+            .iter()
+            .filter(|s| s.start <= seg.end && s.end >= seg.start)
+            .min_by_key(|s| ((s.start - seg.start).abs() * 1000.0) as i64)
+    })
+}
+
+fn draw_caption(canvas: &mut RgbaImage, layout: &FrameLayout, font: &ab_glyph::FontVec, caps: &Captions, t: f64) {
+    let Some(seg) = active_transcript(&caps.transcript, t) else { return };
+    let px = (layout.content_h as f32 * 0.05 * caps.style.font_scale).clamp(18.0, 56.0);
+    let max_w = layout.content_w as f32 * 0.86;
+    let space = text::text_width(font, px, " ");
+    let em_seg = caps.emphasis.as_ref().and_then(|e| emphasis_seg(e, seg));
+    let progress = if seg.end > seg.start {
+        ((t - seg.start) / (seg.end - seg.start)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let words: Vec<&str> = seg.text.split_whitespace().collect();
+    if words.is_empty() {
+        return;
+    }
+    let n = words.len() as f64;
+
+    // Decide each word's colour + (for boxed) whether to draw the bar.
+    let word_color = |w: &str, i: usize| -> ([u8; 3], Option<[u8; 3]>) {
+        let em = em_seg.and_then(|s| {
+            let clean = w.to_lowercase();
+            s.words.iter().find(|x| {
+                let xc = x.text.to_lowercase();
+                xc == clean || xc == clean.trim_matches(|c: char| c.is_ascii_punctuation())
+            })
+        });
+        let kind = if caps.style.emphasis { em.map(|w| w.emphasis).unwrap_or(Emphasis::None) } else { Emphasis::None };
+        let lit = caps.style.design == "karaoke" && (i as f64 / n) <= progress;
+        match caps.style.design.as_str() {
+            "bold" => match kind {
+                Emphasis::Primary => ([255, 213, 74], None),
+                Emphasis::Secondary => ([255, 255, 255], None),
+                _ => ([236, 240, 246], None),
+            },
+            "karaoke" => match kind {
+                Emphasis::Primary => ([255, 213, 74], None),
+                _ if lit => ([255, 255, 255], None),
+                _ => ([120, 120, 120], None),
+            },
+            "minimal" => match kind {
+                Emphasis::Primary => ([10, 10, 10], None),
+                _ => ([30, 30, 30], None),
+            },
+            "glow" => match kind {
+                Emphasis::Primary => ([124, 249, 255], Some([24, 168, 255])),
+                Emphasis::Secondary => ([255, 255, 255], Some([255, 255, 255])),
+                _ => ([255, 255, 255], None),
+            },
+            // classic / boxed
+            _ => match kind {
+                Emphasis::Primary => ([255, 213, 74], None),
+                Emphasis::Secondary => ([255, 255, 255], None),
+                _ => ([255, 255, 255], None),
+            },
+        }
+    };
+
+    // Greedy wrap into lines (each a vec of word indices + widths), centered later.
+    let mut lines: Vec<Vec<(usize, f32)>> = Vec::new();
+    let mut cur: Vec<(usize, f32)> = Vec::new();
+    let mut cur_w = 0.0_f32;
+    for (i, w) in words.iter().enumerate() {
+        let ww = text::text_width(font, px, w);
+        let add = if cur.is_empty() { ww } else { space + ww };
+        if cur_w + add > max_w && !cur.is_empty() {
+            lines.push(std::mem::take(&mut cur));
+            cur_w = ww;
+            cur.push((i, ww));
+        } else {
+            cur_w += add;
+            cur.push((i, ww));
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+
+    let line_h = px * 1.28;
+    let block_h = line_h * lines.len() as f32;
+    let (cx_full, top_full) = (layout.content_x as f32 + layout.content_w as f32 / 2.0, layout.content_y as f32);
+    let bottom_full = (layout.content_y + layout.content_h) as f32;
+    let (mut y, _anchor_bottom) = match caps.style.position.as_str() {
+        "top" => (top_full + px * 0.6, false),
+        "center" => (top_full + layout.content_h as f32 / 2.0 - block_h / 2.0, false),
+        _ => (bottom_full - block_h - px * 0.8, true),
+    };
+    // keep the band inside the content area
+    y = y.max(top_full + 2.0).min(bottom_full - block_h - 2.0);
+
+    let boxed = caps.style.design == "boxed";
+    for line in &lines {
+        let total: f32 = line.iter().map(|(_, w)| *w).sum::<f32>() + space * (line.len().saturating_sub(1)) as f32;
+        let x0 = cx_full - total / 2.0;
+        if boxed {
+            let (bx, by, bw, bh) = (x0 - px * 0.5, y - px * 0.18, total + px, line_h);
+            blend_rect(canvas, bx as i64, by as i64, bw as i64, bh as i64, [0, 0, 0, 150]);
+        }
+        let mut caret = x0;
+        for &(i, ww) in line {
+            let (color, glow) = word_color(words[i], i);
+            if let Some(gc) = glow {
+                for &(dx, dy) in &[(2.0_f32, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0), (2.0, 2.0), (-2.0, -2.0), (2.0, -2.0), (-2.0, 2.0)] {
+                    text::draw_text(canvas, caret + dx, y + dy, words[i], px, font, gc);
+                }
+            } else if caps.style.design == "classic" || caps.style.design == "bold" || caps.style.design == "karaoke" {
+                // a soft shadow so the caption reads over any background
+                text::draw_text(canvas, caret + 2.0, y + 2.0, words[i], px, font, [0, 0, 0]);
+            }
+            text::draw_text(canvas, caret, y, words[i], px, font, color);
+            caret += ww + space;
+        }
+        y += line_h;
+    }
+}
+
+#[cfg(test)]
+mod caption_tests {
+    use super::*;
+    use clipxd_index::{EmphasisSegment, EmphasisWord, Index, Metadata, Source, SubtitleEmphasis, SubtitleStyle, TranscriptSegment};
+
+    fn meta() -> Metadata {
+        Metadata {
+            duration: 10.0, resolution: [100, 100], fps: 30.0, created_at: "0".into(),
+            title: "t".into(), description: String::new(), app_focus: vec![], url_context: None, has_video: true,
+        }
+    }
+
+    fn seg(start: f64, end: f64, text: &str) -> TranscriptSegment {
+        TranscriptSegment { start, end, speaker: None, text: text.into() }
+    }
+
+    #[test]
+    fn active_transcript_returns_the_containing_segment() {
+        let tx = [seg(0.0, 1.0, "first"), seg(2.0, 4.0, "second"), seg(5.0, 7.0, "third")];
+        assert_eq!(active_transcript(&tx, 3.0).unwrap().text, "second");
+        assert_eq!(active_transcript(&tx, 6.5).unwrap().text, "third");
+        assert_eq!(active_transcript(&tx, 1.5), None); // gap — no active segment
+    }
+
+    #[test]
+    fn active_transcript_falls_back_to_last_started_when_no_end() {
+        let tx = [seg(0.0, 0.0, "open ended")];
+        assert_eq!(active_transcript(&tx, 5.0).unwrap().text, "open ended");
+    }
+
+    #[test]
+    fn emphasis_seg_matches_by_start_then_overlap() {
+        let em = SubtitleEmphasis {
+            generated_by: "ollama".into(), generated_at: "0".into(),
+            segments: vec![
+                EmphasisSegment { start: 0.0, end: 1.0, words: vec![EmphasisWord { text: "first".into(), emphasis: Emphasis::Primary }] },
+                EmphasisSegment { start: 2.2, end: 4.2, words: vec![EmphasisWord { text: "second".into(), emphasis: Emphasis::Primary }] },
+            ],
+        };
+        // exact-ish start
+        let s = seg(2.0, 4.0, "second segment");
+        assert_eq!(emphasis_seg(&em, &s).unwrap().start, 2.2);
+        // overlap fallback when no start is close
+        let s2 = seg(3.5, 5.0, "drifted");
+        assert_eq!(emphasis_seg(&em, &s2).unwrap().start, 2.2);
+    }
+
+    #[test]
+    fn load_captions_requires_a_style_and_a_transcript() {
+        let tmp = std::env::temp_dir().join(format!("clipxd-cap-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // no style + no transcript -> None
+        let mut idx = Index::new("clp_1", Source::Screen, meta());
+        std::fs::write(tmp.join("a.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+        assert!(load_captions(&tmp.join("a.json")).is_none());
+
+        // style set but no transcript -> None
+        idx.subtitle_style = Some(SubtitleStyle::default());
+        std::fs::write(tmp.join("b.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+        assert!(load_captions(&tmp.join("b.json")).is_none());
+
+        // style + transcript -> Some
+        idx.transcript.push(seg(0.0, 1.0, "hello world"));
+        std::fs::write(tmp.join("c.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+        let c = load_captions(&tmp.join("c.json")).unwrap();
+        assert_eq!(c.transcript.len(), 1);
+        assert_eq!(c.style.design, "classic");
+        assert!(c.emphasis.is_none());
+
+        // with emphasis too
+        idx.subtitle_emphasis = Some(SubtitleEmphasis {
+            generated_by: "ollama".into(), generated_at: "0".into(),
+            segments: vec![EmphasisSegment { start: 0.0, end: 1.0, words: vec![EmphasisWord { text: "hello".into(), emphasis: Emphasis::Primary }] }],
+        });
+        std::fs::write(tmp.join("d.json"), serde_json::to_string(&idx).unwrap()).unwrap();
+        let c2 = load_captions(&tmp.join("d.json")).unwrap();
+        assert!(c2.emphasis.is_some());
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

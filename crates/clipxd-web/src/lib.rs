@@ -74,6 +74,7 @@ fn mint_clip_id() -> String {
 pub mod auth;
 pub mod deeppass;
 pub mod docgen;
+pub mod emphasis;
 pub mod llm;
 pub mod mcp;
 pub mod preview_gif;
@@ -182,6 +183,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/clip/:id/claim", post(clip_claim))
             .route("/clip/:id/re-enrich", post(clip_re_enrich))
             .route("/clip/:id/local-captions", post(post_local_captions))
+            .route("/clip/:id/subtitle-style", post(set_subtitle_style))
             .route("/ingest", post(ingest))
             .route("/ingest/stage", post(ingest_stage_create))
             .route("/ingest/stage/:session", put(ingest_stage_append))
@@ -1312,6 +1314,15 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
                 eprintln!("auto-title for {id}: {e:#} (continuing)");
             }
         }
+        // Caption-emphasis pass: Ollama-Cloud-first LLM marks which transcript words to focus on
+        // for the Karaoke/Bold subtitle designs. Same indexing-time, log-and-swallow contract as
+        // auto-title — gated on any backend being configured (server- or owner-supplied), so a
+        // local-first box with no key is unaffected and the clip completes unchanged on failure.
+        if has_llm_key {
+            if let Err(e) = emphasis::run(&clip_dir, &id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
+                eprintln!("emphasis pass for {id}: {e:#} (continuing)");
+            }
+        }
         // Optional Tier-2 deep pass (NVIDIA/Gemini text-context → title/tldr/chapters). Off
         // unless CLIPXD_DEEP_PASS=1 + a backend key (server- or owner-supplied) are available —
         // the local-first default sends nothing anywhere. Runs before the final mirror so the
@@ -1789,6 +1800,66 @@ async fn post_local_captions(
     Ok(Json(serde_json::json!({ "ok": true, "added": added, "visual_timeline": index.visual_timeline.len() })))
 }
 
+/// Body of a `POST /clip/:id/subtitle-style` — the user's caption design choice. All fields
+/// validated against small allow-lists so a bad client can't write arbitrary strings into the
+/// index. `font_scale` is clamped to a sensible range.
+#[derive(Deserialize)]
+struct SubtitleStyleBody {
+    design: String,
+    #[serde(default = "one_f32")]
+    font_scale: f32,
+    #[serde(default = "pos_bottom_str")]
+    position: String,
+    #[serde(default = "default_true_fn")]
+    emphasis: bool,
+}
+
+fn one_f32() -> f32 { 1.0 }
+fn pos_bottom_str() -> String { "bottom".to_string() }
+fn default_true_fn() -> bool { true }
+
+const SUBTITLE_DESIGNS: &[&str] = &["classic", "bold", "karaoke", "minimal", "boxed", "glow"];
+const SUBTITLE_POSITIONS: &[&str] = &["bottom", "center", "top"];
+
+/// `POST /clip/:id/subtitle-style` — save the user's chosen caption design + knobs into the
+/// clip's `index.json` as `subtitle_style`. Pure presentation metadata; ownership-gated, same
+/// `require_clip_access` gate as `set_cursor`/`local-captions`. The emphasis data the designs
+/// consume (`subtitle_emphasis`) is server-produced at indexing time and never mutated here.
+async fn set_subtitle_style(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SubtitleStyleBody>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    require_clip_access(&s, &headers, &id)?;
+    let design = body.design.trim().to_ascii_lowercase();
+    if !SUBTITLE_DESIGNS.contains(&design.as_str()) {
+        return Err((StatusCode::BAD_REQUEST, format!("unknown design '{}'", body.design)));
+    }
+    let position = body.position.trim().to_ascii_lowercase();
+    if !SUBTITLE_POSITIONS.contains(&position.as_str()) {
+        return Err((StatusCode::BAD_REQUEST, format!("unknown position '{}'", body.position)));
+    }
+    let font_scale = body.font_scale.clamp(0.8, 1.6);
+
+    let mut index = load_index(&s, &id).await?;
+    index.subtitle_style = Some(clipxd_index::SubtitleStyle {
+        design,
+        font_scale,
+        position,
+        emphasis: body.emphasis,
+    });
+    let dir = s.clips_dir.join(&id);
+    let index_json = serde_json::to_string_pretty(&index).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(dir.join("index.json"), &index_json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "subtitle_style": index.subtitle_style })))
+}
+
 /// Resolve the `clipxd` CLI: a sibling release build (fast), then the debug sibling, then PATH.
 fn clipxd_bin() -> PathBuf {
     let exe = std::env::current_exe().ok();
@@ -2114,6 +2185,8 @@ struct RenderQ {
     format: Option<String>,
     mockup: Option<bool>,
     bg: Option<String>,
+    /// Burn the clip's styled subtitles (subtitle_style + subtitle_emphasis) into the render.
+    captions: Option<bool>,
 }
 
 /// Whitelist the wallpaper name (preset or hex) so it's safe to pass to the renderer.
@@ -2174,6 +2247,12 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         }
         if mockup {
             c.arg("--mockup");
+        }
+        // Burn styled captions: pass the clip's index.json; `beautify` no-ops when the user
+        // hasn't picked a design (no subtitle_style) or there's no transcript, so passing it
+        // is always safe. Gated by the `captions` query param (default off for back-compat).
+        if p.captions.unwrap_or(false) && dir.join("index.json").exists() {
+            c.arg("--captions").arg(dir.join("index.json"));
         }
         c.arg("--out").arg(&out2);
         let st = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { videoUrl } from "./api";
 import { fmt, type Index, type ZoomKeyframe } from "./types";
 import { RegionTrack } from "./RegionTrack";
+import { SubtitleLayer } from "./SubtitleStyle";
 import type { EditKind, EditRegion, ZoomRegion } from "./regions";
 
 interface WatchBodyProps {
@@ -151,6 +152,9 @@ export function WatchBody(p: WatchBodyProps) {
                 onVolumeChange={(e) => setMuted((e.currentTarget as HTMLVideoElement).muted)}
               />
               {caption && <div className="cap-badge">{caption}</div>}
+              {/* Styled subtitle layer: the user's chosen design + the indexing-time emphasis.
+                  Only renders when a transcript exists AND the user has picked a design. */}
+              {hasVideo && <SubtitleLayer index={index} t={t} />}
               {/* single glass control bar — the whole player chrome, overlaid Loom-style */}
               <div className="player-bar">
                 <button className="pbtn" onClick={togglePlay} title={playing ? "Pause" : "Play"} aria-label={playing ? "Pause" : "Play"}>
@@ -176,6 +180,9 @@ export function WatchBody(p: WatchBodyProps) {
           ) : (
             <div style={{ padding: 40, color: "#888", fontFamily: "var(--font-mono)", textAlign: "center" }}>no video stream — index only</div>
           )}
+          {/* Styled subtitles render for both video and voice-only clips — a voice-only clip's
+              value IS its transcript + styled captions. */}
+          <SubtitleLayer index={index} t={t} />
         </div>
       </div>
 

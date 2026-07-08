@@ -319,6 +319,8 @@ export interface RenderOpts {
   mockup?: boolean;
   bg?: string;
   project?: unknown;
+  /** Burn the clip's styled subtitles (subtitle_style + subtitle_emphasis) into the render. */
+  captions?: boolean;
 }
 
 export async function renderClip(id: string, opts: RenderOpts = {}, base = apiBase()): Promise<Blob> {
@@ -326,6 +328,7 @@ export async function renderClip(id: string, opts: RenderOpts = {}, base = apiBa
     format: opts.format ?? "mp4",
     mockup: String(opts.mockup ?? true),
     bg: opts.bg ?? "aurora",
+    captions: String(opts.captions ?? false),
   });
   const r = await af(`${base}/clip/${id}/render?${q}`, {
     method: "POST",
@@ -351,6 +354,20 @@ export async function postCursor(
 /** Re-run Phase 2 (captioning/OCR/transcription) on an existing clip. Idempotent. */
 export async function reEnrichClip(id: string, base = apiBase()): Promise<void> {
   await af(`${base}/clip/${id}/re-enrich`, { method: "POST" });
+}
+
+/** Save the user's chosen caption design + knobs into the clip's index. Owner-gated. */
+export async function setSubtitleStyle(
+  id: string,
+  style: { design: string; font_scale: number; position: string; emphasis: boolean },
+  base = apiBase(),
+): Promise<void> {
+  const r = await af(`${base}/clip/${id}/subtitle-style`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(style),
+  });
+  if (!r.ok) throw new Error(`subtitle-style: HTTP ${r.status}`);
 }
 
 export function downloadBlob(name: string, blob: Blob): void {

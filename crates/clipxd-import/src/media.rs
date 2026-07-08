@@ -64,8 +64,11 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
             streams
                 .iter()
                 .find(|s| s.get("codec_type").and_then(|c| c.as_str()) == Some("video"))
-        })
-        .context("no video stream found")?;
+        });
+        // Audio-only containers (voice-only recordings: an opus-in-webm with no video
+        // stream) have no `video` stream entry. Treat that as a zero-dimension clip rather
+        // than an error — downstream enrich branches on width==0 && height==0 to run
+        // transcript-only. `find` returns `None`, so the `.and_then`s below all yield None.
 
     let mut duration_s = v
         .get("format")
@@ -75,7 +78,7 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
         .filter(|d| *d > 0.0)
         .or_else(|| {
             vstream
-                .get("duration")
+                .and_then(|s| s.get("duration"))
                 .and_then(|d| d.as_str())
                 .and_then(|s| s.parse::<f64>().ok())
                 .filter(|d| *d > 0.0)
@@ -93,10 +96,10 @@ pub fn probe(video: &Path) -> Result<MediaInfo> {
         duration_s = probe_duration_via_decode(video).unwrap_or(0.0);
     }
 
-    let width = vstream.get("width").and_then(|w| w.as_u64()).unwrap_or(0) as u32;
-    let height = vstream.get("height").and_then(|h| h.as_u64()).unwrap_or(0) as u32;
+    let width = vstream.and_then(|s| s.get("width")).and_then(|w| w.as_u64()).unwrap_or(0) as u32;
+    let height = vstream.and_then(|s| s.get("height")).and_then(|h| h.as_u64()).unwrap_or(0) as u32;
     let fps = vstream
-        .get("r_frame_rate")
+        .and_then(|s| s.get("r_frame_rate"))
         .and_then(|r| r.as_str())
         .map(parse_rational)
         .unwrap_or(0.0);

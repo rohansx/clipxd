@@ -86,6 +86,11 @@ export interface Index {
   event_track: ClipEvent[];
   summary: Summary;
   redaction: Redaction;
+  /** v2.1: per-word emphasis for styled captions, produced at indexing time by the
+   *  Ollama-Cloud-first LLM pass. Absent when no LLM backend is configured. */
+  subtitle_emphasis?: SubtitleEmphasis;
+  /** v2.1: the user-chosen caption design, set via POST /clip/:id/subtitle-style. */
+  subtitle_style?: SubtitleStyle;
 }
 
 export interface ClipCounts {
@@ -120,6 +125,35 @@ export interface TextHit {
 export interface QueryAnswer {
   text: string;
   citations: number[];
+}
+
+export type EmphasisKind = "primary" | "secondary" | "none";
+
+export interface EmphasisWord {
+  text: string;
+  emphasis: EmphasisKind;
+}
+
+export interface EmphasisSegment {
+  start: number;
+  end: number;
+  words: EmphasisWord[];
+}
+
+export interface SubtitleEmphasis {
+  generated_by: string;
+  generated_at: string;
+  segments: EmphasisSegment[];
+}
+
+export type SubtitleDesign = "classic" | "bold" | "karaoke" | "minimal" | "boxed" | "glow";
+export type SubtitlePosition = "bottom" | "center" | "top";
+
+export interface SubtitleStyle {
+  design: SubtitleDesign;
+  font_scale: number;
+  position: SubtitlePosition;
+  emphasis: boolean;
 }
 
 export const fmt = (t: number): string =>

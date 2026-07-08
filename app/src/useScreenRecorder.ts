@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
 import { postCursor } from "./api";
+import { filterCss, bgPresetById, loadImageBg, type CameraConfig } from "./CameraConfig";
 
 export type RecState = "idle" | "counting" | "recording" | "processing" | "failed";
+export type RecordMode = "screen" | "voice";
 
 /** Seconds between picking a screen/window and capture actually starting — time to switch
  *  to the right window, close notification popups, etc. Same pattern as Loom/Cap.so. */
@@ -19,6 +21,15 @@ export interface RecorderCallbacks {
   onClipReady?: (id: string) => void;
   /** Fires if every upload path timed out or errored. */
   onError?: (reason: string) => void;
+}
+
+export interface StartOptions {
+  /** Optional camera stream to composite as a bubble (screen mode only). */
+  camera?: MediaStream | null;
+  /** Live camera filters + background, baked into the canvas so WYSIWYG. */
+  cameraConfig?: CameraConfig;
+  /** `voice` records the microphone only (no display media, no canvas, no camera). */
+  mode?: RecordMode;
 }
 
 // Total time we'll wait between Stop and a usable id. The server's commit
@@ -40,6 +51,18 @@ function recorderOpts(): MediaRecorderOptions {
     }
   }
   return { videoBitsPerSecond: 8_000_000 };
+}
+
+// Voice-only mode: an audio-only container. Opus-in-webm first (what MediaRecorder prefers on
+// Chromium), then a bare audio/webm, then whatever the browser offers. No video bitrate.
+function audioRecorderOpts(): MediaRecorderOptions {
+  const prefs = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+  for (const mimeType of prefs) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(mimeType)) {
+      return { mimeType };
+    }
+  }
+  return {};
 }
 
 /** Wrap a fetch with an AbortController and reject on timeout. */
@@ -69,17 +92,48 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   // null whenever state !== "counting".
   const countdownResolve = useRef<((proceed: boolean) => void) | null>(null);
 
-  const start = async (cameraStream: MediaStream | null) => {
+  const start = async (opts: StartOptions = {}) => {
+    const cameraStream = opts.camera ?? null;
+    const mode: RecordMode = opts.mode ?? "screen";
+    const cameraConfig = opts.cameraConfig;
     try {
+      // Voice-only mode: capture the microphone, no display media. Produces an audio-only
+      // clip (has_video: false) whose value is the transcript + styled captions.
+      if (mode === "voice") {
+        const mic = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+        return startFromStream(mic, mic, mode, null);
+      }
       const screen = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: true,
       });
-      let recordStream: MediaStream = screen;
+      return startFromStream(screen, screen, mode, cameraStream, cameraConfig);
+    } catch (e) {
+      setState("idle");
+      setError((e as Error).message ?? "Could not start recording");
+    }
+  };
+
+  /** Shared capture-to-commit path for both screen and voice modes. `sourceStream` is what
+   *  the user permitted (screen track or mic-only); `recordStream` is what MediaRecorder
+   *  consumes — for screen+camera that's a composited canvas, otherwise it's `sourceStream`. */
+  const startFromStream = async (
+    sourceStream: MediaStream,
+    initialRecordStream: MediaStream,
+    mode: RecordMode,
+    cameraStream: MediaStream | null,
+    cameraConfig?: CameraConfig,
+  ) => {
+    try {
+      const screen = sourceStream;
+      let recordStream: MediaStream = initialRecordStream;
       let raf = 0;
       const cleanups: Array<() => void> = [() => screen.getTracks().forEach((t) => t.stop())];
 
-      if (cameraStream && cameraStream.getVideoTracks().length) {
+      if (cameraStream && cameraStream.getVideoTracks().length && mode === "screen") {
         const st = screen.getVideoTracks()[0].getSettings();
         const W = st.width ?? 1920;
         const H = st.height ?? 1080;
@@ -91,15 +145,73 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         const margin = Math.round(H * 0.03);
         const cx = W - d / 2 - margin;
         const cy = H - d / 2 - margin;
+        // WYSIWYG camera: bake the live filter + background into the composited canvas so the
+        // recorded bubble matches the on-screen preview. `ctx.filter` is supported in the same
+        // Chromium/Firefox the recorder already requires.
+        const fcss = cameraConfig ? filterCss(cameraConfig.filter) : "none";
+        const bg = cameraConfig?.background;
+        // Preload a custom uploaded background image once (data URL / object URL) so the rAF
+        // draw loop just blits it each frame instead of re-decoding. Presets are pure canvas
+        // draws — no preload needed.
+        let bgImage: HTMLImageElement | null = null;
+        if (bg?.kind === "image" && bg.imageSrc) {
+          try { bgImage = await loadImageBg(bg.imageSrc); } catch { /* broken image -> none */ }
+        }
         const draw = () => {
+          ctx.filter = "none";
           ctx.drawImage(sv, 0, 0, W, H);
           ctx.save();
           ctx.beginPath(); ctx.arc(cx, cy, d / 2, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
-          const ar = (cv.videoWidth || 4) / (cv.videoHeight || 3);
-          let dw = d, dh = d;
-          if (ar > 1) dw = d * ar; else dh = d / ar;
-          ctx.drawImage(cv, cx - dw / 2, cy - dh / 2, dw, dh);
+          // Clean background behind the camera: a soft blurred halo or a solid/gradient fill,
+          // then the sharp camera inset on top — a produced look without ML segmentation.
+          if (bg && bg.kind !== "none") {
+            const inset = bg.inset ?? 0.82;
+            const od = d; // outer (blurred/filled) diameter
+            const id = Math.round(od * inset); // sharp inset diameter
+            if (bg.kind === "blur") {
+              ctx.filter = `blur(${Math.max(1, bg.blur)}px)`;
+              const ar0 = (cv.videoWidth || 4) / (cv.videoHeight || 3);
+              let bwd = od, bhd = od;
+              if (ar0 > 1) bwd = od * ar0; else bhd = od / ar0;
+              ctx.drawImage(cv, cx - bwd / 2, cy - bhd / 2, bwd, bhd);
+              ctx.filter = "none";
+            } else if (bg.kind === "solid") {
+              ctx.fillStyle = bg.color;
+              ctx.fillRect(cx - od / 2, cy - od / 2, od, od);
+            } else if (bg.kind === "gradient") {
+              const g = ctx.createLinearGradient(cx - od / 2, cy - od / 2, cx + od / 2, cy + od / 2);
+              g.addColorStop(0, bg.color); g.addColorStop(1, bg.color2);
+              ctx.fillStyle = g;
+              ctx.fillRect(cx - od / 2, cy - od / 2, od, od);
+            } else if (bg.kind === "preset") {
+              // Google-Meet-style scene preset: a curated gradient drawn into the bubble ring
+              // behind the sharp camera inset (clean produced look, no ML segmentation).
+              const preset = bgPresetById(bg.presetId);
+              if (preset) preset.draw(ctx, cx - od / 2, cy - od / 2, od, od);
+              else { ctx.fillStyle = "#0d1117"; ctx.fillRect(cx - od / 2, cy - od / 2, od, od); }
+            } else if (bg.kind === "image" && bgImage) {
+              // custom uploaded background, "cover"-fitted into the bubble ring.
+              const ar = (bgImage.naturalWidth || od) / (bgImage.naturalHeight || od);
+              let iw = od, ih = od;
+              if (ar > 1) ih = od / ar; else iw = od * ar;
+              ctx.drawImage(bgImage, cx - iw / 2, cy - ih / 2, iw, ih);
+            }
+            // sharp inset camera, filtered
+            ctx.beginPath(); ctx.arc(cx, cy, id / 2, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+            const ar = (cv.videoWidth || 4) / (cv.videoHeight || 3);
+            let dw = id, dh = id;
+            if (ar > 1) dw = id * ar; else dh = id / ar;
+            ctx.filter = fcss;
+            ctx.drawImage(cv, cx - dw / 2, cy - dh / 2, dw, dh);
+          } else {
+            const ar = (cv.videoWidth || 4) / (cv.videoHeight || 3);
+            let dw = d, dh = d;
+            if (ar > 1) dw = d * ar; else dh = d / ar;
+            ctx.filter = fcss;
+            ctx.drawImage(cv, cx - dw / 2, cy - dh / 2, dw, dh);
+          }
           ctx.restore();
+          ctx.filter = "none";
           ctx.lineWidth = 6; ctx.strokeStyle = "#fff";
           ctx.beginPath(); ctx.arc(cx, cy, d / 2, 0, Math.PI * 2); ctx.stroke();
           raf = requestAnimationFrame(draw);
@@ -144,6 +256,7 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
 
       chunks.current = [];
 
+      // Voice-only: pick an audio-only mime. Screen mode keeps VP9/VP8 video.
       // Streaming stage session — the server creates the on-disk session dir and hands back
       // its id; chunk PUTs must target *that* id (not a locally-generated one) or they 404.
       // New servers mint the real clip id here (instant link): the session IS the clip, and
@@ -186,7 +299,9 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       });
 
       let mr: MediaRecorder;
-      try { mr = new MediaRecorder(recordStream, recorderOpts()); } catch { mr = new MediaRecorder(recordStream); }
+      try {
+        mr = new MediaRecorder(recordStream, mode === "voice" ? audioRecorderOpts() : recorderOpts());
+      } catch { mr = new MediaRecorder(recordStream); }
 
       mr.ondataavailable = (e) => {
         if (!e.data.size) return;
@@ -274,7 +389,11 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         }
       };
 
-      screen.getVideoTracks()[0].addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
+      // In screen mode, the browser's native "stop sharing" control should end the recording
+      // too. Voice mode has no video track to listen on — the mic's own track ended event
+      // would fire on a hard device unplug, which MediaRecorder surfaces via onstop anyway.
+      const vt = screen.getVideoTracks()[0];
+      if (vt) vt.addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
       // 15 000 ms timeslice: emit a chunk every 15 seconds so upload can start during recording.
       mr.start(15_000);
       ref.current = { mr };

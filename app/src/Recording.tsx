@@ -1,7 +1,18 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useScreenRecorder } from "./useScreenRecorder";
+import { useScreenRecorder, type RecordMode } from "./useScreenRecorder";
 import { Prompter } from "./Prompter";
+import {
+  CAMERA_PRESETS,
+  DEFAULT_CAMERA_CONFIG,
+  filterCss,
+  previewBackgroundCss,
+  CAMERA_BG_PRESETS,
+  loadCameraConfig,
+  saveCameraConfig,
+  type CameraConfig,
+  type CameraBgKind,
+} from "./CameraConfig";
 import { apiBase } from "./api";
 import { usePrefersReducedMotion } from "./motion";
 import {
@@ -43,6 +54,9 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
   const base = apiBase();
   const [camera, setCamera] = useState(false);
   const [showPrompter, setShowPrompter] = useState(false);
+  const [mode, setMode] = useState<RecordMode>("screen");
+  const [cameraCfg, setCameraCfg] = useState<CameraConfig>(loadCameraConfig);
+  const [showCamSettings, setShowCamSettings] = useState(false);
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
   const [secs, setSecs] = useState(0);
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
@@ -95,9 +109,11 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     onError: handleError,
   });
 
-  // camera preview stream
+  useEffect(() => saveCameraConfig(cameraCfg), [cameraCfg]);
+
+  // camera preview stream (screen mode only — voice mode has no camera)
   useEffect(() => {
-    if (!camera) {
+    if (!camera || mode === "voice") {
       setCamStream(null);
       return;
     }
@@ -253,7 +269,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
               : "READY"}
           </span>
           <span className="rec-clock">{recording ? clock : "00:00"}</span>
-          <span className="rec-hint">screen · 1080p · auto-zoom on{camera ? " · camera" : ""}</span>
+          <span className="rec-hint">{mode === "voice" ? "voice only · mic · captions on" : "screen · 1080p · auto-zoom on"}{camera ? " · camera" : ""}</span>
         </div>
 
         {/* Live-link card — the instant link. Mounts the moment recording starts: the
@@ -441,7 +457,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                 <button
                   type="button"
                   className="btn btn-pill"
-                  onClick={() => { retire(); start(camStream); }}
+                  onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode }); }}
                   style={{ padding: "0 18px" }}
                 >
                   Record again
@@ -520,8 +536,8 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
 
         <div className="toolbar">
           {!counting && !recording && !processing && !failed && (
-            <button className="btn-sodium btn-pill" onClick={() => { retire(); start(camStream); }} style={{ fontSize: 14, padding: "12px 22px" }}>
-              ● {lastClip?.status === "failed" ? "Try again" : lastClip ? "Record another" : "Start recording"}
+            <button className="btn-sodium btn-pill" onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode }); }} style={{ fontSize: 14, padding: "12px 22px" }}>
+              ● {mode === "voice" ? "Record voice" : lastClip?.status === "failed" ? "Try again" : lastClip ? "Record another" : "Start recording"}
             </button>
           )}
           {counting && (
@@ -544,13 +560,32 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
               Upload failed — Retry above ↓
             </button>
           )}
-          <button
-            className={"btn btn-pill" + (camera ? " on" : "")}
-            onClick={() => setCamera((c) => !c)}
-            style={camera ? { borderColor: "var(--signal)" } : undefined}
-          >
-            📷 Camera {camera ? "on" : "off"}
-          </button>
+          {/* Capture mode: screen (screen + system audio + optional camera) vs voice-only
+              (microphone only → a transcript + styled-caption clip, no video). */}
+          {!counting && !recording && !processing && !failed && (
+            <div className="mode-toggle" role="group" aria-label="Capture mode">
+              <button className={mode === "screen" ? "on" : ""} onClick={() => setMode("screen")}>🖥 Screen</button>
+              <button className={mode === "voice" ? "on" : ""} onClick={() => { setMode("voice"); setCamera(false); }}>🎙 Voice only</button>
+            </div>
+          )}
+          {mode === "screen" && (
+            <button
+              className={"btn btn-pill" + (camera ? " on" : "")}
+              onClick={() => setCamera((c) => !c)}
+              style={camera ? { borderColor: "var(--signal)" } : undefined}
+            >
+              📷 Camera {camera ? "on" : "off"}
+            </button>
+          )}
+          {mode === "screen" && camera && (
+            <button
+              className={"btn btn-pill" + (showCamSettings ? " on" : "")}
+              onClick={() => setShowCamSettings((s) => !s)}
+              style={showCamSettings ? { borderColor: "var(--signal)" } : undefined}
+            >
+              ✨ Filters & bg
+            </button>
+          )}
           <button
             className="btn btn-pill"
             onClick={() => setShowPrompter((s) => !s)}
@@ -591,16 +626,21 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
       </div>
 
       <AnimatePresence>
-        {camStream && <CameraBubble key="cam" stream={camStream} />}
+        {camStream && <CameraBubble key="cam" stream={camStream} cfg={cameraCfg} />}
       </AnimatePresence>
       <AnimatePresence>
         {showPrompter && <Prompter key="prompter" onClose={() => setShowPrompter(false)} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showCamSettings && mode === "screen" && camera && (
+          <CameraSettings key="camset" cfg={cameraCfg} setCfg={setCameraCfg} onClose={() => setShowCamSettings(false)} />
+        )}
       </AnimatePresence>
     </div>
   );
 }
 
-function CameraBubble({ stream }: { stream: MediaStream }) {
+function CameraBubble({ stream, cfg }: { stream: MediaStream; cfg: CameraConfig }) {
   const reduced = usePrefersReducedMotion();
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -610,6 +650,11 @@ function CameraBubble({ stream }: { stream: MediaStream }) {
       v.play().catch(() => {});
     }
   }, [stream]);
+  // Preview the chosen background as a ring around the camera inset, matching what gets baked
+  // into the recorded canvas (the recorder draws the bg behind a sharp inset of the same size).
+  const bg = cfg.background;
+  const insetPct = Math.round((bg.inset ?? 0.82) * 100);
+  const showRing = bg.kind !== "none" && bg.kind !== "blur";
   return (
     <motion.div
       className="cam-bubble"
@@ -617,8 +662,159 @@ function CameraBubble({ stream }: { stream: MediaStream }) {
       initial={reduced ? false : { opacity: 0, y: 20, scale: 0.9 }}
       animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 280, damping: 24 } }}
       exit={{ opacity: 0, y: 12, transition: { duration: 0.16 } }}
+      style={{ background: showRing ? previewBackgroundCss(bg) : undefined, display: "grid", placeItems: "center" }}
     >
-      <video ref={ref} muted playsInline />
+      <video
+        ref={ref}
+        muted
+        playsInline
+        style={{ filter: filterCss(cfg.filter), width: showRing ? `${insetPct}%` : "100%", height: showRing ? `${insetPct}%` : "100%", borderRadius: "50%", objectFit: "cover" }}
+      />
+    </motion.div>
+  );
+}
+
+// Camera filters + background popover. The filter is applied live to the preview <video> (via
+// CSS `filter`) AND baked into the recorded canvas (see useScreenRecorder), so the recorded
+// bubble matches what the presenter sees. Background here is the area behind the camera
+// inset inside the bubble — a soft blur, a solid, or a gradient for a clean produced look.
+function CameraSettings({ cfg, setCfg, onClose }: { cfg: CameraConfig; setCfg: (c: CameraConfig) => void; onClose: () => void }) {
+  const reduced = usePrefersReducedMotion();
+  const set = (patch: Partial<CameraConfig>) => setCfg({ ...cfg, ...patch });
+  const setFilter = (patch: Partial<CameraConfig["filter"]>) => set({ filter: { ...cfg.filter, ...patch } });
+  const setBg = (patch: Partial<CameraConfig["background"]>) => set({ background: { ...cfg.background, ...patch } });
+  return (
+    <motion.div
+      className="cam-settings"
+      initial={reduced ? false : { opacity: 0, y: 12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 300, damping: 26 } }}
+      exit={{ opacity: 0, y: 8, transition: { duration: 0.16 } }}
+    >
+      <div className="prompter-bar">
+        <b>Camera look</b>
+        <span className="tb-spacer" />
+        <button onClick={onClose} title="Close">✕</button>
+      </div>
+      <div className="cam-settings-body">
+        <div className="lbl">Presets</div>
+        <div className="cam-presets">
+          {CAMERA_PRESETS.map((p) => (
+            <button
+              key={p.name}
+              className="cam-preset"
+              onClick={() => set({ filter: { ...p.filter } })}
+              style={{ filter: filterCss(p.filter) }}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="lbl">Live filter</div>
+        <label className="cam-slider"> brightness
+          <input type="range" min={50} max={150} value={Math.round(cfg.filter.brightness * 100)} onChange={(e) => setFilter({ brightness: +e.target.value / 100 })} />
+        </label>
+        <label className="cam-slider"> contrast
+          <input type="range" min={50} max={150} value={Math.round(cfg.filter.contrast * 100)} onChange={(e) => setFilter({ contrast: +e.target.value / 100 })} />
+        </label>
+        <label className="cam-slider"> saturate
+          <input type="range" min={0} max={200} value={Math.round(cfg.filter.saturate * 100)} onChange={(e) => setFilter({ saturate: +e.target.value / 100 })} />
+        </label>
+        <label className="cam-slider"> grayscale
+          <input type="range" min={0} max={100} value={Math.round(cfg.filter.grayscale * 100)} onChange={(e) => setFilter({ grayscale: +e.target.value / 100 })} />
+        </label>
+        <label className="cam-slider"> sepia
+          <input type="range" min={0} max={100} value={Math.round(cfg.filter.sepia * 100)} onChange={(e) => setFilter({ sepia: +e.target.value / 100 })} />
+        </label>
+        <label className="cam-slider"> hue
+          <input type="range" min={-180} max={180} value={cfg.filter.hue} onChange={(e) => setFilter({ hue: +e.target.value })} />
+        </label>
+
+        <div className="lbl">Background (clean look)</div>
+        <div className="cam-bg-kinds">
+          {(["none", "blur", "solid", "gradient", "preset", "image"] as CameraBgKind[]).map((k) => (
+            <button key={k} className={cfg.background.kind === k ? "on" : ""} onClick={() => setBg({ kind: k })}>{k}</button>
+          ))}
+        </div>
+        {cfg.background.kind === "preset" && (
+          <>
+            <div className="cam-bg-presets">
+              {CAMERA_BG_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className={"cam-bg-swatch" + (cfg.background.presetId === p.id ? " on" : "")}
+                  style={{ background: p.css }}
+                  title={p.label}
+                  onClick={() => setBg({ presetId: p.id })}
+                >
+                  <span>{p.label}</span>
+                </button>
+              ))}
+            </div>
+            <label className="cam-up">
+              upload your own image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const url = URL.createObjectURL(f);
+                  setBg({ kind: "image", imageSrc: url });
+                }}
+              />
+            </label>
+          </>
+        )}
+        {cfg.background.kind === "image" && (
+          <>
+            <label className="cam-up">
+              {cfg.background.imageSrc ? "replace image" : "choose an image"}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const url = URL.createObjectURL(f);
+                  setBg({ imageSrc: url });
+                }}
+              />
+            </label>
+            {cfg.background.imageSrc && (
+              <div className="cam-bg-swatch on" style={{ background: previewBackgroundCss(cfg.background), height: 48 }}>
+                <span>your image</span>
+              </div>
+            )}
+          </>
+        )}
+        {cfg.background.kind === "blur" && (
+          <label className="cam-slider"> blur
+            <input type="range" min={1} max={24} value={cfg.background.blur} onChange={(e) => setBg({ blur: +e.target.value })} />
+          </label>
+        )}
+        {cfg.background.kind === "solid" && (
+          <label className="cam-color"> color
+            <input type="color" value={cfg.background.color} onChange={(e) => setBg({ color: e.target.value })} />
+          </label>
+        )}
+        {cfg.background.kind === "gradient" && (
+          <>
+            <label className="cam-color"> from
+              <input type="color" value={cfg.background.color} onChange={(e) => setBg({ color: e.target.value })} />
+            </label>
+            <label className="cam-color"> to
+              <input type="color" value={cfg.background.color2} onChange={(e) => setBg({ color2: e.target.value })} />
+            </label>
+          </>
+        )}
+        {cfg.background.kind !== "none" && (
+          <label className="cam-slider"> camera inset {(Math.round(cfg.background.inset * 100))}%
+            <input type="range" min={50} max={95} value={Math.round(cfg.background.inset * 100)} onChange={(e) => setBg({ inset: +e.target.value / 100 })} />
+          </label>
+        )}
+        <button className="btn btn-pill" style={{ marginTop: 8 }} onClick={() => setCfg({ ...DEFAULT_CAMERA_CONFIG })}>Reset</button>
+      </div>
     </motion.div>
   );
 }

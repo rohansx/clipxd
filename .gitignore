@@ -20,3 +20,7 @@
 **/node_modules
 app/dist
 *.tsbuildinfo
+
+# local runtime scratch (clip/staging ids from a dev session) — not source
+/.clip-id-marker
+/.session-marker
