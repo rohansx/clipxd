@@ -76,9 +76,9 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, lab
 
 // Screen recording in the browser. A supplied camera stream is composited as a circular
 // bubble onto a canvas and recorded (face baked in). High-bitrate VP9 + 1080p when available.
-// Streaming upload: MediaRecorder emits a chunk every 15 s which is immediately PUT to
+// Streaming upload: MediaRecorder emits a chunk every 5 s which is immediately PUT to
 // /ingest/stage/:session — so by the time the user stops, most of the video is already
-// on the server. Only the last ≤15 s chunk needs to upload after stop.
+// on the server. Only the last ≤5 s chunk needs to upload after stop.
 export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks = {}) {
   const { onRecordingLink, onPending, onClipReady, onError } = callbacks;
   const [state, setState] = useState<RecState>("idle");
@@ -306,7 +306,7 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       mr.ondataavailable = (e) => {
         if (!e.data.size) return;
         chunks.current.push(e.data);
-        // Upload every chunk (both mid-recording 15 s slices and the final flush on stop)
+        // Upload every chunk (both mid-recording 5 s slices and the final flush on stop)
         // as a fire-and-forget PUT, once the session id is known. Track the promise so
         // onstop can await the last one.
         const seq = chunkSeq++;
@@ -394,8 +394,9 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       // would fire on a hard device unplug, which MediaRecorder surfaces via onstop anyway.
       const vt = screen.getVideoTracks()[0];
       if (vt) vt.addEventListener("ended", () => { if (mr.state !== "inactive") mr.stop(); });
-      // 15 000 ms timeslice: emit a chunk every 15 seconds so upload can start during recording.
-      mr.start(15_000);
+      // 5 000 ms timeslice: emit a chunk every 5 seconds so upload streams during recording and
+      // the tail left to upload at Stop is small (≤5 s), keeping stop→saved to a couple of seconds.
+      mr.start(5_000);
       ref.current = { mr };
       setState("recording");
       setError(null);

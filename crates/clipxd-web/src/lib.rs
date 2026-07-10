@@ -1263,7 +1263,11 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
     let auth = s.auth.clone();
     tokio::spawn(async move {
         let _claim = claim; // held until this async block ends
-        let _permit = permits.acquire_owned().await.ok();
+        // The permit bounds concurrent *compute-heavy* enrichment (ffmpeg decode → gate → OCR →
+        // whisper), NOT the network-bound LLM refinement that follows. It's dropped the moment
+        // the local enrichment finishes (see `drop(permit)` below) so a slow/unreachable LLM
+        // backend can never throttle indexing throughput — only two boxes-worth of ffmpeg do.
+        let permit = permits.acquire_owned().await.ok();
         if let Ok(st) = storage_arc.make_storage().await {
             if let Err(e) = mirror_dir_to_storage(st.as_ref(), &id, &clip_dir).await {
                 eprintln!("ingest stub mirror: {e} (continuing)");
@@ -1299,6 +1303,11 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             })
             .await;
         }
+        // Local enrichment is done and the clip is already `complete` + watchable. Everything
+        // below is network-bound LLM refinement (title/description, caption emphasis, optional
+        // deep pass) over the finished index — release the compute permit now so the next
+        // recording's ffmpeg work isn't stuck behind this clip's LLM round-trips.
+        drop(permit);
         // BYOK: use the clip owner's own NVIDIA/Gemini keys if they've set any, so their usage
         // lands on their own account/quota instead of the server's shared one. `None` for
         // either falls back to the server's env-configured key inside `llm::complete_with_keys`.
@@ -1520,20 +1529,16 @@ async fn ingest_stage_commit(
         return Err((StatusCode::NOT_FOUND, "session not found; call POST /ingest/stage first".into()));
     }
 
-    // Take the accumulated indexer out of the registry *first*. The std Mutex lock blocks
-    // until any in-flight background `add_increment` from the last chunk's PUT finishes --
-    // exactly the ordering we want (never assemble/delete the stage dir while an increment is
-    // still reading from it) -- so it's done on a blocking-pool thread rather than tying up an
-    // async worker while it waits.
     let stage_slot = s.stage_sessions.lock().await.remove(&session);
-    let incremental = match stage_slot {
-        Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
-        None => None,
-    };
 
     // Legacy `stg_` sessions (older clients): the clip id doesn't exist yet — fall back to the
-    // original mint-at-commit path.
+    // original mint-at-commit path. This path has no instant-link stub to return early against,
+    // so it still takes the indexer synchronously (blocking out any in-flight `add_increment`).
     if !session.starts_with("clp_") {
+        let incremental = match stage_slot {
+            Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
+            None => None,
+        };
         let video_bytes = tokio::task::spawn_blocking({
             let dir = dir.clone();
             move || -> anyhow::Result<Vec<u8>> {
@@ -1551,22 +1556,14 @@ async fn ingest_stage_commit(
     }
 
     let id = session;
-    // Claim before promote_staged touches clip_dir — see the sweeper's identical claim for
-    // why: this handler and the abandoned-session sweeper are the two writers that can
-    // otherwise race on the same id. A 409 here means the sweeper decided (wrongly, since a
-    // live commit is in fact in progress) that this session was abandoned; the client's
-    // stage-commit failure path already falls back to `/ingest?reuse=<id>`, which will retry
-    // the claim once the sweeper's salvage finishes.
+    // Claim before we touch clip_dir — see the sweeper's identical claim for why: this handler
+    // and the abandoned-session sweeper are the two writers that can otherwise race on the same
+    // id. A 409 here means the sweeper decided (wrongly, since a live commit is in fact in
+    // progress) that this session was abandoned; the client's stage-commit failure path already
+    // falls back to `/ingest?reuse=<id>`, which retries the claim once the salvage finishes.
     let claim = try_claim(&s.clip_claims, &id)
         .ok_or((StatusCode::CONFLICT, "clip is already being finalized".into()))?;
     let clip_dir = s.clips_dir.join(&id);
-    let video = tokio::task::spawn_blocking({
-        let (dir, clip_dir, id) = (dir.clone(), clip_dir.clone(), id.clone());
-        move || promote_staged(&dir, &clip_dir, &id)
-    })
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit failed: {e:#}")))?;
 
     // Ownership was recorded at stage-open; re-assert in case the session cookie only became
     // available at commit (e.g. a login completed mid-recording).
@@ -1576,22 +1573,61 @@ async fn ingest_stage_commit(
         }
     }
 
-    spawn_phase2(&s, id.clone(), clip_dir, video, incremental, claim, browser_trace);
+    // Return the instant-link id NOW — the assemble + index work runs in the background so the
+    // client's Stop resolves in milliseconds, not after the last chunk's indexing pass finishes
+    // (which used to make commit block for seconds). The `recording` stub already resolves the
+    // share URL; the clip page polls recording → enriching → complete and the video appears the
+    // moment `assemble_recording` lands it. Order matters: assemble the video FIRST (fast: concat
+    // + probe) so `/clip/:id/video` resolves quickly, THEN take the accumulated indexer (which
+    // waits out any in-flight `add_increment` still reading the stage dir), THEN drop the stage
+    // dir, THEN run Phase 2.
+    let s2 = s.clone();
+    let dir2 = dir.clone();
+    let clip_dir2 = clip_dir.clone();
+    let task_id = id.clone();
+    tokio::spawn(async move {
+        let video = match tokio::task::spawn_blocking({
+            let (dir, clip_dir, id) = (dir2.clone(), clip_dir2.clone(), task_id.clone());
+            move || assemble_recording(&dir, &clip_dir, &id)
+        })
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => { eprintln!("commit assemble for {task_id}: {e:#}"); mark_partial(&clip_dir2); return; }
+            Err(e) => { eprintln!("commit assemble task for {task_id}: {e}"); mark_partial(&clip_dir2); return; }
+        };
+        let incremental = match stage_slot {
+            Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
+            None => None,
+        };
+        let _ = tokio::fs::remove_dir_all(&dir2).await;
+        spawn_phase2(&s2, task_id, clip_dir2, video, incremental, claim, browser_trace);
+    });
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
-/// Blocking Phase-1 of an instant-link commit (also the sweeper's salvage path): concat the
-/// session's chunks on disk, move the result into `clip_dir/video.webm` (rename; copies only
-/// across filesystems), drop the stage dir, and promote the `recording` stub to `enriching`
-/// with real probe metadata.
-fn promote_staged(stage_dir: &std::path::Path, clip_dir: &std::path::Path, id: &str) -> anyhow::Result<PathBuf> {
+/// Assemble the committed video from a stage session's chunks and promote the `recording` stub
+/// to `enriching` with real probe metadata — WITHOUT deleting the stage dir. Splitting the
+/// delete out lets the instant-link commit path land the playable video first (so `/clip/:id/
+/// video` resolves fast) and only drop the stage dir afterwards, once the accumulated indexer
+/// has been taken (an in-flight `add_increment` may still be reading `video-so-far.webm`).
+/// `concat_chunks` reads the `chunk-*.bin` files (never written after Stop) and `move_file`
+/// only touches the fresh `commit.webm`, so this is safe to run alongside a final in-flight pass.
+fn assemble_recording(stage_dir: &std::path::Path, clip_dir: &std::path::Path, id: &str) -> anyhow::Result<PathBuf> {
     let out = stage_dir.join("commit.webm");
     concat_chunks(stage_dir, &out)?;
     std::fs::create_dir_all(clip_dir)?;
     let video = clip_dir.join("video.webm");
     move_file(&out, &video)?;
-    let _ = std::fs::remove_dir_all(stage_dir);
     clipxd_recorder::promote_recording_stub(clip_dir, &video, id, "Screen recording")?;
+    Ok(video)
+}
+
+/// Blocking Phase-1 of the sweeper's salvage path: [`assemble_recording`] plus dropping the
+/// stage dir. (The live commit path assembles and drops separately — see `ingest_stage_commit`.)
+fn promote_staged(stage_dir: &std::path::Path, clip_dir: &std::path::Path, id: &str) -> anyhow::Result<PathBuf> {
+    let video = assemble_recording(stage_dir, clip_dir, id)?;
+    let _ = std::fs::remove_dir_all(stage_dir);
     Ok(video)
 }
 

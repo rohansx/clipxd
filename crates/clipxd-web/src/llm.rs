@@ -119,10 +119,20 @@ fn resolve_key(explicit: Option<&str>, env_name: &str) -> Option<String> {
 const OLLAMA_MODEL_CASCADE: &[&str] = &["kimi-k2.6", "glm-5.2", "minimax-m2.7"];
 
 fn ollama_models() -> Vec<String> {
-    match std::env::var("CLIPXD_OLLAMA_MODEL").ok().filter(|m| !m.is_empty()) {
-        Some(pinned) => vec![pinned],
-        None => OLLAMA_MODEL_CASCADE.iter().map(|s| s.to_string()).collect(),
+    // Resolution order, so the exact ollama.com tags a key serves can be set without a rebuild:
+    //   1. `CLIPXD_OLLAMA_MODEL`  — pin a single model.
+    //   2. `CLIPXD_OLLAMA_MODELS` — a comma-separated cascade (e.g. "glm-5.2,minimax-m2,kimi-k2").
+    //   3. the built-in `OLLAMA_MODEL_CASCADE` default.
+    if let Some(pinned) = std::env::var("CLIPXD_OLLAMA_MODEL").ok().filter(|m| !m.trim().is_empty()) {
+        return vec![pinned.trim().to_string()];
     }
+    if let Some(list) = std::env::var("CLIPXD_OLLAMA_MODELS").ok().filter(|m| !m.trim().is_empty()) {
+        let models: Vec<String> = list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if !models.is_empty() {
+            return models;
+        }
+    }
+    OLLAMA_MODEL_CASCADE.iter().map(|s| s.to_string()).collect()
 }
 
 /// Try each Ollama Cloud model in turn, returning the first success — same "stay within the

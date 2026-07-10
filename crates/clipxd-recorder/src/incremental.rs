@@ -147,10 +147,15 @@ impl IncrementalIndexer {
     /// to just run inline after the visual pass rather than fight `self`'s split-borrow to
     /// parallelize two `&mut self` calls.
     pub fn finalize(mut self, video: &Path, clip_dir: &Path, id: &str, title: &str, events: &EventTrack) -> Result<Index> {
-        self.run_pass(video, title, false)?;
-        self.transcribe_pass(video, false);
         let info = media::probe(video)?;
         let audio_only = info.width == 0 && info.height == 0;
+        // Skip the visual pass for an audio-only (voice) recording — `run_pass`'s frame
+        // extraction errors on a video-less container, which would fail the whole finalize and
+        // strand the clip at `partial` with `has_video: true`.
+        if !audio_only {
+            self.run_pass(video, title, false)?;
+        }
+        self.transcribe_pass(video, false);
 
         let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &self.enrichment);
         if audio_only {

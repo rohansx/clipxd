@@ -131,13 +131,17 @@ pub fn enrich_clip(
     let info = media::probe(video)?;
     let audio = media::extract_audio(video, &clip_dir.join("audio.wav"));
 
-    // Voice-only mode: an audio-only container (mic-only webm) yields no frames and a probe
-    // with zero dimensions. There is nothing to gate/OCR/caption — the clip's value is its
-    // transcript + the styled captions the user picks afterward. Run the transcript thread
-    // alone and write a has_video=false index, skipping the visual gate entirely.
+    // Voice-only mode: an audio-only container (mic-only webm) has zero probe dimensions and no
+    // frames to extract. Detect it from the probe BEFORE `extract_frames` — on a truly video-less
+    // container ffmpeg's frame extraction *errors* rather than returning an empty list, and
+    // letting that `?` propagate would fail the whole enrich and strand the clip at `partial`
+    // with `has_video: true`. There is nothing to gate/OCR/caption here — the clip's value is its
+    // transcript + the styled captions the user picks afterward.
+    if info.width == 0 && info.height == 0 {
+        return enrich_audio_only(&info, clip_dir, id, title, audio.as_deref());
+    }
     let frames = media::extract_frames(video, &clip_dir.join("frames"), sample_fps)?;
-    let audio_only = frames.is_empty() || (info.width == 0 && info.height == 0);
-    if audio_only {
+    if frames.is_empty() {
         return enrich_audio_only(&info, clip_dir, id, title, audio.as_deref());
     }
 
