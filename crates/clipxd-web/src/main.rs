@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
 /// captions to summarize are reported and skipped — there is nothing to title them from.
 async fn backfill_titles(clips_dir: &std::path::Path) -> anyhow::Result<()> {
     let storage = clipxd_web::storage::StorageKind::from_env(clips_dir);
-    let (mut titled, mut skipped, mut nothing) = (0u32, 0u32, 0u32);
+    let (mut titled, mut reconciled, mut nothing) = (0u32, 0u32, 0u32);
 
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(clips_dir)?
         .filter_map(|e| e.ok())
@@ -78,38 +78,47 @@ async fn backfill_titles(clips_dir: &std::path::Path) -> anyhow::Result<()> {
             continue;
         }
         let id = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-        if read_title(&index_path).as_deref() != Some("Screen recording") {
-            skipped += 1;
-            continue;
+        let was_default = read_title(&index_path).as_deref() == Some("Screen recording");
+
+        // Title it if it's still at the recorder default.
+        if was_default {
+            if let Err(e) = clipxd_web::deeppass::generate_title_and_description(&dir, &id, None, None).await {
+                // Usually "no transcript/OCR/captions yet to title from" — a silent, text-less
+                // recording the LLM has nothing to work with. Not a failure.
+                println!("nothing {id}: {e:#}");
+                nothing += 1;
+                continue;
+            }
         }
-        match clipxd_web::deeppass::generate_title_and_description(&dir, &id, None, None).await {
-            Ok(()) => {
-                match read_title(&index_path) {
-                    Some(t) if t != "Screen recording" => {
-                        if let Ok(st) = storage.make_storage().await {
-                            if let Ok(body) = std::fs::read(&index_path) {
-                                if let Err(e) = st.write_object(&format!("{id}/index.json"), body, "application/json").await {
-                                    eprintln!("  mirror {id}: {e:#} (title written locally, not to storage)");
-                                }
-                            }
-                        }
-                        println!("titled  {id}: {t}");
-                        titled += 1;
-                    }
-                    _ => {
-                        skipped += 1;
-                    }
+
+        // Reconcile: push the (possibly newly-titled) local index.json to storage so the
+        // S3-served copy matches disk. Local is always the source of truth — every title/index
+        // write in the server pairs a local write with an S3 mirror — so this only ever fixes
+        // drift (e.g. a clip titled while CLIPXD_STORAGE was misconfigured), never regresses S3.
+        match read_title(&index_path) {
+            Some(t) if t != "Screen recording" => {
+                let mirrored_ok = match storage.make_storage().await {
+                    Ok(st) => match std::fs::read(&index_path) {
+                        Ok(body) => st.write_object(&format!("{id}/index.json"), body, "application/json").await.is_ok(),
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                };
+                let warn = if mirrored_ok { "" } else { "  (STORAGE MIRROR FAILED — check CLIPXD_STORAGE)" };
+                if was_default {
+                    println!("titled    {id}: {t}{warn}");
+                    titled += 1;
+                } else {
+                    println!("reconcile {id}: {t}{warn}");
+                    reconciled += 1;
                 }
             }
-            Err(e) => {
-                // The common case here is "no transcript/OCR/captions yet to title from" — a
-                // silent, text-less recording the LLM has nothing to work with. Not a failure.
-                println!("nothing {id}: {e:#}");
+            _ => {
                 nothing += 1;
             }
         }
     }
-    println!("\nbackfill complete: {titled} titled, {skipped} already-titled/skipped, {nothing} had nothing to title from");
+    println!("\nbackfill complete: {titled} titled, {reconciled} reconciled to storage, {nothing} had nothing to title from");
     Ok(())
 }
 
