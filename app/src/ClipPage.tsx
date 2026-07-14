@@ -21,8 +21,12 @@ import type { SeekRequest } from "./App";
 
 type Seam = "watch" | "split" | "read";
 
+// `watch` collapses the right rail entirely (1fr 0fr) so the video takes the full
+// stage when the page first opens — the previous "2fr 0.82fr" left a permanent
+// sliver for the index pane even when nothing was selected, which read as a broken
+// layout. `split` and `read` keep the old 1.25fr/1fr and 0.72fr/1.5fr ratios.
 const GRID_COLS: Record<Seam, string> = {
-  watch: "2fr 0.82fr",
+  watch: "1fr 0fr",
   split: "1.25fr 1fr",
   read: "0.72fr 1.5fr",
 };
@@ -37,7 +41,6 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const { index, zoom, loading, error } = useClip(id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [t, setT] = useState(0);
-  const [seam, setSeam] = useState<Seam>("split");
   const [developing, setDeveloping] = useState(false);
 
   // editor regions: manual zoom (overrides auto) + cut/speed edits, with undo history
@@ -54,6 +57,12 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
   const [q, setQ] = useState("what happens in this clip and what's the key moment");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [views, setViews] = useState<number | null>(null);
+
+  // Default to `watch` so the video gets the whole stage on first open. The right rail
+  // (transcript / on-screen text / events / moments / comments) is still a click away
+  // via the seam toggle, but it's no longer competing for half the screen on every
+  // clip view — most users want to watch first, index second.
+  const [seam, setSeam] = useState<Seam>("watch");
 
   const dur = index?.metadata.duration ?? 0;
   const hasVideo = !!index?.metadata.has_video;
@@ -252,16 +261,13 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             {views} view{views === 1 ? "" : "s"}
           </span>
         )}
-        {index.status === "enriching" && (
-          <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="The video is ready and shareable now; transcript, on-screen text and captions are still being built and will appear automatically.">
-            <span className="spin" style={{ width: 10, height: 10 }} /> indexing…
-          </span>
-        )}
-        {index.status === "recording" && (
-          <span className="pill" style={{ color: "var(--sodium-text)", borderColor: "color-mix(in oklab,var(--sodium) 40%,transparent)" }} title="This recording is still running. The link is already shareable; the video and index fill in live.">
-            <span className="spin" style={{ width: 10, height: 10 }} /> recording…
-          </span>
-        )}
+        {/* The "indexing…" and "recording…" status pills used to live here, but a stuck
+            status on a finished clip ("still says recording" on a long-finished export)
+            would silently pin a sodium pill in the title bar forever — and a transient one
+            only added visual noise to the most-used surface in the app. Both states now
+            live exclusively in the dedicated banner above the video, where they're either
+            actually informative (this clip is in flight) or explicitly dismissable, instead
+            of competing with the title for attention on every clip view. */}
         {index.status === "complete" && emptyIndex(index) && (
           <button
             className="pill pill-reenrich"
@@ -368,7 +374,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
             onKeyDown={(e) => e.key === "Enter" && ask()}
             placeholder="Ask an agent about this clip…"
           />
-          <button className="btn-signal" onClick={() => ask()} disabled={asking} style={{ borderRadius: 0 }}>
+          <button className="btn-signal ask-go" onClick={() => ask()} disabled={asking}>
             {asking ? <span className="spin" /> : "Ask"}
           </button>
         </div>

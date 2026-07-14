@@ -4,6 +4,7 @@ import { fmt, type Index, type ZoomKeyframe } from "./types";
 import { RegionTrack } from "./RegionTrack";
 import { SubtitleLayer } from "./SubtitleStyle";
 import type { EditKind, EditRegion, ZoomRegion } from "./regions";
+import { CAMERA_BG_PRESETS } from "./CameraConfig";
 
 interface WatchBodyProps {
   id: string;
@@ -36,7 +37,13 @@ interface WatchBodyProps {
   exportProject: () => void;
 }
 
-const WALLPAPERS = ["aurora", "dusk", "ocean", "violet", "noir", "gradient"];
+// Backgrounds the render step understands. Each one is mapped through `bgPresetById` to
+// the same canvas draw code the camera bubble uses (see `CameraConfig.ts`) so what you
+// pick here is exactly what gets baked into the rendered MP4 — no previews that disagree
+// with the output, no "select aurora, get ocean".
+const WALLPAPERS = CAMERA_BG_PRESETS.filter((p) =>
+  ["aurora", "dusk", "ocean", "violet", "noir", "mint"].includes(p.id),
+);
 
 function kfAt(zoom: ZoomKeyframe[], t: number): ZoomKeyframe | null {
   if (!zoom.length) return null;
@@ -190,52 +197,61 @@ export function WatchBody(p: WatchBodyProps) {
         <span className="ok">●</span> salient markers — veyo emitted {index.visual_timeline.length} captioned moments
       </div>
 
-      {/* chapters */}
-      {(index.summary.chapters?.length ?? 0) > 0 && (
-        <div className="chapters">
-          <div className="lbl">CHAPTERS</div>
-          {index.summary.chapters!.map((ch, i) => (
-            <button key={i} className="chapter" onClick={() => seek(ch.start)}>
-              <span className="t">{fmt(ch.start)}</span>
-              <span className="x">{ch.title}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Chapters rail removed.  Two reasons: (1) the chapter list was the LLM's
+          guess at section breaks from a few-second scan, which is rarely the right
+          unit for an index the user is going to scrub.  The caption-timestamped
+          moments already on the seek bar + the Moments tab in the right rail (when
+          opened) cover the same ground at a finer grain.  (2) The rail ate ~80px
+          of vertical real-estate under the player on every clip page; the editor
+          toolbar below already lives in the same gap, and the toolbar is the one a
+          user is much more likely to need than a flat chapter list. */}
 
       {/* editor power-features: manual zoom, cut/speed, render, export */}
       <div className="editor-controls">
         <div className="ec-head">CINEMATIC EDITOR — manual zoom overrides auto · cut/speed ramp · render to MP4</div>
         <div className="toolbar">
-          <button className="btn" onClick={p.addRegion} style={{ borderRadius: 0 }}>
+          <button className="btn" onClick={p.addRegion}>
             + Zoom
           </button>
-          <button className="btn" onClick={() => p.addEdit("trim")} style={{ borderRadius: 0 }}>
+          <button className="btn" onClick={() => p.addEdit("trim")}>
             ✂ Cut
           </button>
-          <button className="btn" onClick={() => p.addEdit("speed")} style={{ borderRadius: 0 }}>
+          <button className="btn" onClick={() => p.addEdit("speed")}>
             ⏩ Speed
           </button>
-          <button className="btn" onClick={p.del} disabled={!p.selected} style={{ borderRadius: 0 }}>
+          <button className="btn" onClick={p.del} disabled={!p.selected}>
             Delete
           </button>
-          <button className="btn" onClick={p.undo} disabled={!p.canUndo} style={{ borderRadius: 0 }}>
+          <button className="btn" onClick={p.undo} disabled={!p.canUndo}>
             ↶ Undo
           </button>
           <span className="sp" />
-          <select className="wp-select" value={bgValue(p.bg)} onChange={(e) => p.setBg(e.target.value)} title="Background wallpaper for the render">
-            {WALLPAPERS.map((w) => (
-              <option key={w} value={w}>
-                {w[0].toUpperCase() + w.slice(1)}
-              </option>
-            ))}
-          </select>
-          <button className="btn-signal" onClick={p.doRender} disabled={p.rendering} style={{ borderRadius: 0 }}>
+          <button className="btn-signal" onClick={p.doRender} disabled={p.rendering}>
             {p.rendering ? <span className="spin" /> : "▶ Render MP4"}
           </button>
           <button className="btn-mono" onClick={p.exportProject}>
             ⤓ .clipxd
           </button>
+        </div>
+        {/* Wallpaper picker — swatches instead of a `<select>`, so the user picks the
+            scene by its actual look (matching what gets baked into the MP4) rather than
+            by its name. Same `CAMERA_BG_PRESETS` the camera bubble uses, so the two
+            surfaces never disagree. */}
+        <div className="wp-picker" role="radiogroup" aria-label="Render background">
+          <span className="wp-label">Background</span>
+          {WALLPAPERS.map((w) => (
+            <button
+              key={w.id}
+              role="radio"
+              aria-checked={p.bg === w.id}
+              className={"wp-swatch" + (p.bg === w.id ? " on" : "")}
+              style={{ background: w.css }}
+              onClick={() => p.setBg(w.id)}
+              title={w.label}
+            >
+              <span className="wp-swatch-lbl">{w.label}</span>
+            </button>
+          ))}
         </div>
         <RegionTrack
           regions={p.regions}
@@ -264,8 +280,4 @@ export function WatchBody(p: WatchBodyProps) {
       </div>
     </div>
   );
-}
-
-function bgValue(b: string): string {
-  return WALLPAPERS.includes(b) ? b : "aurora";
 }

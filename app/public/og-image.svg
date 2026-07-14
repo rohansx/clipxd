@@ -24,8 +24,8 @@
     </radialGradient>
     <linearGradient id="og_face" x1="0.2" y1="0" x2="0.7" y2="1">
       <stop offset="0" stop-color="#FFFFFF" />
-      <stop offset="0.55" stop-color="#F6EEFA" />
-      <stop offset="1" stop-color="#E4D6F0" />
+      <stop offset="0.55" stop-color="#FBFBF9" />
+      <stop offset="1" stop-color="#EFEEE9" />
     </linearGradient>
     <linearGradient id="og_side" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#19D7A6" />
@@ -79,7 +79,7 @@
       <text y="18"><tspan fill="#0C8E6C">●</tspan> transcript · whisper.cpp</text>
       <text y="42"><tspan fill="#0C8E6C">●</tspan> on-screen text · ocr</text>
       <text y="66"><tspan fill="#D6461F">●</tspan> events · click / key / scroll</text>
-      <text y="90"><tspan fill="#9B8CFF">●</tspan> network · DOM · a11y</text>
+      <text y="90"><tspan fill="#5E7BB0">●</tspan> network · DOM · a11y</text>
       <text y="114"><tspan fill="#928BA1">●</tspan> summary · chapters</text>
     </g>
     <text x="22" y="184" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14" fill="#0C8E6C">~340 tokens · queryable over MCP</text>

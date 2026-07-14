@@ -16,8 +16,8 @@
     </linearGradient>
     <linearGradient id="fav_face" x1="0.2" y1="0" x2="0.7" y2="1">
       <stop offset="0" stop-color="#FFFFFF" />
-      <stop offset="0.55" stop-color="#F6EEFA" />
-      <stop offset="1" stop-color="#E4D6F0" />
+      <stop offset="0.55" stop-color="#FBFBF9" />
+      <stop offset="1" stop-color="#EFEEE9" />
     </linearGradient>
     <linearGradient id="fav_play" x1="0.1" y1="0.05" x2="0.85" y2="0.95">
       <stop offset="0" stop-color="#FFB48F" />

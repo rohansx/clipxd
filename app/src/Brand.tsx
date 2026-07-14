@@ -46,8 +46,8 @@ function MarkSvg({ size }: { size: number }) {
         </linearGradient>
         <linearGradient id={`lx_face_${size}`} x1="0.2" y1="0" x2="0.7" y2="1">
           <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="0.55" stopColor="#F6EEFA" />
-          <stop offset="1" stopColor="#E4D6F0" />
+          <stop offset="0.55" stopColor="#FBFBF9" />
+          <stop offset="1" stopColor="#EFEEE9" />
         </linearGradient>
         <linearGradient id={`lx_play_${size}`} x1="0.1" y1="0.05" x2="0.85" y2="0.95">
           <stop offset="0" stopColor="#FFB48F" />
@@ -96,11 +96,11 @@ export function Brand({ size = 40, withWord = false }: BrandProps) {
             <stop offset="0" stopColor="#19D7A6" />
             <stop offset="1" stopColor="#0B7E5F" />
           </linearGradient>
-          <linearGradient id="bx_face" x1="0.2" y1="0" x2="0.7" y2="1">
-            <stop offset="0" stopColor="#FFFFFF" />
-            <stop offset="0.55" stopColor="#F6EEFA" />
-            <stop offset="1" stopColor="#E4D6F0" />
-          </linearGradient>
+<linearGradient id="bx_face" x1="0.2" y1="0" x2="0.7" y2="1">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="0.55" stopColor="#FBFBF9" />
+          <stop offset="1" stopColor="#EFEEE9" />
+        </linearGradient>
           <linearGradient id="bx_play" x1="0.1" y1="0.05" x2="0.85" y2="0.95">
             <stop offset="0" stopColor="#FFB48F" />
             <stop offset="0.45" stopColor="#FF7A59" />
@@ -174,7 +174,7 @@ export function Logomark({ size = 26 }: { size?: number }) {
         </linearGradient>
         <linearGradient id={`lm_face_${size}`} x1="0.2" y1="0" x2="0.7" y2="1">
           <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="1" stopColor="#E4D6F0" />
+          <stop offset="1" stopColor="#EFEEE9" />
         </linearGradient>
         <linearGradient id={`lm_play_${size}`} x1="0.1" y1="0.05" x2="0.85" y2="0.95">
           <stop offset="0" stopColor="#FFB48F" />

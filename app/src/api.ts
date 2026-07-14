@@ -75,6 +75,36 @@ export interface NetInfo {
   username?: string | null;
   /** Authed: `https://HOST/u/<username>/clip/`. undefined when no slug. */
   user_share_base?: string;
+  /** Authed: `https://HOST/u/<username>/` — append `shareSlug(title, id)` to get the
+   *  full branded share URL. undefined when no slug. */
+  user_slug_share_base?: string;
+}
+
+/** Mirror of `share_slug_for` on the server. Returns the URL-safe segment that
+ *  goes between `/u/<username>/` and the resolution step — a title slug joined
+ *  with a 4-char short tail of the clip id. Both halves are bounded so the URL
+ *  stays email- and QR-safe regardless of what the user titled their clip. */
+export function shareSlug(title: string, id: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/g, "");
+  const bare = id.replace(/^clp_/, "");
+  // Take the last up-to-4 alphanumeric chars from the end — same algorithm the
+  // server uses, so client-built URLs always resolve server-side.
+  const tailStr = (() => {
+    const out: string[] = [];
+    for (let i = bare.length - 1; i >= 0 && out.length < 4; i--) {
+      if (/[a-zA-Z0-9]/.test(bare[i])) out.push(bare[i].toLowerCase());
+      else break;
+    }
+    return out.reverse().join("");
+  })();
+  if (!tailStr) return slug || "clip";
+  if (!slug) return `clip-${tailStr}`;
+  return `${slug}-${tailStr}`;
 }
 
 async function jsonOrThrow<T>(r: Response, what: string): Promise<T> {
@@ -288,7 +318,23 @@ export async function fetchNet(base = apiBase()): Promise<NetInfo | null> {
 
 export async function shareLink(id: string, base = apiBase()): Promise<string> {
   const net = await fetchNet(base);
-  // Prefer the owner's username-canonical form so the link carries their brand.
+  // Prefer the branded form: /u/<username>/<title-slug>-<short>. We need the clip's
+  // title to compute the slug; pulling it locally (it's already in the clip's index
+  // that the editor fetched) avoids a second round-trip to the server.
+  if (net?.user_slug_share_base && net.username) {
+    let title = "";
+    try {
+      const r = await af(`${base}/clip/${id}/index.json`);
+      if (r.ok) {
+        const j = (await r.json()) as { metadata?: { title?: string } };
+        title = j.metadata?.title ?? "";
+      }
+    } catch {
+      /* fall through to the legacy form below */
+    }
+    const slug = shareSlug(title, id);
+    return `${net.user_slug_share_base}/${slug}`;
+  }
   if (net?.user_share_base) return `${net.user_share_base}/${id}`;
   const origin = (net?.public_base && net.public_base) || (net?.share_base && net.share_base) || base;
   return `${origin}/clip/${id}`;

@@ -152,6 +152,12 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         // Username-canonical share-link form: /u/:username/clip/:id and all the same
         // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
         .route("/u/:username/clip/:id", get(share_page_for_user))
+        // Branded share link: /u/:username/<title-slug>-<short>. The slug is purely
+        // cosmetic — the real access control is the short tail of the clip id, looked
+        // up against the user's clips (see `resolve_share_slug`). Same canonical
+        // experience as /u/:username/clip/:id, just a URL humans actually want to read
+        // out loud.
+        .route("/u/:username/:slug", get(share_page_for_slug))
         .route("/u/:username/clip/:id/agent.md", get(get_agent_md_for_user))
         .route("/u/:username/clip/:id/doc/:kind", get(get_doc_for_user))
         .route("/u/:username/clip/:id/preview.gif", get(get_preview_gif_for_user))
@@ -217,6 +223,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;
                 sweep_abandoned_stages(&sweep_state).await;
+                sweep_orphaned_recording_stubs(&sweep_state).await;
             }
         });
     }
@@ -301,6 +308,70 @@ async fn sweep_abandoned_stages(s: &AppState) {
             if is_empty_recording_stub {
                 let _ = std::fs::remove_dir_all(&clip_dir);
             }
+        }
+    }
+}
+
+/// Reap clips left at `status: recording` whose stage dir is gone entirely.
+///
+/// `sweep_abandoned_stages` is driven by `read_dir(temp_dir())`, so it can only ever see a
+/// clip whose `clipxd-stage-<id>` dir still exists — a missing stage dir is a blind spot to
+/// it, not a signal. When the OS tmp reaper (or a reboot, or a container restart) removes
+/// the stage dir while the `index.json` stub survives in `clips_dir`, the clip becomes
+/// invisible to that sweep and sits in the library saying "recording…" forever, with no code
+/// path anywhere that can ever move it off that status. This pass walks `clips_dir` instead,
+/// which inverts the test: the *absence* of a stage dir is exactly what marks the ghost.
+async fn sweep_orphaned_recording_stubs(s: &AppState) {
+    const STALE_SECS: u64 = 30 * 60;
+    let Ok(entries) = std::fs::read_dir(s.clips_dir.as_path()) else { return };
+    for e in entries.flatten() {
+        let id = e.file_name().to_string_lossy().to_string();
+        if !safe(&id) {
+            continue;
+        }
+        // A recording that is genuinely still running owns a live stage dir (chunk PUTs keep
+        // it there). Never touch one, however long it has been going — this is the guard that
+        // makes the mtime check below safe for a 3-hour recording.
+        if std::env::temp_dir().join(format!("clipxd-stage-{id}")).exists() {
+            continue;
+        }
+        let clip_dir = e.path();
+        let index_path = clip_dir.join("index.json");
+        let Some(idx) = std::fs::read_to_string(&index_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Index>(&raw).ok())
+        else {
+            continue;
+        };
+        if idx.status != clipxd_index::Status::Recording {
+            continue;
+        }
+        // The stub is written once at stage-open and not touched again until commit, so its
+        // mtime is effectively "when this recording started".
+        let stale = std::fs::metadata(&index_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|el| el.as_secs() > STALE_SECS);
+        if !stale {
+            continue;
+        }
+        // Don't race a commit / reuse-fallback ingest that is finalizing this very id.
+        let Some(_claim) = try_claim(&s.clip_claims, &id) else {
+            continue;
+        };
+        let has_video = clip_dir.join("video.webm").exists() || clip_dir.join("video.mp4").exists();
+        if has_video {
+            // The video landed but the commit never finished the index. Keep the recording —
+            // just stop lying about its status.
+            eprintln!("sweeper: orphaned recording {id} has video — marking partial");
+            mark_partial(&clip_dir);
+            if let Ok(raw) = std::fs::read(&index_path) {
+                write_object_best_effort(s, &format!("{id}/index.json"), raw, "application/json").await;
+            }
+        } else {
+            eprintln!("sweeper: dropping orphaned empty recording stub {id}");
+            let _ = std::fs::remove_dir_all(&clip_dir);
         }
     }
 }
@@ -2384,13 +2455,16 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
 
 async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Html<String>, WebErr> {
     let idx = load_index(&s, &id).await?;
-    // If the owner has a username, redirect to the canonical /u/<username>/clip/<id> form so
-    // share-link brand carries through. Pre-username clips (owner has no slug yet) pass through.
+    // If the owner has a username, redirect to the branded /u/<username>/<slug>-<short>
+    // form. We do the redirect on the bare /clip/:id hit (instead of from inside the
+    // share-page body) so the visitor's address bar shows the branded URL on the very
+    // first paint, and so any share-out copies the branded URL automatically.
     if let Some(a) = &s.auth {
         if let Some(owner_id) = a.db.clip_owner(&id).ok().flatten() {
             if let Ok(Some(u)) = a.db.find_by_id(owner_id) {
                 if let Some(slug) = u.username.as_deref() {
-                    let target = format!("/u/{}/clip/{}", slug, id);
+                    let tail = share_slug_for(&idx.metadata.title, &id);
+                    let target = format!("/u/{slug}/{tail}");
                     return Ok(redirect_to(&headers, &target));
                 }
             }
@@ -2407,6 +2481,24 @@ async fn share_page_for_user(
     headers: HeaderMap,
 ) -> Result<Html<String>, WebErr> {
     let _ = check_owner(&s, &username, &id)?;
+    let idx = load_index(&s, &id).await?;
+    let views = bump_view_count(&s, &id).await;
+    share_page_body(&s, &id, &idx, &headers, views, Some(&username))
+}
+
+/// Branded share-link entry: /u/:username/<title-slug>-<short>.  The slug is just
+/// cosmetic — we split off the short tail (last dash-separated alphanumeric token),
+/// look up which of `username`'s clips ends with it, and render the same share page
+/// as the canonical `/u/:username/clip/:id` form.  Mismatched / ambiguous slugs
+/// resolve to 404 so guessing tails is a dead end.
+async fn share_page_for_slug(
+    State(s): State<AppState>,
+    Path((username, slug)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Html<String>, WebErr> {
+    let auth = s.auth.as_ref().ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
+    let id = resolve_share_slug(&auth.db, &username, &slug)
+        .ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
     let idx = load_index(&s, &id).await?;
     let views = bump_view_count(&s, &id).await;
     share_page_body(&s, &id, &idx, &headers, views, Some(&username))
@@ -2544,7 +2636,14 @@ fn share_page_body(
         format!("{scheme}://{host}")
     });
     let url = match username {
-        Some(slug) => format!("{base}/u/{slug}/clip/{id}"),
+        Some(slug) => {
+            // Branded URL: /u/<username>/<title-slug>-<short>. The short tail is what
+            // disambiguates same-titled clips owned by the same user; the title slug
+            // is what makes the URL readable. The full clip id is still the access
+            // control (resolved server-side from the short).
+            let tail = share_slug_for(&idx.metadata.title, id);
+            format!("{base}/u/{slug}/{tail}")
+        }
         None => format!("{base}/clip/{id}"),
     };
     Ok(Html(share_html(&id, &idx, &url, views)))
@@ -2601,7 +2700,16 @@ async fn get_net(State(s): State<AppState>, headers: HeaderMap) -> Json<serde_js
                     let ubase = s.public_base.as_ref().map(|b| b.as_str()).unwrap_or("https://clipxd.local");
                     let body_mut = body.as_object_mut().unwrap();
                     body_mut.insert("username".into(), serde_json::Value::String(slug.to_string()));
+                    // Backwards-compat alias — older SPA builds look at `user_share_base`
+                    // and expect the `/clip/<id>` suffix to be appended client-side. Keep
+                    // that working alongside the new branded base.
                     body_mut.insert("user_share_base".into(), serde_json::Value::String(format!("{ubase}/u/{slug}/clip")));
+                    // New branded share base: client appends `share_slug_for(title, id)`
+                    // instead of a raw id, so the resulting URL reads as a title rather
+                    // than a token. The slug computation lives on the server so client
+                    // and server stay byte-identical (and so the SPA doesn't have to
+                    // ship a slugify implementation).
+                    body_mut.insert("user_slug_share_base".into(), serde_json::Value::String(format!("{ubase}/u/{slug}")));
                 }
             }
         }
@@ -2639,6 +2747,77 @@ fn lan_ip() -> Option<String> {
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Turn a free-form clip title into a URL-safe slug.  Used only for *display* in the
+/// branded share URL — the real access control is the short tail of the clip id (see
+/// `share_slug_for`).  We keep the slug short (≤ ~60 chars) and lowercase, collapse
+/// runs of separators, and drop any non-ASCII or non-alphanumeric runs entirely so
+/// the resulting path is safe for any URL consumer (email clients, social previews,
+/// QR scanners).
+pub fn slugify_title(title: &str) -> String {
+    let lower = title.to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_dash = true; // suppress leading dash
+    for ch in lower.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.ends_with('-') { out.pop(); }
+    if out.len() > 60 { out.truncate(60); while out.ends_with('-') { out.pop(); } }
+    out
+}
+
+/// Last 4 chars of the clip id — the disambiguating tail that lives at the end of the
+/// branded share URL.  Strips the `clp_` prefix so the tail is the visible fingerprint
+/// rather than a redundant acronym, and falls back to whatever follows if the id
+/// doesn't match the expected prefix.
+pub fn short_tail(id: &str) -> String {
+    let bare = id.strip_prefix("clp_").unwrap_or(id);
+    // Walk back from the end up to 4 chars, stopping at the first non-alphanumeric so
+    // the tail is always URL-safe even on ids that have odd suffixes.
+    let take = bare
+        .chars()
+        .rev()
+        .take(4)
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count();
+    bare[bare.len() - take..].to_lowercase()
+}
+
+/// Build the `<title-slug>-<short>` segment that goes between `/u/<username>/` and
+/// the resolution step.  Always non-empty: if the title slugifies to nothing (e.g. a
+/// clip whose title is just an emoji) we fall back to `clip-<short>` so the URL still
+/// reads as a share link.
+pub fn share_slug_for(title: &str, id: &str) -> String {
+    let s = slugify_title(title);
+    let t = short_tail(id);
+    if t.is_empty() {
+        if s.is_empty() { "clip".into() } else { s }
+    } else if s.is_empty() {
+        format!("clip-{t}")
+    } else {
+        format!("{s}-{t}")
+    }
+}
+
+/// Parse the `<title-slug>-<short>` segment back into the clip id.  Inverse of
+/// `share_slug_for` — takes the last dash-separated token as the short tail, looks up
+/// which of `username`'s clips ends with it.  Returns the resolved clip id when
+/// exactly one match exists; `None` for 0 or 2+ matches (so guessing tails never
+/// leaks the secret id).
+pub fn resolve_share_slug(db: &crate::auth::Db, username: &str, slug: &str) -> Option<String> {
+    let short = slug.rsplit('-').next().unwrap_or("");
+    if short.len() < 3 || !short.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let user = db.find_by_username(username).ok().flatten()?;
+    db.find_clip_by_short(user.id, short).ok().flatten()
 }
 
 /// A standalone public share page (no auth required).  Server-rendered so the
@@ -2794,7 +2973,7 @@ fn share_topbar(url: &str) -> String {
     <svg class="topbar-mark" viewBox="0 0 40 40" aria-hidden="true">
       <defs>
         <linearGradient id="lb-side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#19D7A6"/><stop offset="1" stop-color="#0B7E5F"/></linearGradient>
-        <linearGradient id="lb-face" x1="0.2" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.55" stop-color="#F6EEFA"/><stop offset="1" stop-color="#E4D6F0"/></linearGradient>
+        <linearGradient id="lb-face" x1="0.2" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.55" stop-color="#FBFBF9"/><stop offset="1" stop-color="#EFEEE9"/></linearGradient>
         <linearGradient id="lb-play" x1="0.1" y1="0.05" x2="0.85" y2="0.95"><stop offset="0" stop-color="#FFB48F"/><stop offset="0.45" stop-color="#FF7A59"/><stop offset="1" stop-color="#EF5A39"/></linearGradient>
       </defs>
       <rect x="5" y="8.5" width="30" height="28" rx="11" fill="url(#lb-side)" />
@@ -2816,37 +2995,46 @@ fn share_topbar(url: &str) -> String {
 fn share_main(id: &str, idx: &Index) -> String {
     let mut s = String::new();
 
-    // Chapters — only show if we have ≥ 2 of them (otherwise it's noise).
-    if idx.summary.chapters.len() >= 2 {
-        let mut h = String::from(r#"<section class="card chapters"><h3>Chapters</h3><ol class="chapters-list">"#);
-        for ch in &idx.summary.chapters {
-            h.push_str(&format!(
-                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
-                ch.start, fmt_duration(ch.start), html_escape(&ch.title),
-            ));
-        }
-        h.push_str("</ol></section>");
-        s.push_str(&h);
-    }
-
-    // Key moments — visual_timeline, ordered by t.  Skip if empty.
-    if !idx.visual_timeline.is_empty() {
-        let mut h = String::from(r#"<section class="card moments"><h3>Key moments</h3><ul class="moments-list">"#);
-        for m in &idx.visual_timeline {
+    // Outline — a Fathom-style "moments at a glance" that reads as a story arc for the
+    // clip rather than a flat dump of OCR lines.  Each moment has a real frame
+    // thumbnail, its caption, the timestamp, and a click-to-seek target.  The current
+    // moment is highlighted live (see the JS that follows).  Always shown — even an
+    // empty timeline falls back to a single "no moments captured yet" row so the
+    // layout doesn't shift between indexed and not-yet-indexed clips.
+    let mut h = String::from(r#"<section class="card outline"><h3>Outline</h3><ol class="outline-list" id="outlineList">"#);
+    if idx.visual_timeline.is_empty() {
+        h.push_str(r#"<li class="outline-empty">No moments captured yet — the clip is still being indexed.</li>"#);
+    } else {
+        for (i, m) in idx.visual_timeline.iter().enumerate() {
             let cap = html_escape(&m.caption);
             // Trim very long captions to keep the surface tidy.
-            let cap_short = if cap.chars().count() > 160 {
-                let cut: String = cap.chars().take(160).collect();
+            let cap_short = if cap.chars().count() > 180 {
+                let cut: String = cap.chars().take(180).collect();
                 format!("{cut}…")
             } else { cap };
+            // The thumbnail (frame_ref → /clip/:id/frames/<name>) gives the outline its
+            // visual rhythm; a missing frame falls back to a neutral tile so the row
+            // doesn't break the grid.
+            let thumb_html = match m.frame_ref.as_deref() {
+                Some(fr) => {
+                    let bare = fr.strip_prefix("frames/").unwrap_or(fr);
+                    let url = format!("/clip/{id}/frames/{bare}");
+                    format!(r##"<img class="outline-thumb" src="{url}" alt="" loading="lazy" />"##)
+                }
+                None => r#"<span class="outline-thumb outline-thumb-empty" aria-hidden></span>"#.to_string(),
+            };
             h.push_str(&format!(
-                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
-                m.t, fmt_duration(m.t), cap_short,
+                r##"<li class="outline-row" data-t="{t}" id="outline-{i}"><a href="#t={t}" class="outline-link">{thumb}<span class="outline-ts">{ts}</span><span class="outline-cap">{cap}</span></a></li>"##,
+                t = m.t,
+                ts = fmt_duration(m.t),
+                cap = cap_short,
+                thumb = thumb_html,
+                i = i,
             ));
         }
-        h.push_str("</ul></section>");
-        s.push_str(&h);
     }
+    h.push_str("</ol></section>");
+    s.push_str(&h);
 
     // Events — click/key/etc.  Empty? Skip.
     if !idx.event_track.is_empty() {
@@ -3083,23 +3271,22 @@ fn shorten_url(url: &str) -> String {
 ///  Inlined so the share page is self-contained (no external CSS).
 /// ============================================================================
 const SHARE_CSS_VARS_DARK: &str = r##"
-    --bg:#15121C; --panel:#221C30; --panel-2:#2A2340; --panel-3:#332B4C;
-    --glass: rgba(54,46,78,.46);
+    --bg:#131315; --panel:#1E1E20; --panel-2:#262628; --panel-3:#303032;
+    --glass: rgba(46,46,50,.46);
     --border: rgba(255,255,255,.10); --border-2: rgba(255,255,255,.2);
-    --text:#F4F1FB; --text-2:#B4ACC8; --text-3:#7C7398;
-    --on-accent:#15121C;
+    --text:#F2F1EE; --text-2:#C2C0BA; --text-3:#8B8982;
+    --c-grape:#93ABDD;
+    --on-accent:#131315;
     --sodium-wash:rgba(255,122,89,.16);
     --signal-wash:rgba(22,199,154,.20);
     --sodium-text:#FFAD90; --signal-text:#5FE7C2;
     --env:
-      radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.18), transparent 62%),
-      radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
-      radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.22), transparent 64%);
+      radial-gradient(70% 50% at 50% -10%, rgba(255,255,255,.026), transparent 72%);
     --clay: 0 18px 34px -14px rgba(0,0,0,.7), inset 0 2px 1px rgba(255,255,255,.14), inset 0 -9px 18px -7px rgba(0,0,0,.5);
     --clay-sm: 0 11px 22px -12px rgba(0,0,0,.66), inset 0 2px 1px rgba(255,255,255,.12), inset 0 -6px 12px -6px rgba(0,0,0,.45);
     --clay-in: inset 0 3px 8px rgba(0,0,0,.55), inset 0 -1px 1px rgba(255,255,255,.08);
     --pop-signal: 0 16px 30px -12px rgba(22,199,154,.5), inset 0 2px 1px rgba(255,255,255,.4), inset 0 -8px 16px -6px rgba(0,70,52,.5);
-    --pop-sodium: 0 16px 30px -12px rgba(255,122,89,.45), inset 0 2px 1px rgba(255,255,255,.34), inset 0 -8px 16px -6px rgba(120,40,20,.5);
+    --pop-sodium: 0 14px 26px -12px rgba(214,70,31,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(150,40,16,.4);
     --shadow-float: 0 12px 30px -16px rgba(0,0,0,.66);
 "##;
 
@@ -3113,30 +3300,29 @@ fn share_css() -> String {
 
 const SHARE_CSS_TEMPLATE: &str = r##"
 :root {
-  --c-sodium:#FF7A59;  --c-signal:#16C79A;  --c-grape:#9B8CFF;
+  --c-sodium:#FF7A59;  --c-signal:#16C79A;  --c-grape:#5E7BB0;
   --ease-clip: cubic-bezier(.34, 1.56, .42, 1);
   --r: 22px; --r-sm: 14px; --r-pill: 999px;
 }
-/* Light (warm pastel playground) */
+/* Light (warm-paper neutral, no purple glow) */
 :root, :root[data-theme=light] {
-  --bg:#EFE9F0; --panel:#FBF7F4; --panel-2:#F3EDEF; --panel-3:#EAE2EC;
+  --bg:#F1F0EC; --panel:#FCFBF9; --panel-2:#F0EFEB; --panel-3:#E7E6E1;
   --glass: rgba(255,255,255,.5);
-  --border: rgba(70,52,92,.10); --border-2: rgba(70,52,92,.18);
-  --text:#211B2B; --text-2:#5F586E; --text-3:#928BA1;
+  --border: rgba(38,36,32,.11); --border-2: rgba(38,36,32,.20);
+  --c-grape:#4E6DA8;
+  --text:#1D1B17; --text-2:#5A574F; --text-3:#6A675E;
   --on-accent:#FFFFFF;
   --sodium-wash:rgba(255,122,89,.13);
   --signal-wash:rgba(22,199,154,.13);
-  --sodium-text:#D6461F; --signal-text:#0C8E6C;
+  --sodium-text:#A22F18; --signal-text:#08513E;
   --env:
-    radial-gradient(40% 38% at 4% -4%, rgba(255,122,89,.22), transparent 62%),
-    radial-gradient(42% 40% at 100% 2%, rgba(22,199,154,.20), transparent 62%),
-    radial-gradient(46% 50% at 50% 116%, rgba(155,140,255,.20), transparent 64%);
-  --clay: 0 16px 30px -14px rgba(80,54,112,.34), inset 0 2px 1px rgba(255,255,255,.95), inset 0 -8px 16px -6px rgba(120,96,150,.16);
-  --clay-sm: 0 9px 18px -10px rgba(80,54,112,.3), inset 0 2px 1px rgba(255,255,255,.9), inset 0 -5px 10px -5px rgba(120,96,150,.14);
-  --clay-in: inset 0 3px 7px rgba(100,72,130,.22), inset 0 -2px 2px rgba(255,255,255,.7);
+    radial-gradient(70% 50% at 50% -10%, rgba(0,0,0,.022), transparent 72%);
+  --clay: 0 16px 30px -14px rgba(50,46,40,.28), inset 0 2px 1px rgba(255,255,255,.95), inset 0 -8px 16px -6px rgba(90,84,74,.14);
+  --clay-sm: 0 9px 18px -10px rgba(50,46,40,.24), inset 0 2px 1px rgba(255,255,255,.9), inset 0 -5px 10px -5px rgba(90,84,74,.12);
+  --clay-in: inset 0 3px 7px rgba(70,64,54,.18), inset 0 -2px 2px rgba(255,255,255,.7);
   --pop-signal: 0 14px 26px -12px rgba(12,142,108,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(8,90,68,.4);
   --pop-sodium: 0 14px 26px -12px rgba(214,70,31,.5), inset 0 2px 1px rgba(255,255,255,.55), inset 0 -7px 14px -6px rgba(150,40,16,.4);
-  --shadow-float: 0 12px 30px -16px rgba(80,54,112,.34);
+  --shadow-float: 0 12px 30px -16px rgba(50,46,40,.34);
 }
 /* OS-level dark preference — unless the user explicitly picked light in the app. */
 @media (prefers-color-scheme: dark) {
@@ -3257,27 +3443,34 @@ a:hover { text-decoration: underline; }
   color: var(--text-3); margin-bottom: 12px;
 }
 
-/* chapters */
-.chapters-list { list-style: none; display: grid; gap: 6px; }
-.chapters-list a {
-  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
+/* Outline — Fathom-style "moments at a glance" that replaces the previous chapters +
+   moments split.  Each row is a thumbnail + timestamp + caption, the current row is
+   highlighted live, and the timeline progress is shown as a thin rail. */
+.outline-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.outline-row { position: relative; }
+.outline-link {
+  display: grid; grid-template-columns: 88px 56px 1fr; gap: 12px; align-items: center;
   padding: 8px 10px; border-radius: var(--r-sm); color: var(--text);
-  text-decoration: none;
+  text-decoration: none; border: 1px solid transparent; transition: background .14s, border-color .14s;
 }
-.chapters-list a:hover { background: var(--panel-2); text-decoration: none; }
-.chapters-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--sodium-text); }
-.chapters-list .lbl { font-size: 14px; }
-
-/* moments */
-.moments-list { list-style: none; display: grid; gap: 6px; }
-.moments-list a {
-  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
-  padding: 8px 10px; border-radius: var(--r-sm); color: var(--text);
-  text-decoration: none;
+.outline-link:hover { background: var(--panel-2); text-decoration: none; border-color: var(--border); }
+.outline-row.is-current .outline-link {
+  background: var(--signal-wash); border-color: color-mix(in oklab, var(--c-signal) 35%, transparent);
 }
-.moments-list a:hover { background: var(--panel-2); text-decoration: none; }
-.moments-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--signal-text); }
-.moments-list .lbl { font-size: 13.5px; color: var(--text-2); line-height: 1.4; }
+.outline-row.is-current .outline-ts { color: var(--signal-text); }
+.outline-thumb {
+  width: 88px; height: 50px; object-fit: cover; border-radius: 8px;
+  background: var(--panel-3); border: 1px solid var(--border); flex: none;
+}
+.outline-thumb-empty { display: inline-block; background: var(--panel-3); }
+.outline-ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--sodium-text); flex: none; text-align: right; }
+.outline-cap { font-size: 13.5px; color: var(--text-2); line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.outline-empty { color: var(--text-3); font-size: 13px; padding: 12px 4px; }
+@media (max-width: 600px) {
+  .outline-link { grid-template-columns: 64px 48px 1fr; }
+  .outline-thumb { width: 64px; height: 38px; }
+  .outline-cap { font-size: 13px; }
+}
 
 /* events */
 .events-list { list-style: none; display: grid; gap: 4px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
@@ -3493,6 +3686,49 @@ document.addEventListener('click', (e) => {
   const v = document.querySelector('video');
   if (v) { v.currentTime = t; v.play().catch(() => {}); }
 });
+
+// Outline — highlight the current row as the playhead moves. Reads every outline row's
+// `data-t`, keeps a sorted list of moments, and on `timeupdate` finds the last moment
+// whose t is ≤ currentTime (or the first, if the user is before the first moment).
+// Uses rAF + a 250 ms idle throttle so this stays free during playback.
+(function () {
+  const list = document.getElementById('outlineList');
+  if (!list) return;
+  const rows = Array.from(list.querySelectorAll('.outline-row[data-t]'));
+  if (rows.length === 0) return;
+  const moments = rows.map((r) => parseFloat(r.getAttribute('data-t')) || 0);
+  const v = document.querySelector('video');
+  if (!v) return;
+  let last = -1, raf = 0, lastRun = 0;
+  const update = (now) => {
+    if (now - lastRun < 250) { raf = requestAnimationFrame(update); return; }
+    lastRun = now;
+    const t = v.currentTime || 0;
+    // Binary-search the latest moment ≤ t. Two-pointer walks forward as the user
+    // scrubs; falls back to -1 (nothing highlighted) only if the user rewinds before
+    // the first moment, which is the correct behaviour.
+    let i = -1;
+    for (let j = 0; j < moments.length; j++) { if (moments[j] <= t) i = j; else break; }
+    if (i === last) { raf = requestAnimationFrame(update); return; }
+    rows.forEach((r, k) => r.classList.toggle('is-current', k === i));
+    last = i;
+    // Auto-scroll the active row into view inside the outline list, but only when the
+    // user's scroll position hasn't been touched recently — don't fight someone who's
+    // reading a moment further down.
+    if (i >= 0) {
+      const target = rows[i];
+      const listRect = list.getBoundingClientRect();
+      const rowRect = target.getBoundingClientRect();
+      if (rowRect.top < listRect.top + 24 || rowRect.bottom > listRect.bottom - 24) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+    raf = requestAnimationFrame(update);
+  };
+  v.addEventListener('timeupdate', () => requestAnimationFrame(update));
+  v.addEventListener('seeked', () => requestAnimationFrame(update));
+  raf = requestAnimationFrame(update);
+})();
 // ask form
 const askBtn = document.getElementById('askBtn');
 const askIn  = document.getElementById('q');
@@ -3631,7 +3867,7 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 
 #[cfg(test)]
 mod tests {
-    use super::{format_view_count, merge_browser_trace_into_clip, mint_clip_id, share_base, try_claim, ClipClaims};
+    use super::{format_view_count, merge_browser_trace_into_clip, mint_clip_id, share_base, share_slug_for, short_tail, slugify_title, try_claim, ClipClaims};
     use std::sync::{Arc, Mutex as StdMutex};
 
     #[test]
@@ -3700,6 +3936,52 @@ mod tests {
         // no port / unparseable → default 8787
         assert_eq!(share_base(None, "10.0.0.5"), "http://10.0.0.5:8787");
         assert_eq!(share_base(Some("box.local"), "10.0.0.5"), "http://10.0.0.5:8787");
+    }
+
+    #[test]
+    fn slugify_title_handles_the_real_world() {
+        // ASCII: lowercased, separators collapsed, no leading/trailing dashes
+        assert_eq!(slugify_title("Hello World"), "hello-world");
+        assert_eq!(slugify_title("  --spaces--  "), "spaces");
+        // Non-ASCII drops entirely — a clip titled in Hindi still produces a usable slug
+        assert_eq!(slugify_title("नमस्ते दुनिया"), "");
+        // The 60-char cap + final-dash trim: long titles still end on an alphanumeric char
+        let long = "a".repeat(80);
+        let s = slugify_title(&long);
+        assert_eq!(s.len(), 60);
+        assert!(!s.ends_with('-'));
+        // Pure emoji titles fall through to "" (the caller fills in "clip" then)
+        assert_eq!(slugify_title("🎬🔥✨"), "");
+    }
+
+    #[test]
+    fn short_tail_strips_prefix_and_walks_alphanumeric() {
+        // Standard clip id: drop `clp_`, take the last 4 alphanumeric chars, lowercased.
+        // Reverse "1efc6ad3" → ['3','d','a','6','c','f','e','1'], take 4 alnum → ['3','d','a','6']
+        // reverse back → "6ad3".
+        assert_eq!(short_tail("clp_1efc6ad3"), "6ad3");
+        assert_eq!(short_tail("clp_abcdef12"), "ef12");
+        assert_eq!(short_tail("clp_deadbeef"), "beef");
+        // Strip the prefix even when the id doesn't match (graceful degradation)
+        assert_eq!(short_tail("xyz_123456"), "3456");
+        // No alphanumeric in the tail position falls back to ""
+        assert_eq!(short_tail("clp_"), "");
+    }
+
+    #[test]
+    fn share_slug_for_roundtrips_via_short_tail() {
+        // A standard title produces a slug whose short tail resolves back to the id's tail
+        let slug = share_slug_for("Checkout 500 — the card declines", "clp_1efc6ad3");
+        assert!(slug.starts_with("checkout-500-the-card-declines"));
+        assert!(slug.ends_with("-6ad3"), "slug should end with the id tail: {slug}");
+        // Emoji-only title falls back to `clip-<tail>` so the URL is still shareable
+        assert_eq!(share_slug_for("🎬", "clp_abcdef12"), "clip-ef12");
+        // Empty title also falls back, with the same clip- prefix
+        assert_eq!(share_slug_for("", "clp_abcdef12"), "clip-ef12");
+        // Title that slugifies to nothing for non-emoji reasons also gets the clip- prefix
+        assert_eq!(share_slug_for("!!!", "clp_abcdef12"), "clip-ef12");
+        // Run of dashes inside the title collapses to one (slug stays URL-safe)
+        assert_eq!(share_slug_for("a----b", "clp_abcdef12"), "a-b-ef12");
     }
 
     // Regression coverage for the sweeper-vs-commit race a code review caught: two finalizers

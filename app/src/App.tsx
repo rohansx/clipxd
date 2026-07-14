@@ -89,7 +89,18 @@ export default function App() {
   const deepLink = useMemo(initialClipId, []);
   const isDocsPath = useMemo(initialIsDocsPath, []);
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [view, setView] = useState<View>(deepLink || isDocsPath ? "cloud" : "landing");
+  // Returning visitors who have already entered the app before go straight to the cloud
+  // view on the same render — no flash of the marketing landing, no double-mount of the
+  // AnimatePresence. The post-mount restore effect (further below) used to do this, but
+  // it ran *after* the first paint so the user briefly saw the landing page before it
+  // disappeared. For a logged-in user with a valid session this is the wrong experience:
+  // the landing page has nothing for them to do, and the extra remount of `Landing` is
+  // pure jank. If the optimistic choice turns out wrong (auth is enabled but the user is
+  // not logged in), the catch-up effect that runs on `auth.loading` change routes them
+  // to the auth view.
+  const [view, setView] = useState<View>(
+    deepLink || isDocsPath || hasEnteredAppBefore() ? "cloud" : "landing",
+  );
   const [cloudView, setCloudView] = useState<CloudView>(deepLink ? "clip" : isDocsPath ? "docs" : "library");
   const [activeClipId, setActiveClipId] = useState<string | null>(deepLink);
   const [toast, setToast] = useState<string | null>(null);
@@ -97,11 +108,11 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [importUrl, setImportUrl] = useState<string | undefined>(undefined);
 
-  // Lazy by default (skip /auth/me while on the marketing landing — keeps it console-clean
-  // for first-time visitors and off the critical path for LCP). But a returning visitor who's
-  // been in the app before needs the real check to start immediately even while still on
-  // "landing", or the restore-on-refresh effect below has nothing to correct itself against
-  // and a valid session behind an OAuth redirect never gets discovered.
+  // Lazy by default (skip /auth/me while on a first-time marketing landing — keeps it
+  // console-clean and off the critical path for LCP). A returning visitor starts in the
+  // cloud view already, so we always need the real auth check for them — without it the
+  // catch-up effect that routes unauthed users to the auth screen never fires and a
+  // signed-out user lands inside the cloud view (where every library fetch would 401).
   const auth = useAuth(view === "cloud" || hasEnteredAppBefore());
   const { clips, reload } = useClips();
 
@@ -198,20 +209,6 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.id]);
-
-  // Refresh-persistence: a hard reload always re-mounts with `view: "landing"` unless a
-  // `?clip=` deep link is present — Library/Settings/Recording/etc. have no URL trace of
-  // their own, so without this the app silently dumps a returning user back on the
-  // marketing page every refresh. Fires once on mount rather than waiting on `auth.loading`
-  // (auth is lazy — `useAuth(view === "cloud")` never even fetches while we're still on
-  // "landing" — so `goCloud` here runs optimistically; the effect below corrects course if
-  // the real auth check, once it fires, turns out unauthenticated).
-  useEffect(() => {
-    if (deepLink || view !== "landing") return;
-    if (!hasEnteredAppBefore()) return;
-    goCloud("library");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // If the optimistic restore above lands us in the cloud view but the real auth check
   // (which only starts once `view === "cloud"`) comes back unauthenticated, don't strand

@@ -276,6 +276,29 @@ impl Db {
         let ids = stmt.query_map([owner_id], |r| r.get::<_, String>(0))?.filter_map(Result::ok).collect();
         Ok(ids)
     }
+
+    /// Resolve a clip by the short suffix used in branded share links
+    /// (`clipxd.com/u/<you>/<title-slug>-<SHORT>`).  The clip id itself stays the
+    /// unguessable secret — `<SHORT>` is only the last 4 chars of the id, exposed
+    /// so the URL reads like a title rather than `clp_1efc6ad3` while still being
+    /// unique enough to disambiguate same-titled clips owned by the same user.
+    /// Returns `Some(id)` when exactly one owned clip's id ends with `short`, `None`
+    /// otherwise (no match, or ambiguous — both resolve to 404 so the secret id
+    /// never leaks).  The clip is unguessable without the prefix.
+    pub fn find_clip_by_short(&self, owner_id: i64, short: &str) -> Result<Option<String>> {
+        let c = self.lock();
+        let mut stmt = c.prepare("SELECT clip_id FROM clips WHERE owner_id = ?1")?;
+        let mut hits: Vec<String> = stmt
+            .query_map([owner_id], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .filter(|id| id.len() >= short.len() && id[id.len() - short.len()..] == *short)
+            .collect();
+        // If two clips collide on the same 4-char tail (vanishingly unlikely with the
+        // current id format), bail — both URLs 404 rather than the wrong clip silently
+        // resolving, so guessing tails is a dead end.
+        if hits.len() != 1 { return Ok(None); }
+        Ok(Some(hits.remove(0)))
+    }
 }
 
 fn row_to_user(r: &rusqlite::Row) -> rusqlite::Result<User> {

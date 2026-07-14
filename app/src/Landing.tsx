@@ -169,11 +169,11 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
             <Wipe revealClip={revealClip} seamLeft={`${wipe}%`} onPointerDown={startDrag} />
 
             <div className="cta-row">
-              <button className="btn-signal" onClick={onOpenApp} style={{ borderRadius: 14, fontSize: 15, padding: "13px 22px" }}>
+              <button className="btn-signal" onClick={onOpenApp} style={{ fontSize: 15, padding: "13px 22px" }}>
                 <span className="dot" style={{ background: "var(--on-accent)" }} />
                 Record a clip
               </button>
-              <button className="btn" onClick={onImport} style={{ borderRadius: 13, fontSize: 15, padding: "13px 22px" }}>
+              <button className="btn" onClick={onImport} style={{ fontSize: 15, padding: "13px 22px" }}>
                 Paste a Loom instead
               </button>
               <span
@@ -349,7 +349,7 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
           <div className="demo">
             <div className="url-paste">
               <div className="box">loom.com/share/9c2f…</div>
-              <button className="btn-signal" style={{ borderRadius: 12, padding: "0 18px" }}>
+              <button className="btn-signal" style={{ padding: "0 18px" }}>
                 Read it
               </button>
             </div>
@@ -516,14 +516,14 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
               <button
                 className="btn-sodium"
                 onClick={onOpenApp}
-                style={{ borderRadius: 14, fontSize: 15, padding: "13px 24px" }}
+                style={{ fontSize: 15, padding: "13px 24px" }}
               >
                 Open the app
               </button>
               <button
                 className="btn"
                 onClick={() => window.open("https://github.com/rohansx/clipxd", "_blank", "noopener,noreferrer")}
-                style={{ borderRadius: 13, fontSize: 15, padding: "13px 22px" }}
+                style={{ fontSize: 15, padding: "13px 22px" }}
               >
                 Read the docs
               </button>

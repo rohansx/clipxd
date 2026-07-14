@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#FF7A59" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#15121C" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#131315" media="(prefers-color-scheme: dark)" />
 
     <!-- Primary identity -->
     <title>clipxd — record once, agents read it</title>
@@ -90,41 +90,39 @@
     <style>
       *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
       :root{
-        --sodium:#FF7A59;--signal:#16C79A;--grape:#9B8CFF;
+        --sodium:#FF7A59;--signal:#16C79A;--grape:#5E7BB0;
         --font-display:'Space Grotesk',system-ui,sans-serif;
         --font-ui:'Space Grotesk',system-ui,-apple-system,sans-serif;
         --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',monospace;
         --r:22px;--r-sm:15px;
       }
       [data-theme="light"]{
-        --bg:#EFE9F0;--panel:#FBF7F4;--panel-2:#F3EDEF;
-        --border:rgba(70,52,92,.10);--border-2:rgba(70,52,92,.18);
-        --text:#211B2B;--text-2:#5F586E;--text-3:#6B6478;
+        --bg:#F1F0EC;--panel:#FCFBF9;--panel-2:#F0EFEB;
+        --border:rgba(38,36,32,.11);--border-2:rgba(38,36,32,.20);
+        --grape:#4E6DA8;
+        --text:#1D1B17;--text-2:#5A574F;--text-3:#6A675E;
         --sodium-text:#A22F18;--signal-text:#08513E;
         --signal-strong:#0A6E54;--sodium-strong:#9C2E15;
         --on-accent:#FFFFFF;
-        --clay-sm:0 9px 18px -10px rgba(80,54,112,.3),
+        --clay-sm:0 9px 18px -10px rgba(50,46,40,.24),
                   inset 0 2px 1px rgba(255,255,255,.9),
-                  inset 0 -5px 10px -5px rgba(120,96,150,.14);
-        --env:radial-gradient(40% 38% at 4% -4%,rgba(255,122,89,.22),transparent 62%),
-              radial-gradient(42% 40% at 100% 2%,rgba(22,199,154,.2),transparent 62%),
-              radial-gradient(46% 50% at 50% 116%,rgba(155,140,255,.2),transparent 64%);
-        --emboss:0 1px 0 rgba(255,255,255,.85),0 -1px 1px rgba(120,90,150,.16),
-                 1px 3px 3px rgba(80,54,112,.14),2px 6px 10px rgba(80,54,112,.14);
+                  inset 0 -5px 10px -5px rgba(90,84,74,.12);
+        --env:radial-gradient(70% 50% at 50% -10%,rgba(0,0,0,.022),transparent 72%);
+        --emboss:0 1px 0 rgba(255,255,255,.85),0 -1px 1px rgba(90,84,74,.14),
+                 1px 3px 3px rgba(50,46,40,.12),2px 6px 10px rgba(50,46,40,.12);
       }
       [data-theme="dark"]{
-        --bg:#15121C;--panel:#221C30;--panel-2:#2A2340;
+        --bg:#131315;--panel:#1E1E20;--panel-2:#262628;
         --border:rgba(255,255,255,.10);
-        --text:#F4F1FB;--text-2:#C7C0DA;--text-3:#8E84A8;
+        --grape:#93ABDD;
+        --text:#F2F1EE;--text-2:#C2C0BA;--text-3:#8B8982;
         --sodium-text:#FFAD90;--signal-text:#5FE7C2;
         --signal-strong:#5FE7C2;--sodium-strong:#FFAD90;
-        --on-accent:#15121C;
+        --on-accent:#131315;
         --clay-sm:0 11px 22px -12px rgba(0,0,0,.66),
                   inset 0 2px 1px rgba(255,255,255,.12),
                   inset 0 -6px 12px -6px rgba(0,0,0,.45);
-        --env:radial-gradient(40% 38% at 4% -4%,rgba(255,122,89,.18),transparent 62%),
-              radial-gradient(42% 40% at 100% 2%,rgba(22,199,154,.2),transparent 62%),
-              radial-gradient(46% 50% at 50% 116%,rgba(155,140,255,.22),transparent 64%);
+        --env:radial-gradient(70% 50% at 50% -10%,rgba(255,255,255,.026),transparent 72%);
         --emboss:0 1px 0 rgba(255,255,255,.10),0 -1px 1px rgba(0,0,0,.4),
                  1px 3px 4px rgba(0,0,0,.5),2px 7px 14px rgba(0,0,0,.45);
       }
