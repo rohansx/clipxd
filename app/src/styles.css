@@ -95,7 +95,9 @@
 html,body,#root{height:100%}
 html,body{
   background:var(--env), var(--bg);
-  background-attachment:fixed;
+  /* NOT background-attachment:fixed — a fixed background forces the browser off its fast
+     scroll path and repaints the whole viewport every frame, which is the scroll jank. With
+     the env glow now just a faint neutral wash, letting it scroll normally is invisible. */
   color:var(--text);
   font-family:var(--font-ui);
   -webkit-font-smoothing:antialiased;
@@ -927,11 +929,21 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   box-shadow:0 0 28px var(--signal);animation:scanX 1.4s var(--ease-clip) 1;
 }
 .vframe{
-  border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.4);
-  box-shadow:0 22px 50px -16px rgba(40,24,60,.5), 0 4px 10px -6px rgba(40,24,60,.35);
+  border-radius:14px;overflow:hidden;border:1px solid var(--border);
+  box-shadow:0 22px 50px -16px rgba(20,18,24,.42), 0 4px 10px -6px rgba(20,18,24,.28);
   background:#000;position:relative;
 }
 .vframe video{width:100%;display:block;background:#000;transition:transform .12s linear}
+/* Fit the whole clip on screen. Before this, the player was `width:100%; height:auto`, so a
+   tall screen-recording rendered at its full natural height at the column's width — it grew
+   past the fold (you had to scroll to see it all) and, with nothing reserving the space,
+   jumped size the moment metadata loaded. Now the video keeps its own aspect ratio
+   (`width/height:auto`) but is capped to 60vh tall and the column width, so it always fits
+   the fold and never distorts; the frame shrinks to hug it and stays centered. */
+.vframe.has-player{width:-moz-fit-content;width:fit-content;max-width:100%;margin-inline:auto}
+.vframe.has-player video{
+  width:auto;height:auto;max-width:100%;max-height:min(60vh,560px);
+}
 .vframe.mock{background:#fff}
 .countdown-panel{
   padding:34px 28px;min-height:160px;background:#fff;color:#222;
