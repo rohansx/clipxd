@@ -68,6 +68,21 @@
 		# Don't let the SPA HTML get cached aggressively — clients expect
 		# new deploys to show up on refresh.
 		header Cache-Control "public, max-age=0, must-revalidate"
+
+		# Content-Security-Policy — scoped to the SPA document ONLY (this catch-all
+		# serves index.html for every client route). It is deliberately NOT in the
+		# global header block above, because the server-rendered share pages under
+		# @backend (/clip/*, /u/*) rely on inline <script> blocks a strict script-src
+		# would kill; those keep their existing headers untouched.
+		#
+		# Allowlist verified against the live site with a headless browser (only
+		# origins the SPA actually loads): self, the self-hosted Umami analytics, and
+		# Google Fonts. script-src carries NO 'unsafe-inline' — the sole inline handler
+		# (the font-swap onload) is allowed by its exact hash via 'unsafe-hashes'.
+		# require-trusted-types-for was validated to boot the full React + framer-motion
+		# + react-helmet stack with zero violations (and the app + those deps contain no
+		# innerHTML/dangerouslySetInnerHTML sinks).
+		header Content-Security-Policy "default-src 'self'; script-src 'self' https://analytics.rohan.sh 'unsafe-hashes' 'sha256-MhtPZXr7+LpJUY5qtMutB+qWfQtMaPccfe7QXtCcEYc='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://analytics.rohan.sh; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; require-trusted-types-for 'script'; upgrade-insecure-requests"
 		file_server
 	}
 
