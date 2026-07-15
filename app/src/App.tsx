@@ -269,6 +269,7 @@ export default function App() {
           <motion.main
             key="landing"
             id="main"
+            tabIndex={-1}
             initial={false}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.18 } }}
@@ -303,7 +304,10 @@ export default function App() {
                   : SEO_VIEWS[cloudView].description
               }
               path={cloudView === "clip" ? "/clip" : SEO_VIEWS[cloudView].path}
-              noindex={cloudView === "clip" || cloudView === "chat"}
+              // Docs is the one cloud view that's a real crawlable page (/docs); every other
+              // cloud view is private app UI at the SPA root URL, so emitting a /library-style
+              // canonical conflicts with the prerendered landing's canonical=/. noindex → none.
+              noindex={cloudView !== "docs"}
             />
             <Sidebar
               cloudView={cloudView}

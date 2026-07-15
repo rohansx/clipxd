@@ -129,7 +129,6 @@
       html,body,#root{height:100%}
       html,body{
         background:var(--env),var(--bg);
-        background-attachment:fixed;
         color:var(--text);
         font-family:var(--font-ui);
         -webkit-font-smoothing:antialiased;
@@ -262,7 +261,7 @@
         <nav class="lx-nav" aria-label="Primary">
           <a href="#main" aria-label="Open the clipxd app">Open app →</a>
         </nav>
-        <main class="lx-main" id="main">
+        <main class="lx-main" id="main" tabindex="-1">
           <div class="lx-hero">
             <div class="lx-kicker">
               <span class="dot" aria-hidden="true"></span>
