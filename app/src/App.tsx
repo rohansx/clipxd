@@ -339,9 +339,9 @@ export default function App() {
                 <button
                   className="btn btn-pill"
                   onClick={() => setCloudView("recording")}
-                  style={{ background: "var(--sodium)", color: "var(--on-accent)", border: "none", boxShadow: "var(--pop-sodium)" }}
+                  style={{ background: "var(--sodium)", color: "var(--on-sodium)", border: "none", boxShadow: "var(--pop-sodium)" }}
                 >
-                  <span className="dot" style={{ background: "var(--on-accent)" }} /> Record
+                  <span className="dot" style={{ background: "var(--on-sodium)" }} /> Record
                 </button>
               </div>
 
