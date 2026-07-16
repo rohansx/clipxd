@@ -77,12 +77,19 @@
 		#
 		# Allowlist verified against the live site with a headless browser (only
 		# origins the SPA actually loads): self, the self-hosted Umami analytics, and
-		# Google Fonts. script-src carries NO 'unsafe-inline' — the sole inline handler
-		# (the font-swap onload) is allowed by its exact hash via 'unsafe-hashes'.
+		# Google Fonts. script-src carries NO 'unsafe-inline' — the two inline handlers
+		# are allowed by exact hash via 'unsafe-hashes':
+		#   MhtPZ… = this.media='all'                    (font-swap onload, index.html)
+		#   NpaJc… = this.rel='stylesheet';this.onload=null  (CSS preload onload, generated
+		#            by the cssPreload plugin in app/vite.config.ts — if that string ever
+		#            changes, this hash MUST change with it or the site ships UNSTYLED:
+		#            the <noscript> stylesheet fallback is inert for JS users, so the
+		#            blocked onload silently strands the CSS as a preload. This exact
+		#            failure shipped on 2026-07-16 and was caught by screenshot QA.)
 		# require-trusted-types-for was validated to boot the full React + framer-motion
 		# + react-helmet stack with zero violations (and the app + those deps contain no
 		# innerHTML/dangerouslySetInnerHTML sinks).
-		header Content-Security-Policy "default-src 'self'; script-src 'self' https://analytics.rohan.sh 'unsafe-hashes' 'sha256-MhtPZXr7+LpJUY5qtMutB+qWfQtMaPccfe7QXtCcEYc='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://analytics.rohan.sh; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; require-trusted-types-for 'script'; upgrade-insecure-requests"
+		header Content-Security-Policy "default-src 'self'; script-src 'self' https://analytics.rohan.sh 'unsafe-hashes' 'sha256-MhtPZXr7+LpJUY5qtMutB+qWfQtMaPccfe7QXtCcEYc=' 'sha256-NpaJcuv2ARPjhXEqngifINSNwqzoF4Q9/8I+QhIlt9Q='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://analytics.rohan.sh; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; require-trusted-types-for 'script'; upgrade-insecure-requests"
 		file_server
 	}
 
