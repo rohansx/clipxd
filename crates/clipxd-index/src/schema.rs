@@ -244,6 +244,17 @@ pub struct VisualMoment {
     /// Path/URL to the retained, redacted salient frame, if one exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_ref: Option<String>,
+
+    /// v2.2: a ≤6-word ACTION label for navigation, from the indexing-time label pass
+    /// (`clipxd-web::label`). Absent when no LLM backend is configured or the pass failed —
+    /// consumers fall back to `caption`. Never blocks the clip completing.
+    ///
+    /// Deliberately *additive* rather than overwriting `caption`: `query::search_text` scores
+    /// against `caption` (the only searchable form of the visual stream — `build_search` omits
+    /// captions), and `deeppass::build_context` synthesizes the tldr/chapters from it. A label
+    /// is for scanning; the caption stays the evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Where on-screen text came from.
@@ -366,6 +377,16 @@ mod tests {
         assert!(json.contains("\"source\":\"import\""), "{json}");
         assert!(json.contains("\"status\":\"complete\""), "{json}");
         assert!(json.contains("\"clipxd_version\":\"2\""), "{json}");
+    }
+
+    #[test]
+    fn visual_moment_without_a_label_still_parses() {
+        // Every index.json already on disk and in S3 predates `label`. It is additive-optional,
+        // so they must keep parsing untouched — and a None label must not serialize back out.
+        let json = r#"{"t":18.0,"salience":0.9,"caption":"a held shot","delta":"keyframe"}"#;
+        let m: VisualMoment = serde_json::from_str(json).unwrap();
+        assert_eq!(m.label, None);
+        assert!(!serde_json::to_string(&m).unwrap().contains("label"));
     }
 
     #[test]

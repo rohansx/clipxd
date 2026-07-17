@@ -44,8 +44,9 @@ fn keywords(q: &str) -> Vec<String> {
     const STOP: &[&str] = &[
         "the", "and", "was", "what", "did", "show", "you", "did", "are", "for", "that", "this",
         "then", "there", "with", "his", "her", "its", "user", "users", "right", "before", "after",
-        "doing", "were", "how", "why", "when", "where", "who", "happen", "happened", "screen",
-        "video", "clip", "thing", "things", "something", "anything", "see", "saw",
+        "doing", "were", "how", "why", "when", "where", "who", "happen", "happened", "happens",
+        "happening", "screen", "video", "clip", "thing", "things", "something", "anything",
+        "see", "saw",
     ];
     q.split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.len() >= 3)
@@ -334,6 +335,7 @@ mod tests {
             caption: "Cursor clicks the 'Place order' button; a spinner appears.".into(),
             delta: "region_change".into(),
             frame_ref: Some("frames/00050.png".into()),
+            label: None,
         });
         idx.visual_timeline.push(VisualMoment {
             t: 13.0,
@@ -341,6 +343,7 @@ mod tests {
             caption: "A red toast appears. On screen: \"ERROR: Payment failed (500)\"".into(),
             delta: "state_settle".into(),
             frame_ref: Some("frames/00052.png".into()),
+            label: None,
         });
         idx.on_screen_text.push(OnScreenText {
             start: 13.0,

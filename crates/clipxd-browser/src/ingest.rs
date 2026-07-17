@@ -68,6 +68,7 @@ pub fn build_index(trace: &BrowserTrace, id: &str, created_at: &str, opts: &Opts
             caption: m.caption,
             delta: m.delta,
             frame_ref: None,
+            label: None,
         });
     }
     attach_frames(&mut idx, trace);

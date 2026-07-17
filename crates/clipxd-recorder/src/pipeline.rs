@@ -45,7 +45,10 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
 /// **Phase 1 of an async ingest (Loom-style):** copy the video in and write a minimal index
 /// with `status: enriching` so the clip is *immediately* watchable, listable, and shareable —
 /// before any (slow) OCR/captioning runs. Fast: just a probe + a file copy. Returns the clip dir.
-pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str) -> Result<PathBuf> {
+///
+/// `source` is what the clip is badged as in the library. [`enrich_clip`] reads it back out of
+/// this stub rather than re-deriving it, so it is set once, here.
+pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str, source: Source) -> Result<PathBuf> {
     ensure!(video.exists(), "no such video: {}", video.display());
     let clip_dir = out_dir.join(id);
     std::fs::create_dir_all(&clip_dir)?;
@@ -54,7 +57,7 @@ pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str) -> Result<
     let _ = std::fs::copy(video, clip_dir.join(format!("video.{ext}")));
     let mut index = Index::new(
         id,
-        Source::Screen,
+        source,
         Metadata {
             duration: info.duration_s,
             resolution: [info.width, info.height],
@@ -71,6 +74,19 @@ pub fn stub_clip(video: &Path, out_dir: &Path, id: &str, title: &str) -> Result<
     index.summary.tldr = "Indexing… the transcript, on-screen text, and captions are being built.".into();
     std::fs::write(clip_dir.join("index.json"), serde_json::to_string_pretty(&index)?)?;
     Ok(clip_dir)
+}
+
+/// What [`stub_clip`] badged this clip as, read back from the stub it wrote.
+///
+/// `enrich_clip` rebuilds the index from scratch, so without this it would re-stamp every clip
+/// `Screen` — silently re-badging tunneled imports (and browser clips) as screen recordings
+/// after enrichment, however they were stubbed. Defaults to `Screen`, which is what a missing
+/// or unreadable stub meant before this existed.
+fn stub_source(clip_dir: &Path) -> Source {
+    std::fs::read_to_string(clip_dir.join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Index>(&s).ok())
+        .map_or(Source::Screen, |i| i.source)
 }
 
 /// Promote an instant-link `status: recording` stub once its final video is on disk: fill
@@ -170,7 +186,7 @@ pub fn enrich_clip(
     });
     let (gated, enrichment) = visual?;
 
-    let mut index = map::to_index(id, Source::Screen, &info, title, &unix_secs(), &enrichment);
+    let mut index = map::to_index(id, stub_source(clip_dir), &info, title, &unix_secs(), &enrichment);
 
     // Interaction track: the param, else a cursor track saved alongside (async cursor POST).
     let track = if !events.is_empty() {
@@ -212,7 +228,8 @@ fn enrich_audio_only(
     let tx = audio.map(crate::transcribe::transcribe).unwrap_or_default();
     let mut index = Index::new(
         id,
-        Source::Screen,
+        stub_source(clip_dir), // same reasoning as enrich_clip: don't re-badge an import
+
         Metadata {
             duration: info.duration_s,
             resolution: [info.width, info.height],
@@ -298,4 +315,52 @@ fn title_of(p: &Path) -> String {
 
 pub(crate) fn unix_secs() -> String {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs().to_string()).unwrap_or_else(|_| "0".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_stub(dir: &Path, source: Source) {
+        let index = Index::new(
+            "clp_1",
+            source,
+            Metadata {
+                duration: 1.0,
+                resolution: [10, 10],
+                fps: 1.0,
+                created_at: "0".into(),
+                title: "t".into(),
+                description: String::new(),
+                app_focus: Vec::new(),
+                url_context: None,
+                has_video: true,
+            },
+        );
+        std::fs::write(dir.join("index.json"), serde_json::to_string(&index).unwrap()).unwrap();
+    }
+
+    /// `enrich_clip` rebuilds the index from scratch. If it re-derives the source instead of
+    /// reading back what the stub recorded, a tunneled import comes back badged `Screen` and
+    /// vanishes from the library's Import tab — the reported bug.
+    #[test]
+    fn enrich_reads_the_source_the_stub_recorded() {
+        let dir = std::env::temp_dir().join(format!("clipxd-stubsource-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_stub(&dir, Source::Import);
+        assert_eq!(stub_source(&dir), Source::Import);
+        write_stub(&dir, Source::Browser);
+        assert_eq!(stub_source(&dir), Source::Browser);
+        write_stub(&dir, Source::Screen);
+        assert_eq!(stub_source(&dir), Source::Screen);
+
+        // A missing/corrupt stub degrades to the pre-existing behaviour rather than failing.
+        std::fs::remove_file(dir.join("index.json")).unwrap();
+        assert_eq!(stub_source(&dir), Source::Screen);
+        std::fs::write(dir.join("index.json"), "not json").unwrap();
+        assert_eq!(stub_source(&dir), Source::Screen);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

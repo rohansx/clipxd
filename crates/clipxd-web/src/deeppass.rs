@@ -253,7 +253,7 @@ mod tests {
                 has_video: true,
             },
         );
-        idx.visual_timeline.push(VisualMoment { t: 5.0, salience: 1.0, caption: "later".into(), delta: "d".into(), frame_ref: None });
+        idx.visual_timeline.push(VisualMoment { t: 5.0, salience: 1.0, caption: "later".into(), delta: "d".into(), frame_ref: None, label: None });
         idx.on_screen_text.push(OnScreenText { start: 1.0, end: 1.0, text: "earlier".into(), source: TextKind::Ocr, bbox: None });
         let ctx = build_context(&idx);
         let earlier_pos = ctx.find("earlier").unwrap();

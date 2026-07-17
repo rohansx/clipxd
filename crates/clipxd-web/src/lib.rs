@@ -71,10 +71,12 @@ fn mint_clip_id() -> String {
     format!("clp_{stamp:016x}{salt:08x}")
 }
 
+pub mod ask;
 pub mod auth;
 pub mod deeppass;
 pub mod docgen;
 pub mod emphasis;
+pub mod label;
 pub mod llm;
 pub mod mcp;
 pub mod preview_gif;
@@ -971,7 +973,17 @@ fn agent_markdown(idx: &Index, id: &str) -> String {
     if !idx.visual_timeline.is_empty() {
         let _ = writeln!(md, "## Salient moments ({})\n", idx.visual_timeline.len());
         for m in idx.visual_timeline.iter().take(CAP) {
-            let _ = writeln!(md, "- [{}] {} _(delta: {})_", ts(m.t), m.caption, m.delta);
+            // Lead with the label when the label pass named this beat, but keep the caption
+            // behind it — an agent wants the beat name to navigate by and the caption as the
+            // grounding for it.
+            match m.label.as_deref().filter(|l| !l.trim().is_empty()) {
+                Some(label) => {
+                    let _ = writeln!(md, "- [{}] **{}** — {} _(delta: {})_", ts(m.t), label, m.caption, m.delta);
+                }
+                None => {
+                    let _ = writeln!(md, "- [{}] {} _(delta: {})_", ts(m.t), m.caption, m.delta);
+                }
+            }
         }
         if idx.visual_timeline.len() > CAP {
             let _ = writeln!(md, "- … {} more moments in `index.json`", idx.visual_timeline.len() - CAP);
@@ -1011,9 +1023,28 @@ struct StageQuery {
     seq: u32,
 }
 
+/// `GET /clip/:id/query` — a grounded, cited answer to a question about the clip.
+///
+/// Two-tier: synthesize with an LLM when a backend is configured (server- or owner-supplied),
+/// fall back to `query::query_clip`'s deterministic keyword retrieval on any failure and when
+/// there is no key at all. The response shape is identical either way, so the SPA, the share
+/// page's ask box, and the cross-library chat all get the upgrade with no client change — and a
+/// local-first box with no key behaves exactly as it does today.
+///
+/// This does put an LLM round-trip on a GET, which the indexing-time passes deliberately avoid.
+/// `docgen` already accepts that tradeoff for a per-ask output, and an ask *is* a per-ask
+/// output; `llm::complete_with_keys` caps it at 60s.
 async fn get_query(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<Qs>) -> Result<Json<serde_json::Value>, WebErr> {
     let idx = load_index(&s, &id).await?;
-    let a = query::query_clip(&idx, p.q.as_deref().unwrap_or(""));
+    let q = p.q.as_deref().unwrap_or("");
+    let (nvidia_key, gemini_key) = owner_llm_keys(&s.auth, &id);
+    if !q.trim().is_empty() && (nvidia_key.is_some() || gemini_key.is_some() || llm::any_backend_configured()) {
+        match ask::answer(&idx, q, nvidia_key.as_deref(), gemini_key.as_deref()).await {
+            Ok((text, citations)) => return Ok(Json(serde_json::json!({ "text": text, "citations": citations }))),
+            Err(e) => eprintln!("ask for {id}: {e:#} (falling back to deterministic query)"),
+        }
+    }
+    let a = query::query_clip(&idx, q);
     Ok(Json(serde_json::json!({ "text": a.text, "citations": a.citations })))
 }
 
@@ -1252,7 +1283,7 @@ async fn ingest_bytes(s: AppState, user: Option<AuthUser>, body: Bytes, incremen
             std::fs::create_dir_all(dir.as_path())?;
             let tmp = std::env::temp_dir().join(format!("clipxd-ingest-{id}.webm"));
             std::fs::write(&tmp, &body)?;
-            let clip_dir = clipxd_recorder::stub_clip(&tmp, dir.as_path(), &id, "Screen recording")?;
+            let clip_dir = clipxd_recorder::stub_clip(&tmp, dir.as_path(), &id, "Screen recording", clipxd_index::Source::Screen)?;
             let _ = std::fs::remove_file(&tmp);
             Ok((id, clip_dir.join("video.webm")))
         })
@@ -1403,6 +1434,17 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
                 eprintln!("emphasis pass for {id}: {e:#} (continuing)");
             }
         }
+        // Moment-label pass: collapses the captioner's per-keyframe restatements into the few
+        // distinct beats a viewer navigates by, and names each one. Unconditional like
+        // auto-title rather than gated behind CLIPXD_DEEP_PASS — it's one small prompt and one
+        // small JSON reply, and a readable outline is the product, not a nice-to-have. Runs
+        // BEFORE the deep pass so the tldr/chapters synthesize from deduped moments instead of
+        // a dozen rewordings of one shot.
+        if has_llm_key {
+            if let Err(e) = label::run(&clip_dir, &id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
+                eprintln!("label pass for {id}: {e:#} (continuing)");
+            }
+        }
         // Optional Tier-2 deep pass (NVIDIA/Gemini text-context → title/tldr/chapters). Off
         // unless CLIPXD_DEEP_PASS=1 + a backend key (server- or owner-supplied) are available —
         // the local-first default sends nothing anywhere. Runs before the final mirror so the
@@ -1418,6 +1460,28 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
             }
         }
     });
+}
+
+/// Carry the fields [`clipxd_recorder::enrich_clip`] can't rebuild back onto the index it just
+/// rewrote from scratch: the LLM-derived library-card description (the auto-title pass won't
+/// regenerate it for a clip that already has a real title) and the user's own saved caption
+/// design. Only fills gaps — never stomps a value the fresh index already carries.
+fn restore_across_enrich(clip_dir: &std::path::Path, description: &str, subtitle_style: Option<clipxd_index::SubtitleStyle>) {
+    if description.is_empty() && subtitle_style.is_none() {
+        return;
+    }
+    let path = clip_dir.join("index.json");
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+            if idx.metadata.description.is_empty() {
+                idx.metadata.description = description.to_string();
+            }
+            if idx.subtitle_style.is_none() {
+                idx.subtitle_style = subtitle_style;
+            }
+            let _ = std::fs::write(&path, serde_json::to_string_pretty(&idx).unwrap_or_default());
+        }
+    }
 }
 
 /// Flip a clip's index to `status: partial` on disk — the honest "enrichment died but the
@@ -1766,11 +1830,16 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
     } else {
         EventTrack::default()
     };
-    let title = std::fs::read_to_string(clip_dir.join("index.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Index>(&s).ok())
-        .map(|i| i.metadata.title)
-        .unwrap_or_else(|| "Screen recording".to_string());
+    // `enrich_clip` rebuilds index.json from scratch, so anything not derived from the video is
+    // gone unless it is carried across by hand. `title` always has been; `description` is
+    // LLM-derived but the auto-title pass below will NOT regenerate it (its guard skips a clip
+    // that already has a real title), and `subtitle_style` is the user's own saved caption
+    // design — neither is rebuildable, so both have to survive the round-trip too.
+    let prev: Option<Index> =
+        std::fs::read_to_string(clip_dir.join("index.json")).ok().and_then(|s| serde_json::from_str::<Index>(&s).ok());
+    let title = prev.as_ref().map(|i| i.metadata.title.clone()).unwrap_or_else(|| "Screen recording".to_string());
+    let prev_description = prev.as_ref().map(|i| i.metadata.description.clone()).unwrap_or_default();
+    let prev_subtitle_style = prev.as_ref().and_then(|i| i.subtitle_style.clone());
     // Re-stub so the SPA sees status=enriching while we work.
     let mut new_index_json: Option<String> = None;
     if let Ok(idx_str) = std::fs::read_to_string(clip_dir.join("index.json")) {
@@ -1789,13 +1858,37 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
     let bg_dir = clip_dir.clone();
     let bg_storage = s.storage.clone();
     let caption_source = owner_caption_source(&s.auth, &id);
+    // Same BYOK resolution as spawn_phase2 — resolved here because `s` doesn't cross the spawn.
+    let (nvidia_key, gemini_key) = owner_llm_keys(&s.auth, &id);
     tokio::spawn(async move {
-        if let Err(e) = clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0, caption_source) {
-            eprintln!("background re-enrich failed for {bg_id}: {e:#}");
-            if let Ok(s) = std::fs::read_to_string(bg_dir.join("index.json")) {
-                if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
-                    idx.status = clipxd_index::Status::Partial;
-                    let _ = std::fs::write(bg_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+        match clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0, caption_source) {
+            Err(e) => {
+                eprintln!("background re-enrich failed for {bg_id}: {e:#}");
+                if let Ok(s) = std::fs::read_to_string(bg_dir.join("index.json")) {
+                    if let Ok(mut idx) = serde_json::from_str::<Index>(&s) {
+                        idx.status = clipxd_index::Status::Partial;
+                        let _ = std::fs::write(bg_dir.join("index.json"), serde_json::to_string_pretty(&idx).unwrap_or_default());
+                    }
+                }
+            }
+            Ok(_) => {
+                restore_across_enrich(&bg_dir, &prev_description, prev_subtitle_style);
+                // Re-run the same LLM passes spawn_phase2 runs. Without this a re-enrich is a
+                // one-way strip of every LLM-derived field — the fresh index comes back with
+                // no emphasis and no moment labels, and nothing would ever put them back.
+                // Runs before the re-mirror so the merged index is what lands in S3.
+                if nvidia_key.is_some() || gemini_key.is_some() || llm::any_backend_configured() {
+                    if let Err(e) =
+                        deeppass::generate_title_and_description(&bg_dir, &bg_id, nvidia_key.as_deref(), gemini_key.as_deref()).await
+                    {
+                        eprintln!("re-enrich auto-title for {bg_id}: {e:#} (continuing)");
+                    }
+                    if let Err(e) = label::run(&bg_dir, &bg_id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
+                        eprintln!("re-enrich label pass for {bg_id}: {e:#} (continuing)");
+                    }
+                    if let Err(e) = emphasis::run(&bg_dir, &bg_id, nvidia_key.as_deref(), gemini_key.as_deref()).await {
+                        eprintln!("re-enrich emphasis pass for {bg_id}: {e:#} (continuing)");
+                    }
                 }
             }
         }
@@ -1891,6 +1984,7 @@ async fn post_local_captions(
             caption: text.chars().take(2000).collect(),
             delta: "local_caption".to_string(),
             frame_ref: None,
+            label: None,
         });
         added += 1;
     }
@@ -2074,7 +2168,8 @@ async fn ingest_tunneled(
 
     // Phase 1b: stub_clip (fast, ~1s) + ownership binding, on a blocking thread.
     let stub_result = tokio::task::spawn_blocking(move || -> anyhow::Result<std::path::PathBuf> {
-        let clip_dir = clipxd_recorder::stub_clip(&tmp_clone, dir_thread.as_path(), &id_thread, "Imported via tunnel")?;
+        let clip_dir =
+            clipxd_recorder::stub_clip(&tmp_clone, dir_thread.as_path(), &id_thread, "Imported via tunnel", clipxd_index::Source::Import)?;
         if let (Some(db), Some(email)) = (db.as_ref(), owner_email.as_ref()) {
             if let Ok(Some(u)) = db.find_by_email(email) {
                 let _ = db.set_clip_owner(&id_thread, u.id);
@@ -2837,15 +2932,32 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
     // Prefer the deep pass's real tl;dr (content-aware — "what happens in this recording")
     // over the generic stream-count line, so a Slack/Notion/Twitter unfurl actually describes
     // the clip instead of just proving it was indexed.
+    // Describe the clip, not the pipeline. This is the Slack/Notion unfurl text, so raw stream
+    // counts ("3 on-screen text spans, 12 event(s)") ship to a channel before anyone clicks.
+    // The auto-title pass's one-line description is the right second choice — it runs on every
+    // clip with a key, unlike the tl;dr, which needs the opt-in deep pass.
     let og_desc = if !idx.summary.tldr.trim().is_empty() {
         html_escape(idx.summary.tldr.trim())
+    } else if !idx.metadata.description.trim().is_empty() {
+        html_escape(idx.metadata.description.trim())
     } else {
-        format!(
-            "Watch \"{}\" on clipxd. {} on-screen text spans, {} event(s). Indexed and agent-queryable.",
-            title, idx.on_screen_text.len(), idx.event_track.len()
-        )
+        format!("Watch \"{title}\" on clipxd.")
     };
     let dur = idx.metadata.duration;
+
+    // Hug the clip's real aspect instead of forcing 16:9 — a 4:3 source was rendering inside a
+    // black pillarboxed void. Server-side rather than letting the video report its own ratio:
+    // with preload="metadata" the intrinsic size is unknown at first paint and <video> defaults
+    // to 300x150, so the layout would shift once metadata arrives.
+    // ponytail: 240px is the topbar+title+meta chrome above the player — a calibration knob,
+    // retune it if the hero grows. The 0x0 recording-in-progress stub falls through to the
+    // CSS's own 16/9 default.
+    let [vw, vh] = idx.metadata.resolution;
+    let player_style = if vw > 0 && vh > 0 {
+        format!(r#" style="--ar:{vw}/{vh};--ar-cap:calc((100svh - 240px) * {vw} / {vh})""#)
+    } else {
+        String::new()
+    };
 
     let main = share_main(id, idx);
     let aside = share_aside(id, idx, url, &qr);
@@ -2892,9 +3004,8 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
       <span class="pill sodium">{dur_lbl}</span>
       <span class="pill status-pill">{status}</span>
       <span class="pill ghost" title="views">{views_lbl} view{views_plural}</span>
-      <a class="pill ghost" href="/clip/{id}/index.json" target="_blank">index.json</a>
     </div>
-    <div class="player">
+    <div class="player"{player_style}>
       <video src="/clip/{id}/video" controls poster="{url}/thumbnail" preload="metadata" playsinline></video>
     </div>
   </main>
@@ -2926,12 +3037,26 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
         status    = share_status_pill(&idx.status),
         views_lbl = format_view_count(views),
         views_plural = if views == 1 { "" } else { "s" },
+        player_style = player_style,
         main      = main,
         aside     = aside,
         url       = url,
         id        = id,
         title     = title,
     )
+}
+
+/// Cut `s` to at most `n` characters on a whole-character boundary, adding an ellipsis when it
+/// actually cut.
+///
+/// Must run **before** `html_escape`, never after: `html_escape` expands `&` to `&amp;`, so
+/// truncating the escaped string can slice an entity in half (rendering a literal `&am…`) and
+/// makes the budget mean escaped chars rather than the real ones a reader sees.
+fn truncate_chars(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    format!("{}…", s.chars().take(n).collect::<String>().trim_end())
 }
 
 /// One-line duration like "0:33" / "1:02:14".  Used in the hero meta pill.
@@ -2995,23 +3120,65 @@ fn share_topbar(url: &str) -> String {
 fn share_main(id: &str, idx: &Index) -> String {
     let mut s = String::new();
 
+    // Summary first. A first-time recipient wants "what is this?" before "what happens at
+    // 0:18?", and the tl;dr is the best artifact the pipeline produces. It already goes out in
+    // the Slack/Notion unfurl (og:description) — a recipient who reads it there and then finds
+    // it missing on the page is the sharpest symptom of the page throwing it away. Conditional:
+    // tldr is empty unless the Tier-2 deep pass ran, so a key-less deploy degrades to today's
+    // layout. Already capped at TLDR_MAX (280) by clean_index, so it needs no truncation.
+    if !idx.summary.tldr.trim().is_empty() {
+        s.push_str(&format!(
+            r#"<section class="card tldr"><h3>Summary</h3><p class="tldr-body">{}</p></section>"#,
+            html_escape(idx.summary.tldr.trim()),
+        ));
+    }
+
+    // Chapters — the deep pass's own segmentation. Rendered at len >= 1, not >= 2: deeppass
+    // already drops empty titles, and one real chapter still beats zero. Reuses the same
+    // `#t=` seek links the outline uses, so the existing handler picks them up for free.
+    if !idx.summary.chapters.is_empty() {
+        let mut h = String::from(r#"<section class="card chapters"><h3>Chapters</h3><ol class="chapters-list">"#);
+        for c in &idx.summary.chapters {
+            h.push_str(&format!(
+                r##"<li><a href="#t={t}"><span class="ts">{ts}</span><span class="lbl">{title}</span></a></li>"##,
+                t = c.start,
+                ts = fmt_duration(c.start),
+                title = html_escape(&truncate_chars(c.title.trim(), 120)),
+            ));
+        }
+        h.push_str("</ol></section>");
+        s.push_str(&h);
+    }
+
     // Outline — a Fathom-style "moments at a glance" that reads as a story arc for the
     // clip rather than a flat dump of OCR lines.  Each moment has a real frame
-    // thumbnail, its caption, the timestamp, and a click-to-seek target.  The current
-    // moment is highlighted live (see the JS that follows).  Always shown — even an
+    // thumbnail, its label (or caption), the timestamp, and a click-to-seek target.  The
+    // current moment is highlighted live (see the JS that follows).  Always shown — even an
     // empty timeline falls back to a single "no moments captured yet" row so the
     // layout doesn't shift between indexed and not-yet-indexed clips.
-    let mut h = String::from(r#"<section class="card outline"><h3>Outline</h3><ol class="outline-list" id="outlineList">"#);
+    let mut rows = String::new();
+    let mut n_rows = 0usize;
     if idx.visual_timeline.is_empty() {
-        h.push_str(r#"<li class="outline-empty">No moments captured yet — the clip is still being indexed.</li>"#);
+        rows.push_str(r#"<li class="outline-empty">No moments captured yet — the clip is still being indexed.</li>"#);
     } else {
-        for (i, m) in idx.visual_timeline.iter().enumerate() {
-            let cap = html_escape(&m.caption);
-            // Trim very long captions to keep the surface tidy.
-            let cap_short = if cap.chars().count() > 180 {
-                let cut: String = cap.chars().take(180).collect();
-                format!("{cut}…")
-            } else { cap };
+        let mut prev: Option<&str> = None;
+        for m in idx.visual_timeline.iter() {
+            // The label pass names the beat; the caption is the fallback when it hasn't run
+            // (no key, failure, or a clip indexed before it existed). `filter` also covers a
+            // `Some("")` from a degenerate reply.
+            let raw = m.label.as_deref().filter(|l| !l.trim().is_empty()).unwrap_or(&m.caption);
+            // ponytail: clean_index already dedupes on write, but it only ran on the index as
+            // it was written — a clip indexed before its bars were tuned still reaches here
+            // with restatements. 0.6 == the near-in-time bar clean_index uses.
+            if prev.is_some_and(|p| clipxd_index::caption_similarity(p, raw) >= 0.6) {
+                continue;
+            }
+            prev = Some(raw);
+            // Truncate BEFORE escaping: cutting escaped HTML at a fixed char count lands
+            // mid-entity ("&am…" instead of "&"), and the budget would silently mean escaped
+            // chars rather than real ones. Labels are short by construction, so in practice
+            // this only ever trims the caption fallback.
+            let cap = html_escape(&truncate_chars(raw, 180));
             // The thumbnail (frame_ref → /clip/:id/frames/<name>) gives the outline its
             // visual rhythm; a missing frame falls back to a neutral tile so the row
             // doesn't break the grid.
@@ -3023,18 +3190,63 @@ fn share_main(id: &str, idx: &Index) -> String {
                 }
                 None => r#"<span class="outline-thumb outline-thumb-empty" aria-hidden></span>"#.to_string(),
             };
-            h.push_str(&format!(
-                r##"<li class="outline-row" data-t="{t}" id="outline-{i}"><a href="#t={t}" class="outline-link">{thumb}<span class="outline-ts">{ts}</span><span class="outline-cap">{cap}</span></a></li>"##,
+            // `title` carries the full caption on hover — native tooltip, no JS, and it makes
+            // the truncation non-lossy for the first time now that a label can be the visible
+            // text and the caption its evidence.
+            rows.push_str(&format!(
+                r##"<li class="outline-row" data-t="{t}"><a href="#t={t}" class="outline-link" title="{full}">{thumb}<span class="outline-ts">{ts}</span><span class="outline-cap">{cap}</span></a></li>"##,
                 t = m.t,
                 ts = fmt_duration(m.t),
-                cap = cap_short,
+                cap = cap,
+                full = html_escape(m.caption.trim()),
                 thumb = thumb_html,
-                i = i,
             ));
+            n_rows += 1;
         }
     }
-    h.push_str("</ol></section>");
-    s.push_str(&h);
+    // Chapters and the outline both answer "what happens when". When the deep pass gave us real
+    // chapters they win, and the full moment list folds away behind a native <details> — no JS,
+    // no new CSP surface. The live row-highlight still applies underneath, so opening it
+    // mid-playback lands on the current moment.
+    if idx.summary.chapters.is_empty() {
+        s.push_str(&format!(
+            r#"<section class="card outline"><h3>Outline</h3><ol class="outline-list" id="outlineList">{rows}</ol></section>"#
+        ));
+    } else {
+        s.push_str(&format!(
+            r#"<section class="card outline"><details class="outline-more"><summary class="outline-summary">All moments ({n_rows})</summary><ol class="outline-list" id="outlineList">{rows}</ol></details></section>"#
+        ));
+    }
+
+    // Transcript — what was actually said, so it outranks the machine-extracted streams below
+    // it. Only when present.
+    if !idx.transcript.is_empty() {
+        let mut h = String::from(r#"<section class="card transcript"><h3>Transcript</h3><div class="transcript-body">"#);
+        for t in &idx.transcript {
+            h.push_str(&format!(
+                r##"<p><a href="#t={}" class="ts">{}</a> <span class="line">{}</span></p>"##,
+                t.start, fmt_duration(t.start), html_escape(&t.text),
+            ));
+        }
+        h.push_str("</div></section>");
+        s.push_str(&h);
+    }
+
+    // On-screen text — only when present; the SPA already filters noise server-side.
+    if !idx.on_screen_text.is_empty() {
+        let mut h = String::from(r#"<section class="card ost"><h3>On-screen text</h3><ol class="ost-list">"#);
+        for t in &idx.on_screen_text {
+            // Truncate then escape — same entity-splitting bug as the outline, and OCR text is
+            // exactly where a stray `&` or `<` actually shows up.
+            let txt_short = html_escape(&truncate_chars(&t.text, 140));
+            h.push_str(&format!(
+                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
+                t.start, fmt_duration(t.start), txt_short,
+            ));
+        }
+        h.push_str("</ol></section>");
+        s.push_str(&h);
+    }
 
     // Events — click/key/etc.  Empty? Skip.
     if !idx.event_track.is_empty() {
@@ -3047,38 +3259,6 @@ fn share_main(id: &str, idx: &Index) -> String {
             ));
         }
         h.push_str("</ol></section>");
-        s.push_str(&h);
-    }
-
-    // On-screen text — only when present; the SPA already filters noise server-side.
-    if !idx.on_screen_text.is_empty() {
-        let mut h = String::from(r#"<section class="card ost"><h3>On-screen text</h3><ol class="ost-list">"#);
-        for t in &idx.on_screen_text {
-            let txt = html_escape(&t.text);
-            // Truncate long OCR lines for layout sanity.
-            let txt_short = if txt.chars().count() > 140 {
-                let cut: String = txt.chars().take(140).collect();
-                format!("{cut}…")
-            } else { txt };
-            h.push_str(&format!(
-                r##"<li><a href="#t={}"><span class="ts">{}</span><span class="lbl">{}</span></a></li>"##,
-                t.start, fmt_duration(t.start), txt_short,
-            ));
-        }
-        h.push_str("</ol></section>");
-        s.push_str(&h);
-    }
-
-    // Transcript — only when present.
-    if !idx.transcript.is_empty() {
-        let mut h = String::from(r#"<section class="card transcript"><h3>Transcript</h3><div class="transcript-body">"#);
-        for t in &idx.transcript {
-            h.push_str(&format!(
-                r##"<p><a href="#t={}" class="ts">{}</a> <span class="line">{}</span></p>"##,
-                t.start, fmt_duration(t.start), html_escape(&t.text),
-            ));
-        }
-        h.push_str("</div></section>");
         s.push_str(&h);
     }
 
@@ -3116,7 +3296,7 @@ fn humanize_event(e: &clipxd_index::Event) -> (String, &'static str) {
             let pos = data.get("x").and_then(|v| v.as_f64())
                 .zip(data.get("y").and_then(|v| v.as_f64()));
             let (label, cls) = match pos {
-                Some((x, y)) => (format!("{} at ({:.0}%, {:.0}%)", capitalize(k), x * 100.0, y * 100.0), "ev-click"),
+                Some((x, y)) => (format!("{} at ({:.0}%, {:.0}%)", k, x * 100.0, y * 100.0), "ev-click"),
                 None => (t.clone(), "ev-other"),
             };
             (label, cls)
@@ -3135,24 +3315,16 @@ fn humanize_event(e: &clipxd_index::Event) -> (String, &'static str) {
     }
 }
 
-fn capitalize(s: &str) -> &str {
-    // one-liner: leave first char as-is, but uppercase it
-    let mut chars = s.chars();
-    if let Some(first) = chars.next() {
-        let up: String = first.to_uppercase().collect();
-        // SAFETY: `s` is &str, so taking first as chars + the rest as &str is fine
-        let rest_start = first.len_utf8();
-        // We can't return a slice mixed from to_uppercase() output + original, so just
-        // return the original (the humanizer doesn't depend on capitalization here).
-        s  // ignore; call site only uses the value for display, lowercase is fine
-    } else {
-        s
-    }
-}
-
 /// ---------------- aside column ----------------
 fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
     let title = html_escape(&idx.metadata.title);
+    // Follow the real status rather than asserting. This sat three sections below a pill
+    // reading "indexing…" while claiming the clip was fully indexed — the page contradicting
+    // itself to the one person who can't tell which half is lying.
+    let ask_hint = match idx.status {
+        clipxd_index::Status::Complete => "The clip is fully indexed — ask anything about what was on screen.",
+        _ => "Still indexing — answers may be incomplete.",
+    };
     let agent_md_url = format!("{url}/agent.md");
     let gif_url = format!("{url}/preview.gif");
     let embed = format!(
@@ -3169,7 +3341,7 @@ fn share_aside(id: &str, idx: &Index, url: &str, qr: &str) -> String {
     <span class="ask-dot"></span>
     <b>Ask an agent</b>
   </div>
-  <p class="ask-hint">The clip is fully indexed — ask anything about what was on screen.</p>
+  <p class="ask-hint">{ask_hint}</p>
   <div class="ask-row">
     <input id="q" placeholder="What was the error at 0:41?" />
     <button class="ask-btn" id="askBtn" type="button">Ask</button>
@@ -3415,9 +3587,15 @@ a:hover { text-decoration: underline; }
 .pill.signal .dot { background: var(--c-signal); box-shadow: 0 0 8px var(--c-signal); }
 .pill.status-pill { background: var(--signal-wash); color: var(--signal-text); }
 
+/* The ratio comes from the clip's own resolution (--ar, emitted per-clip); 16/9 is only the
+   fallback for a stub whose probe hasn't landed yet. --ar-cap caps the *width* to the width
+   whose derived height still fits the fold — capping height instead would fight aspect-ratio
+   and re-letterbox the video inside its own box. */
 .player {
   position: relative; border-radius: var(--r); overflow: hidden;
-  box-shadow: var(--clay); background: #000; aspect-ratio: 16/9;
+  box-shadow: var(--clay); background: #000;
+  aspect-ratio: var(--ar, 16/9);
+  max-width: var(--ar-cap, 100%); margin-inline: auto;
 }
 .player video { width: 100%; height: 100%; display: block; }
 
@@ -3490,6 +3668,28 @@ a:hover { text-decoration: underline; }
 .events-list .ev-nav    { color: var(--text-2); }
 .events-list .ev-net    { color: var(--text-2); }
 .events-list .lbl { color: var(--text-2); font-size: 13px; }
+
+/* summary — the first thing a recipient reads, so it gets body-copy size, not list size */
+.tldr-body { font-size: 15px; line-height: 1.6; color: var(--text); }
+
+/* chapters — same row shape as the on-screen-text list, tuned up a size since these are
+   authored titles rather than extracted noise */
+.chapters-list { list-style: none; display: grid; gap: 3px; }
+.chapters-list a {
+  display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: baseline;
+  padding: 7px 10px; border-radius: var(--r-sm); color: var(--text); text-decoration: none; font-size: 14px;
+}
+.chapters-list a:hover { background: var(--panel-2); text-decoration: none; }
+.chapters-list .ts { font: 500 12px var(--font-mono, "JetBrains Mono", monospace); color: var(--signal-text); }
+
+/* collapsed outline (only when chapters already answer "what happens when") */
+.outline-summary {
+  font: 600 11px/1 var(--font-mono, "JetBrains Mono", monospace);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3);
+  cursor: pointer; padding: 2px 0; list-style-position: inside;
+}
+.outline-summary:hover { color: var(--text-2); }
+.outline-more[open] .outline-summary { margin-bottom: 12px; }
 
 /* on-screen text */
 .ost-list { list-style: none; display: grid; gap: 3px; max-height: 240px; overflow-y: auto; padding-right: 4px; }
@@ -3867,7 +4067,10 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 
 #[cfg(test)]
 mod tests {
-    use super::{format_view_count, merge_browser_trace_into_clip, mint_clip_id, share_base, share_slug_for, short_tail, slugify_title, try_claim, ClipClaims};
+    use super::{
+        format_view_count, html_escape, merge_browser_trace_into_clip, mint_clip_id, share_base, share_slug_for, short_tail,
+        slugify_title, truncate_chars, try_claim, ClipClaims,
+    };
     use std::sync::{Arc, Mutex as StdMutex};
 
     #[test]
@@ -3982,6 +4185,137 @@ mod tests {
         assert_eq!(share_slug_for("!!!", "clp_abcdef12"), "clip-ef12");
         // Run of dashes inside the title collapses to one (slug stays URL-safe)
         assert_eq!(share_slug_for("a----b", "clp_abcdef12"), "a-b-ef12");
+    }
+
+    fn outline_idx(moments: Vec<clipxd_index::VisualMoment>) -> clipxd_index::Index {
+        use clipxd_index::{Metadata, Source};
+        let mut idx = clipxd_index::Index::new(
+            "clp_1",
+            Source::Import,
+            Metadata {
+                duration: 30.0,
+                resolution: [640, 480],
+                fps: 30.0,
+                created_at: "0".into(),
+                title: "t".into(),
+                description: String::new(),
+                app_focus: vec![],
+                url_context: None,
+                has_video: true,
+            },
+        );
+        idx.visual_timeline = moments;
+        idx
+    }
+
+    fn moment(t: f64, caption: &str, label: Option<&str>) -> clipxd_index::VisualMoment {
+        clipxd_index::VisualMoment {
+            t,
+            salience: 0.5,
+            caption: caption.into(),
+            delta: "keyframe".into(),
+            frame_ref: None,
+            label: label.map(String::from),
+        }
+    }
+
+    #[test]
+    fn player_hugs_the_clips_real_aspect_and_falls_back_for_a_stub() {
+        // The reported bug: a 4:3 clip rendered pillarboxed inside a forced-16:9 black void.
+        let mut idx = outline_idx(vec![]);
+        idx.metadata.resolution = [640, 480];
+        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+        assert!(html.contains("--ar:640/480"), "player must hug the real ratio");
+        assert!(html.contains("--ar-cap:calc((100svh - 240px) * 640 / 480)"), "and stay inside the fold");
+
+        // A recording-in-progress stub has no probe yet — fall through to the CSS 16/9 default
+        // rather than emitting a degenerate 0/0 ratio.
+        idx.metadata.resolution = [0, 0];
+        let stub = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+        assert!(!stub.contains("--ar:"), "a 0x0 stub must not emit a ratio at all");
+        assert!(stub.contains(r#"<div class="player">"#), "and renders the bare player");
+    }
+
+    #[test]
+    fn share_page_surfaces_the_tldr_and_chapters_it_already_has() {
+        let mut idx = outline_idx(vec![moment(5.0, "a terminal window running cargo build", None)]);
+        // No deep pass → no summary card, and the outline stays expanded (today's layout).
+        let bare = super::share_main("clp_1", &idx);
+        assert!(!bare.contains("card tldr"), "nothing to summarize yet: {bare}");
+        assert!(!bare.contains("outline-more"), "with no chapters the outline must not collapse");
+
+        idx.summary.tldr = "The build fails on a missing feature flag.".into();
+        idx.summary.chapters = vec![clipxd_index::Chapter { start: 0.0, title: "Reproducing the failure".into() }];
+        let full = super::share_main("clp_1", &idx);
+        assert!(full.contains("The build fails on a missing feature flag."), "the tldr is the page's lead: {full}");
+        assert!(full.contains("Reproducing the failure"), "chapters must render at len 1: {full}");
+        // Summary leads, then chapters, then the (now collapsed) moment list.
+        let (tldr_at, ch_at, ol_at) =
+            (full.find("card tldr").unwrap(), full.find("card chapters").unwrap(), full.find("card outline").unwrap());
+        assert!(tldr_at < ch_at && ch_at < ol_at, "recipient-first ordering: {full}");
+        assert!(full.contains("outline-more"), "chapters already answer 'what happens when' — fold the moments away");
+    }
+
+    #[test]
+    fn outline_prefers_the_label_and_falls_back_to_the_caption() {
+        let html = super::share_main(
+            "clp_1",
+            &outline_idx(vec![
+                moment(1.0, "a young man stands in front of a metal fence", Some("Introduces the elephants")),
+                moment(10.0, "a terminal window running cargo build", None),
+                // A degenerate empty label must fall back rather than render a blank row.
+                moment(20.0, "a profile settings page with input fields", Some("   ")),
+            ]),
+        );
+        assert!(html.contains("Introduces the elephants"), "label should win: {html}");
+        assert!(html.contains("a terminal window running cargo build"), "caption is the fallback: {html}");
+        assert!(html.contains("a profile settings page"), "an empty label must fall back too: {html}");
+        // The caption stays reachable as the row's tooltip — the label scans, the caption grounds.
+        assert!(html.contains(r#"title="a young man stands in front of a metal fence""#), "{html}");
+    }
+
+    #[test]
+    fn outline_collapses_near_duplicate_adjacent_rows() {
+        // Defensive: clean_index only runs on write, so an index written before its bars were
+        // tuned still reaches the renderer with restatements of one held shot.
+        let html = super::share_main(
+            "clp_1",
+            &outline_idx(vec![
+                moment(18.0, "A young man with dark brown hair stands in front of a metal fence", None),
+                moment(18.4, "A young man with dark brown hair stands in front of a metal fence and looking at the camera", None),
+                moment(18.9, "A man with dark brown hair stands in front of a fence", None),
+                moment(25.0, "A terminal window running cargo build with compiler output", None),
+            ]),
+        );
+        assert_eq!(html.matches("outline-row").count(), 2, "the held shot should render once, plus the real cut: {html}");
+    }
+
+    #[test]
+    fn truncate_before_escape_never_splits_an_entity() {
+        // The bug: escaping first, then cutting at a fixed char count, lands mid-entity. With a
+        // `&` at the cut point, `html_escape(..).take(n)` yields a literal "&am…" on the page.
+        // Truncating the raw string first means the budget counts characters a reader sees.
+        // 177 puts the `&` at char 178, so escaping expands it across the 180 boundary.
+        let s = format!("{}& tail", "a".repeat(177));
+        let escaped_then_cut: String = html_escape(&s).chars().take(180).collect();
+        assert!(escaped_then_cut.ends_with("&am"), "the old order really did split it: {escaped_then_cut}");
+
+        let cut_then_escaped = html_escape(&truncate_chars(&s, 180));
+        assert!(cut_then_escaped.contains("&amp;"), "entity must survive whole: {cut_then_escaped}");
+        assert!(!cut_then_escaped.contains("&am…"), "{cut_then_escaped}");
+    }
+
+    #[test]
+    fn truncate_chars_only_cuts_when_it_must() {
+        assert_eq!(truncate_chars("short", 180), "short");
+        // Exactly at the budget — no ellipsis.
+        assert_eq!(truncate_chars(&"a".repeat(180), 180), "a".repeat(180));
+        // One over — cuts and marks it.
+        let cut = truncate_chars(&"a".repeat(181), 180);
+        assert_eq!(cut.chars().count(), 181); // 180 + the ellipsis
+        assert!(cut.ends_with('…'));
+        // Multi-byte characters are counted as characters, not bytes, and never sliced apart.
+        assert_eq!(truncate_chars("日本語テキスト", 3), "日本語…");
     }
 
     // Regression coverage for the sweeper-vs-commit race a code review caught: two finalizers

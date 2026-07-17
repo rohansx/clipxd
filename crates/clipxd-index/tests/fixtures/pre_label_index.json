@@ -1,0 +1,4908 @@
+{
+  "clipxd_version": "2",
+  "id": "clp_18be6ed0c6b2a45b840422df",
+  "source": "screen",
+  "status": "complete",
+  "metadata": {
+    "duration": 0.0,
+    "resolution": [
+      1920,
+      1080
+    ],
+    "fps": 29.833334,
+    "created_at": "1782984918",
+    "title": "Developer records desktop showing ClipXD DevTools and Konsole",
+    "description": "The user runs a Lighthouse audit in Chrome DevTools showing NO_FCP errors while executing Rust cargo builds and Gemini API calls in Konsole.",
+    "has_video": true
+  },
+  "transcript": [],
+  "visual_timeline": [
+    {
+      "t": 6.75,
+      "salience": 1.0,
+      "caption": "A screenshot shows a dark interface with tabs and windows. On the left, a dark gray background displays a URL bar and browser window. On the right, a performance metrics panel shows red text labels for First Contentful Paint, Total Blocking Time, First Input Delay, Cumulative Layout Shift, and Cumulative Shift Value. The Performance metrics panel displays performance data including values for First Contentful Paint, Total Blocking Time, First Input Delay, Cumulative Layout Shift, and Cumulative Shift Value.",
+      "delta": "region_change",
+      "frame_ref": "frames/00028.jpg"
+    },
+    {
+      "t": 7.5,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including First Content Point, Total Blocking Time, Error, Best Content, Best SEO, Accessibility, Best Performance, and Performance score. The page indicates a performance score of 3.4 out of 5, with no errors. A warning box states there were issues affecting the load time. A URL is visible in the address bar.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00031.jpg"
+    },
+    {
+      "t": 7.75,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including first content point, total blocking time, cumulative point, error count, and cumulative point. The page shows a performance score of 0.0 out of 100, with no errors. The browser is Chrome, viewed on clipboard.com. The URL bar shows “clipboard.com”. The page includes red circular icons for performance metrics.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00032.jpg"
+    },
+    {
+      "t": 8.0,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including first content point, total blocking time, cumulative load, best content point, best load, and cumulative load. The page also shows error messages indicating issues with content and load. A browser window is visible on the left, showing a URL bar and tab bar. The right side of the screen shows additional performance metrics and error messages.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00033.jpg"
+    },
+    {
+      "t": 8.0,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including first content paint, total blocking time, cumulative layout shift, and last content paint. The page shows an error message: “There were issues affecting a line of content.” A warning box states: “The page did not paint any content. Please remove the browser window from the foreground behind the load indicator.” A link to clipboard.com is visible in the top right corner.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00033.jpg"
+    },
+    {
+      "t": 8.0,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including first content point, content point, content point, blocked loading time, total blocking time, cumulative load time, and cumulative load point. The page also shows best accessibility, best SEO, and best best practices. The URL in the browser bar is clip.com.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00033.jpg"
+    },
+    {
+      "t": 8.25,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including \"Total Contentful Paint (tfm),\" \"Errors,\" \"Blocking Time,\" \"Total Blocking Time,\" and \"Curulative Load Shift.\" The page also shows \"Best Performance,\" \"Accessibility,\" \"Best Performance,\" \"SEO,\" and \"Lighthouse\" options. A pop-up box indicates there were issues affecting the load time. A URL bar is visible at the top.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00034.jpg"
+    },
+    {
+      "t": 32.75,
+      "salience": 1.0,
+      "caption": "A screenshot shows a macOS system Library window. The left sidebar displays “Library,” “Recordings,” “Import,” “Settings,” and “File” options. The right sidebar shows “Library - clipboard,” “4 Clips,” “Recordings,” “Import,” “Settings,” and “File” options. The Library window displays four album art thumbnails with album titles and release dates: “4 Clips - [redacted],” “4 Clips - [redacted],” “4 Clips - [redacted],” and “4 Clips - [redacted].” Three album art thumbnails are visible in the main window: “4 Clips - [redacted],” “4 Clips - [redacted],” and “4 Clips - [redacted].” The time is 9:41 AM.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00132.jpg"
+    },
+    {
+      "t": 33.25,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web browser displaying a library page with four video thumbnails. The top-left thumbnail shows a video titled “Screen Recording” at 8:08. The top-right thumbnail shows a video titled “Screen Recording” at 8:43. The bottom-left thumbnail shows a video titled “Screen Recording” at 8:08. The bottom-right thumbnail shows a video titled “Screen Recording” at 8:43. The browser’s address bar shows “Library - clipwd.com”. The browser’s toolbar includes tabs for “Library”, “Clip”, “Video”, “Audio”, “Import”, and “Settings”. The video thumbnails are displayed in a grid layout.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00134.jpg"
+    },
+    {
+      "t": 34.25,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page displaying performance metrics, including 1st Content Pointful Error (red), Total Blocking Time (red), Curtainte Length (red), Curtaint Length (red), Curtaint (red), Curtaint (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red), Curtain (red),",
+      "delta": "state_settle",
+      "frame_ref": "frames/00138.jpg"
+    },
+    {
+      "t": 43.75,
+      "salience": 1.0,
+      "caption": "A terminal window displays multiple lines of code in a dark theme, predominantly black with white text. The top line reads “clip:claude=konsale,” followed by “claude=konsale” on the next line. Below are several lines of code, including “index.json in place” and “confer-opencode.” Other text includes “claude=konsale” on subsequent lines and mentions “claude=konsale” again. The terminal shows multiple tabs and windows, including “plugins,” “settings,” and “auto-update.logout.”",
+      "delta": "region_change",
+      "frame_ref": "frames/00176.jpg"
+    },
+    {
+      "t": 44.5,
+      "salience": 1.0,
+      "caption": "A terminal window displays multiple lines of code in a dark theme, primarily written in JavaScript. The top line reads “clip:claude=konsale,” and the subsequent lines show various operations including `index.json`, `confer-opencode`, `console.log`, and `console.error`. The terminal also shows standard file navigation and editing tools. The bottom line displays “Render permissions and view changes” with red and blue text indicating status updates.",
+      "delta": "state_settle",
+      "frame_ref": "frames/00179.jpg"
+    },
+    {
+      "t": 86.0,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web browser window displaying a text editor with lines of code. The text editor shows code snippets with comments and function definitions, including comments like “int main() { return 0; }” and “int main(void) { return 0; }”. The browser window also displays a title bar with tabs like “Home,” “File,” “Edit,” and “View,” and a URL bar showing “clipz.com”. A sidebar on the right lists “Clipz.com” and “Clipz.com: Sharing your clipboard.” A green box labeled “Clipz.com: Clipboard” is also visible.",
+      "delta": "region_change",
+      "frame_ref": "frames/00345.jpg"
+    },
+    {
+      "t": 86.75,
+      "salience": 1.0,
+      "caption": "A screenshot shows a web page in Chrome browser displaying a web page titled \"clip.com\" in the top left corner. The browser window on the right shows a black sidebar with multiple tabs and elements, including text, images, and code snippets. The visible text includes \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4.4\", \"1.4.4",
+      "delta": "state_settle",
+      "frame_ref": "frames/00348.jpg"
+    },
+    {
+      "t": 87.25,
+      "salience": 1.0,
+      "caption": "A screenshot shows a Mac OS X Terminal window displaying a web page with a title bar reading “Recordings” and a URL “http://localhost:3000/web/recordings”. The browser’s URL bar shows “Library” and a URL starting with “http://localhost:3000/web/”. The “Recordings” tab is active, and the browser’s URL bar displays “Library” and a URL starting with “http://localhost:3000/web/”. A waveform graphic is visible below the URL bar. Multiple open tabs are visible in the browser’s tab bar, including “MCP server - connected”. The “read-ons-form-on-top-on” option is enabled in the top-right corner.",
+      "delta": "region_change",
+      "frame_ref": "frames/00350.jpg"
+    },
+    {
+      "t": 88.0,
+      "salience": 1.0,
+      "caption": "A screenshot shows a recording interface in a macOS recording application. The recording interface displays a waveform graphic, a text box showing “Recording your screen…”, and a “Stop & get link” button. The recording library shows a file path and timestamp. Various menu options are visible, including “Recordings,” “Import,” “Audio,” “Settings,” and “read-only forms on stop.”",
+      "delta": "state_settle",
+      "frame_ref": "frames/00353.jpg"
+    }
+  ],
+  "on_screen_text": [
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "8 oag a 80 x",
+      "source": "ocr",
+      "bbox": [
+        895,
+        8,
+        839,
+        29
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "@ e & clipxd.com BPl@ a",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        1467,
+        17
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "read index forms on stop",
+      "source": "ocr",
+      "bbox": [
+        1210,
+        169,
+        162,
+        13
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "(@ Rec) 00:00",
+      "source": "ocr",
+      "bbox": [
+        516,
+        186,
+        117,
+        12
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "= Library",
+      "source": "ocr",
+      "bbox": [
+        275,
+        213,
+        73,
+        13
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "© veyo salience gate",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        213,
+        156,
+        32
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "© Recording",
+      "source": "ocr",
+      "bbox": [
+        265,
+        255,
+        105,
+        24
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "cursor-follow auto-zoom",
+      "source": "ocr",
+      "bbox": [
+        1232,
+        278,
+        160,
+        10
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "2 Import Recording your screen...",
+      "source": "ocr",
+      "bbox": [
+        276,
+        306,
+        466,
+        32
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "= OCR+ captions",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        321,
+        129,
+        26
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "Settings",
+      "source": "ocr",
+      "bbox": [
+        303,
+        413,
+        54,
+        13
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "sharing your screen. ice",
+      "source": "ocr",
+      "bbox": [
+        862,
+        516,
+        293,
+        34
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "= Stop & get link Camera off Prompter",
+      "source": "ocr",
+      "bbox": [
+        540,
+        578,
+        376,
+        26
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "© NCP server - connected",
+      "source": "ocr",
+      "bbox": [
+        264,
+        980,
+        169,
+        32
+      ]
+    },
+    {
+      "start": 0.0,
+      "end": 0.0,
+      "text": "‘Sign out",
+      "source": "ocr",
+      "bbox": [
+        416,
+        1049,
+        52,
+        10
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "ong eee 8 @ x",
+      "source": "ocr",
+      "bbox": [
+        993,
+        7,
+        741,
+        29
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "@ e clipxd.com Qe%=",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        1892,
+        17
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "ACE forms on stop",
+      "source": "ocr",
+      "bbox": [
+        311,
+        169,
+        1061,
+        13
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "rec) 08:82 screen - 103 t",
+      "source": "ocr",
+      "bbox": [
+        545,
+        177,
+        242,
+        31
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Recording Recording - link is live",
+      "source": "ocr",
+      "bbox": [
+        303,
+        251,
+        384,
+        26
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "9 cursor-follow auto-zoom",
+      "source": "ocr",
+      "bbox": [
+        1202,
+        278,
+        190,
+        10
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "https: pe",
+      "source": "ocr",
+      "bbox": [
+        549,
+        292,
+        800,
+        23
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Import",
+      "source": "ocr",
+      "bbox": [
+        303,
+        313,
+        43,
+        13
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "= = OCR+ captions",
+      "source": "ocr",
+      "bbox": [
+        614,
+        321,
+        716,
+        26
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Copy link",
+      "source": "ocr",
+      "bbox": [
+        553,
+        337,
+        58,
+        25
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Ask agent",
+      "source": "ocr",
+      "bbox": [
+        303,
+        363,
+        66,
+        13
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "I now — the page fills in Live and the f deo Lands when you stop * agent-queryable",
+      "source": "ocr",
+      "bbox": [
+        631,
+        373,
+        710,
+        25
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "ere",
+      "source": "ocr",
+      "bbox": [
+        650,
+        469,
+        14,
+        2
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Recording your screen...",
+      "source": "ocr",
+      "bbox": [
+        568,
+        518,
+        174,
+        14
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "Il clipxd.com is sharing your screen. Hide",
+      "source": "ocr",
+      "bbox": [
+        765,
+        523,
+        390,
+        27
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "The browser will ask which",
+      "source": "ocr",
+      "bbox": [
+        568,
+        546,
+        185,
+        9
+      ]
+    },
+    {
+      "start": 2.0,
+      "end": 2.0,
+      "text": "= Stop & get link ima Camera off Prompter",
+      "source": "ocr",
+      "bbox": [
+        540,
+        780,
+        376,
+        25
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "[0 | Elements Console Sources Network Performance Memory Application Security >> @ i x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        82,
+        835,
+        25
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "+ | 14:54:55 -clipxd.com @",
+      "source": "ocr",
+      "bbox": [
+        1045,
+        109,
+        196,
+        25
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "& https://clipxd.com/",
+      "source": "ocr",
+      "bbox": [
+        1047,
+        139,
+        134,
+        24
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Performance Accessibility Best SEO",
+      "source": "ocr",
+      "bbox": [
+        1282,
+        262,
+        346,
+        22
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Practices",
+      "source": "ocr",
+      "bbox": [
+        1490,
+        285,
+        58,
+        11
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "‘There were issues affecting this run of Lighthouse:",
+      "source": "ocr",
+      "bbox": [
+        1176,
+        384,
+        284,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "= The page did not paint any content. Please ensure you keep the browser window in the",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        401,
+        534,
+        25
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "foreground during the load and try again. (NO_FCP)",
+      "source": "ocr",
+      "bbox": [
+        1216,
+        429,
+        306,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Performance",
+      "source": "ocr",
+      "bbox": [
+        1404,
+        579,
+        134,
+        16
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Values are estimated and may vary. The performance score is",
+      "source": "ocr",
+      "bbox": [
+        1298,
+        611,
+        344,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "calculated directly from these metrics. See calculator.",
+      "source": "ocr",
+      "bbox": [
+        1322,
+        631,
+        295,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "METRICS Collapse view",
+      "source": "ocr",
+      "bbox": [
+        1123,
+        679,
+        682,
+        25
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Contentful Paint ! Largest Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1188,
+        724,
+        467,
+        26
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Error! Error!",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        752,
+        412,
+        30
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "‘The page did not paint any content. Please ensure ‘The page did not paint any content. Please ensure",
+      "source": "ocr",
+      "bbox": [
+        1160,
+        784,
+        640,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "you keep the browser window in the foreground you keep the browser window in the foreground",
+      "source": "ocr",
+      "bbox": [
+        1160,
+        804,
+        629,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "during the load and try again. (NO_FCP) during the load and try again. (NO_FCP)",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        824,
+        580,
+        13
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "! Total Blocking Time ! Cumulative Layout Shift",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        862,
+        515,
+        26
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Speed Index",
+      "source": "ocr",
+      "bbox": [
+        1159,
+        1000,
+        71,
+        26
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Error! ba",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        1028,
+        755,
+        30
+      ]
+    },
+    {
+      "start": 6.75,
+      "end": 6.75,
+      "text": "Console What's new",
+      "source": "ocr",
+      "bbox": [
+        1073,
+        1054,
+        132,
+        26
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "< e & clipxd.com Relea Confer — pick a doc =",
+      "source": "ocr",
+      "bbox": [
+        16,
+        47,
+        1892,
+        29
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "[0 | Elements Console Sources Network Performance Memory x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        77,
+        835,
+        29
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "+ | 14:54:55 -clipxd.com ~ @ Memory usage: 38.6 MB",
+      "source": "ocr",
+      "bbox": [
+        1045,
+        110,
+        749,
+        30
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "There were issues affecting this run of Lighthouse:",
+      "source": "ocr",
+      "bbox": [
+        1176,
+        384,
+        284,
+        13
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "+ The page did not paint any content. Please ensure you keep the browser window in the",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        409,
+        534,
+        13
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "{First Contentful Paint Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        720,
+        515,
+        32
+      ]
+    },
+    {
+      "start": 7.5,
+      "end": 7.5,
+      "text": "| Speed Index",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        1008,
+        89,
+        13
+      ]
+    },
+    {
+      "start": 7.75,
+      "end": 7.75,
+      "text": "Elements Console Sources Network Performance Memory x",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        89,
+        795,
+        12
+      ]
+    },
+    {
+      "start": 8.0,
+      "end": 8.0,
+      "text": "@ & lipxd.com",
+      "source": "ocr",
+      "bbox": [
+        16,
+        45,
+        512,
+        28
+      ]
+    },
+    {
+      "start": 8.0,
+      "end": 8.0,
+      "text": "Elements Console Sources Network Performance Memory Application : x",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        88,
+        795,
+        14
+      ]
+    },
+    {
+      "start": 8.0,
+      "end": 8.0,
+      "text": "The page did not paint any content. Please ensure The page did not paint any content. Please ensure",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        776,
+        638,
+        25
+      ]
+    },
+    {
+      "start": 8.25,
+      "end": 8.25,
+      "text": "[0 Elements Console Sources Network Performance Memory Application Lighthouse >> @ i x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        87,
+        835,
+        15
+      ]
+    },
+    {
+      "start": 8.25,
+      "end": 8.25,
+      "text": "+ | 14:54:55- clipxd.com ~ @",
+      "source": "ocr",
+      "bbox": [
+        1045,
+        105,
+        195,
+        31
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "oon Bx @ * 20280 x @ © + =",
+      "source": "ocr",
+      "bbox": [
+        1226,
+        8,
+        616,
+        28
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "< ie) & lipxd.com",
+      "source": "ocr",
+      "bbox": [
+        16,
+        45,
+        512,
+        27
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "Elements Console Sources Network Performance Memory Application Lighthouse >> x",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        89,
+        795,
+        13
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "First Contentful Paint Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        354,
+        494,
+        32
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "! Speed Index",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        642,
+        89,
+        13
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "Error!",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        666,
+        54,
+        16
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "you keep the browser window in the foreground",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        706,
+        269,
+        26
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "INSIGHT",
+      "source": "ocr",
+      "bbox": [
+        1123,
+        784,
+        52,
+        9
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "Use efficient cache lifetimes — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        825,
+        640,
+        21
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "! Layout shift culprits — Error!",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        868,
+        187,
+        25
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "! Document request latency — Error",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        915,
+        220,
+        25
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "DOM size — v",
+      "source": "ocr",
+      "bbox": [
+        1218,
+        958,
+        584,
+        32
+      ]
+    },
+    {
+      "start": 14.0,
+      "end": 14.0,
+      "text": "Font display — error!",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        1017,
+        123,
+        13
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "< ie) & lipxd.com 658",
+      "source": "ocr",
+      "bbox": [
+        16,
+        45,
+        1754,
+        27
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "| Elements Console Sources Network Performance Memory Application Lighthouse _ >> : x",
+      "source": "ocr",
+      "bbox": [
+        1091,
+        81,
+        815,
+        26
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "+ | 14:54:55-clipxd.com ~ Q",
+      "source": "ocr",
+      "bbox": [
+        1045,
+        105,
+        195,
+        31
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "1 Links have a discernible name — Error v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        259,
+        661,
+        11
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "! elements have alternate text. — Error!",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        298,
+        289,
+        26
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "! No form fields have multiple labels — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        345,
+        662,
+        26
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "1 Skip links are focusable. — Error v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        400,
+        662,
+        13
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "! Image elements do not have attributes that are redundant text. — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        439,
+        662,
+        26
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "| The document does not use — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        607,
+        661,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "notless than 5. — Error",
+      "source": "ocr",
+      "bbox": [
+        1159,
+        673,
+        135,
+        23
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "! Touch targets have sufficient size and spacing. — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        716,
+        662,
+        26
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "Document has a main landmark. — v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        767,
+        640,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "! attributes are used correctly — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        810,
+        662,
+        25
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "Elements with or do not have conflicts — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        861,
+        641,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "SVG elements with an ing role have an accessible text alternative — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        908,
+        641,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "Tables have different content in the summary attribute and — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1160,
+        955,
+        642,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "Allheading elements contain content. — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1160,
+        1002,
+        641,
+        22
+      ]
+    },
+    {
+      "start": 16.0,
+      "end": 16.0,
+      "text": "Console What's new og",
+      "source": "ocr",
+      "bbox": [
+        1074,
+        1059,
+        807,
+        14
+      ]
+    },
+    {
+      "start": 18.0,
+      "end": 18.0,
+      "text": "OG | Elements Console Sources Network Performance Memory Application Lighthouse _ >> : x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        80,
+        835,
+        26
+      ]
+    },
+    {
+      "start": 18.0,
+      "end": 18.0,
+      "text": "= The page did ints paint any content. Please ensure you keep the browser window in the",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        396,
+        534,
+        31
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Com x © + - 8x",
+      "source": "ocr",
+      "bbox": [
+        1230,
+        13,
+        677,
+        14
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "@ & lipxd.com 658",
+      "source": "ocr",
+      "bbox": [
+        16,
+        51,
+        1754,
+        18
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "| Elements Console Sources Network Performance Memory Application _ Lighthouse >> @ i x",
+      "source": "ocr",
+      "bbox": [
+        1093,
+        79,
+        813,
+        30
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Application",
+      "source": "ocr",
+      "bbox": [
+        1040,
+        108,
+        65,
+        30
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "> D) Manifest",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        137,
+        86,
+        16
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Service workers",
+      "source": "ocr",
+      "bbox": [
+        1088,
+        162,
+        87,
+        10
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "© storage",
+      "source": "ocr",
+      "bbox": [
+        1060,
+        172,
+        70,
+        29
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Storage",
+      "source": "ocr",
+      "bbox": [
+        1044,
+        219,
+        42,
+        12
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "> Local storage",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        240,
+        112,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "» &B Session storage",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        252,
+        125,
+        30
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "» © Cookies",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        325,
+        81,
+        15
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "& cache storage",
+      "source": "ocr",
+      "bbox": [
+        1064,
+        340,
+        103,
+        30
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Storage buckets",
+      "source": "ocr",
+      "bbox": [
+        1088,
+        372,
+        89,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Background services",
+      "source": "ocr",
+      "bbox": [
+        1044,
+        406,
+        115,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "& Back/forward cache",
+      "source": "ocr",
+      "bbox": [
+        1064,
+        426,
+        134,
+        14
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Bounce tracking mitig",
+      "source": "ocr",
+      "bbox": [
+        1088,
+        450,
+        122,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "QD Notifications",
+      "source": "ocr",
+      "bbox": [
+        1065,
+        469,
+        92,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "& Payment handler",
+      "source": "ocr",
+      "bbox": [
+        1063,
+        484,
+        119,
+        30
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "» I> Speculative loads",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        516,
+        134,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "Push messaging",
+      "source": "ocr",
+      "bbox": [
+        1088,
+        538,
+        90,
+        12
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "5 Extension storage",
+      "source": "ocr",
+      "bbox": [
+        1070,
+        549,
+        567,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "On this page you can view, add, edit, and",
+      "source": "ocr",
+      "bbox": [
+        1463,
+        570,
+        229,
+        13
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "delete extension storage key-value",
+      "source": "ocr",
+      "bbox": [
+        1481,
+        586,
+        194,
+        20
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "pairs. Learn more",
+      "source": "ocr",
+      "bbox": [
+        1529,
+        603,
+        98,
+        9
+      ]
+    },
+    {
+      "start": 22.0,
+      "end": 22.0,
+      "text": "> top",
+      "source": "ocr",
+      "bbox": [
+        1050,
+        618,
+        55,
+        11
+      ]
+    },
+    {
+      "start": 24.0,
+      "end": 24.0,
+      "text": "| Elements Console Sources Network Performance Memory Application Lighthouse : x",
+      "source": "ocr",
+      "bbox": [
+        1093,
+        80,
+        813,
+        26
+      ]
+    },
+    {
+      "start": 24.0,
+      "end": 24.0,
+      "text": "+ The page did not paint any Please ensure you keep the browser window in the",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        409,
+        534,
+        13
+      ]
+    },
+    {
+      "start": 24.0,
+      "end": 24.0,
+      "text": "{First Contentful Paint Largest Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        720,
+        515,
+        32
+      ]
+    },
+    {
+      "start": 24.0,
+      "end": 24.0,
+      "text": "! Total Blocking Time ! Layout Shift",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        862,
+        512,
+        26
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "Toregrouna auring tne 1oaa ana try again.",
+      "source": "ocr",
+      "bbox": [
+        1217,
+        167,
+        247,
+        10
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "1 First Contentful Paint Largest Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        455,
+        515,
+        32
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "! Total Blocking Time Cumulative Layout Shift",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        601,
+        512,
+        22
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "during the load and try again. (NO_FCP during the load and try again. (NO_FCP",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        687,
+        574,
+        27
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "INSIGHT:",
+      "source": "ocr",
+      "bbox": [
+        1123,
+        885,
+        52,
+        9
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "| Use efficient cache lifetimes — Error! v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        926,
+        661,
+        21
+      ]
+    },
+    {
+      "start": 26.0,
+      "end": 26.0,
+      "text": "! request latency — Error",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        1016,
+        224,
+        25
+      ]
+    },
+    {
+      "start": 28.0,
+      "end": 28.0,
+      "text": "First Contentful Paint Largest Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        437,
+        494,
+        32
+      ]
+    },
+    {
+      "start": 28.0,
+      "end": 28.0,
+      "text": "! request latency — Error v",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        998,
+        661,
+        25
+      ]
+    },
+    {
+      "start": 30.0,
+      "end": 30.0,
+      "text": "@ & lipxd.com Q0@8%=",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        1892,
+        17
+      ]
+    },
+    {
+      "start": 30.0,
+      "end": 30.0,
+      "text": "OG | Elements Console Sources Network Performance Memory Application Lighthouse : x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        80,
+        835,
+        26
+      ]
+    },
+    {
+      "start": 30.0,
+      "end": 30.0,
+      "text": "! First Contentful Paint ! Largest Contentful Paint",
+      "source": "ocr",
+      "bbox": [
+        1140,
+        724,
+        515,
+        26
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "86 ono @ eo + - 8x",
+      "source": "ocr",
+      "bbox": [
+        862,
+        8,
+        1045,
+        30
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "e & clipxd.com Library - clipxd =",
+      "source": "ocr",
+      "bbox": [
+        72,
+        47,
+        1836,
+        29
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "clipxd.com",
+      "source": "ocr",
+      "bbox": [
+        1627,
+        80,
+        63,
+        13
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "e Filter the library by title. c @ Recc",
+      "source": "ocr",
+      "bbox": [
+        523,
+        110,
+        1090,
+        11
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "> clip @ y bY @ Memory usage: 102 MB",
+      "source": "ocr",
+      "bbox": [
+        262,
+        112,
+        1531,
+        27
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "Library",
+      "source": "ocr",
+      "bbox": [
+        511,
+        186,
+        87,
+        25
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "©) @ Browser Screen",
+      "source": "ocr",
+      "bbox": [
+        261,
+        202,
+        1288,
+        33
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "Recording",
+      "source": "ocr",
+      "bbox": [
+        298,
+        264,
+        67,
+        13
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "paste Link 4 cap.so/.. youtube.com/. any video Link Read it",
+      "source": "ocr",
+      "bbox": [
+        530,
+        272,
+        1094,
+        22
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "SCREEN",
+      "source": "ocr",
+      "bbox": [
+        528,
+        352,
+        37,
+        8
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "agent ep )",
+      "source": "ocr",
+      "bbox": [
+        325,
+        344,
+        1024,
+        41
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "© settings ~",
+      "source": "ocr",
+      "bbox": [
+        261,
+        406,
+        322,
+        22
+      ]
+    },
+    {
+      "start": 32.75,
+      "end": 32.75,
+      "text": "© server - connected",
+      "source": "ocr",
+      "bbox": [
+        260,
+        994,
+        167,
+        9
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "ng 6 ong eee @B @ RG + - 8x",
+      "source": "ocr",
+      "bbox": [
+        573,
+        6,
+        1334,
+        36
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "e & clipxd.com Library - clipxd",
+      "source": "ocr",
+      "bbox": [
+        72,
+        47,
+        1651,
+        29
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "> @ p Filter the library by title. (+) c",
+      "source": "ocr",
+      "bbox": [
+        273,
+        98,
+        1251,
+        36
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "@ Memory usage: 102 MB",
+      "source": "ocr",
+      "bbox": [
+        1628,
+        111,
+        165,
+        31
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "paste Link 4 Loom.com/share/.. - cap.so/.. - youtube.com/.. - any video Link Read it",
+      "source": "ocr",
+      "bbox": [
+        535,
+        267,
+        1089,
+        27
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "‘SCREEN ‘SCREEN",
+      "source": "ocr",
+      "bbox": [
+        529,
+        343,
+        426,
+        22
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "Ask agent z =",
+      "source": "ocr",
+      "bbox": [
+        303,
+        363,
+        1145,
+        13
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "© settings 9:00",
+      "source": "ocr",
+      "bbox": [
+        262,
+        401,
+        400,
+        32
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "> recording",
+      "source": "ocr",
+      "bbox": [
+        532,
+        483,
+        69,
+        10
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "events-1) scenes-11",
+      "source": "ocr",
+      "bbox": [
+        922,
+        508,
+        120,
+        8
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "acr-152) (events-1) | scenes-16",
+      "source": "ocr",
+      "bbox": [
+        537,
+        790,
+        182,
+        31
+      ]
+    },
+    {
+      "start": 33.25,
+      "end": 33.25,
+      "text": "© NP server - connected",
+      "source": "ocr",
+      "bbox": [
+        265,
+        981,
+        168,
+        31
+      ]
+    },
+    {
+      "start": 33.5,
+      "end": 33.5,
+      "text": "oe EX CO BX @ eleiel+ - 8x",
+      "source": "ocr",
+      "bbox": [
+        837,
+        7,
+        1070,
+        39
+      ]
+    },
+    {
+      "start": 33.5,
+      "end": 33.5,
+      "text": "< QQ & clipxd.com Q@@%=",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        1892,
+        17
+      ]
+    },
+    {
+      "start": 33.5,
+      "end": 33.5,
+      "text": "[0 Elements Console Sources Network Performance Memory Application Lighthouse >> @ : x",
+      "source": "ocr",
+      "bbox": [
+        1071,
+        87,
+        835,
+        15
+      ]
+    },
+    {
+      "start": 34.25,
+      "end": 34.25,
+      "text": "Elements Console Sources Network Performance Memory Application Lighthouse >> : x",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        88,
+        795,
+        14
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "oa go eee 8 © + - 8x",
+      "source": "ocr",
+      "bbox": [
+        967,
+        8,
+        940,
+        30
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "< dlipxd.com",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        512,
+        17
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "| Elements console Sources Network Performance Memory Application Lighthouse _>> x",
+      "source": "ocr",
+      "bbox": [
+        1095,
+        79,
+        811,
+        31
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "Fyour web app. Automatic detection can only detect a subset oF issues",
+      "source": "ocr",
+      "bbox": [
+        1276,
+        228,
+        388,
+        12
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "and does not guarantee the accessibility of your web app, so manual",
+      "source": "ocr",
+      "bbox": [
+        1279,
+        247,
+        383,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "esting is also encouraged",
+      "source": "ocr",
+      "bbox": [
+        1400,
+        267,
+        141,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "controls are keyboard focusable| v",
+      "source": "ocr",
+      "bbox": [
+        1224,
+        301,
+        578,
+        28
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "interactive elements indicate their purpose and state :",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        356,
+        641,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "he page has a logical tab order",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        395,
+        172,
+        25
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "isual order on the page follows DOM order v",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        442,
+        633,
+        28
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "jUser focus is not accidentally trapped in a region",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        497,
+        272,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "he user's focus is directed to new content added to the page v",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        544,
+        633,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "[HTMLS landmark elements are used to improve navigation",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        591,
+        329,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "content is hidden from assistive technology v",
+      "source": "ocr",
+      "bbox": [
+        1219,
+        638,
+        582,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "[Custom controls have associated labels v",
+      "source": "ocr",
+      "bbox": [
+        1157,
+        677,
+        644,
+        28
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "[Custom controls have ARIA roles| v",
+      "source": "ocr",
+      "bbox": [
+        1157,
+        724,
+        644,
+        28
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "attributes match their roles| v",
+      "source": "ocr",
+      "bbox": [
+        1213,
+        817,
+        588,
+        27
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "isnot the document <body>",
+      "source": "ocr",
+      "bbox": [
+        1286,
+        858,
+        216,
+        35
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "[rote]s have all required [aria-*] v",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        910,
+        640,
+        25
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "with an ARIA [rote] that require children to contain a specific [rote] have all required children,",
+      "source": "ocr",
+      "bbox": [
+        1216,
+        964,
+        529,
+        13
+      ]
+    },
+    {
+      "start": 42.0,
+      "end": 42.0,
+      "text": "are contained by their required parent element v",
+      "source": "ocr",
+      "bbox": [
+        1208,
+        1024,
+        594,
+        25
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Be clipxd : claude — Konsole",
+      "source": "ocr",
+      "bbox": [
+        6,
+        0,
+        1030,
+        29
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "File Edit View Bookmarks Plugins Settings Help",
+      "source": "ocr",
+      "bbox": [
+        11,
+        38,
+        387,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "NewTab ff] split view ~ copy Paste Q 2",
+      "source": "ocr",
+      "bbox": [
+        42,
+        68,
+        1865,
+        34
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "| dade =",
+      "source": "ocr",
+      "bbox": [
+        126,
+        98,
+        1785,
+        33
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "6 use std::time::Instant;",
+      "source": "ocr",
+      "bbox": [
+        61,
+        154,
+        196,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "8 #[tokio::ma",
+      "source": "ocr",
+      "bbox": [
+        61,
+        185,
+        102,
+        11
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "9 async fn main() {",
+      "source": "ocr",
+      "bbox": [
+        61,
+        199,
+        149,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "18 let args: VeceString> = std::env::args().collect(); Oo",
+      "source": "ocr",
+      "bbox": [
+        54,
+        210,
+        1847,
+        22
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "_ +8 Lines",
+      "source": "ocr",
+      "bbox": [
+        47,
+        229,
+        75,
+        10
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 1 shell command",
+      "source": "ocr",
+      "bbox": [
+        21,
+        259,
+        150,
+        10
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ Built. Now let's copy the clip (since Gemini's deep pass will overwrite in place) and run the real deep pass against the same test video for a fair comparison:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        289,
+        1373,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 3 shell commands",
+      "source": "ocr",
+      "bbox": [
+        21,
+        319,
+        157,
+        10
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ Now running the real Gemini deep pass against this clip, timing it:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        349,
+        549,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 1 shell command =",
+      "source": "ocr",
+      "bbox": [
+        21,
+        379,
+        1884,
+        10
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ The upload succeeded (auth is valid), but generateContent hit a transient 503 (Gemini overloaded) after 39s. Let me retry once — this is a documented transient error, not a real failure:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        409,
+        1501,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 1 shell command B",
+      "source": "ocr",
+      "bbox": [
+        21,
+        432,
+        1882,
+        28
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ Two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here.",
+      "source": "ocr",
+      "bbox": [
+        4,
+        469,
+        1333,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "© gemini-2.5-flash-Lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-Lite (stable) as the current cheap/fast tier. Let me retry using the model override my code already supports: 6",
+      "source": "ocr",
+      "bbox": [
+        4,
+        519,
+        1904,
+        32
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 1 shell command |",
+      "source": "ocr",
+      "bbox": [
+        21,
+        558,
+        1854,
+        43
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ Worked — 17.6 seconds total (upload + wait for ACTIVE + generate). Let's see what it actually produced: =)",
+      "source": "ocr",
+      "bbox": [
+        4,
+        562,
+        1906,
+        47
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 4 shell command bd",
+      "source": "ocr",
+      "bbox": [
+        21,
+        603,
+        1885,
+        43
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "© Excellent output — Gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. Let me check on the timing breakdown now.",
+      "source": "ocr",
+      "bbox": [
+        4,
+        649,
+        1597,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Ran 1 shell command a",
+      "source": "ocr",
+      "bbox": [
+        21,
+        666,
+        1879,
+        23
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "@ That's a stdout-buffering artifact, not a real 10-minute hang — Python block-buffers non-TTY output. Let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read. ba",
+      "source": "ocr",
+      "bbox": [
+        4,
+        694,
+        1898,
+        28
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "© Running 1 shell e",
+      "source": "ocr",
+      "bbox": [
+        4,
+        725,
+        1896,
+        27
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "L$ kill -9 250457 250459 2>/dev/null; sleep 1",
+      "source": "ocr",
+      "bbox": [
+        26,
+        752,
+        369,
+        15
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "export. PATH=\"/hone/rsx/Desktop/projx/clipxd-venv/bin: $PATH\" (0)",
+      "source": "ocr",
+      "bbox": [
+        45,
+        773,
+        1855,
+        31
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "python3 -u -",
+      "source": "ocr",
+      "bbox": [
+        45,
+        799,
+        93,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "import time, glob, sys 5",
+      "source": "ocr",
+      "bbox": [
+        46,
+        814,
+        1853,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "from paddleocr import ©",
+      "source": "ocr",
+      "bbox": [
+        45,
+        844,
+        1855,
+        17
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "Background command \"Time PaddleOCR with MKLDNN disabled across all frames (matching the real sidecar)\" failed with exit code 1",
+      "source": "ocr",
+      "bbox": [
+        21,
+        874,
+        1006,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "= Verify: cargo build/test, SPA build, code review =",
+      "source": "ocr",
+      "bbox": [
+        44,
+        979,
+        1857,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": "x Auto-update failed - Run /docte =",
+      "source": "ocr",
+      "bbox": [
+        1612,
+        994,
+        290,
+        13
+      ]
+    },
+    {
+      "start": 43.75,
+      "end": 43.75,
+      "text": ">> bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - + for agents io)",
+      "source": "ocr",
+      "bbox": [
+        22,
+        1048,
+        1883,
+        19
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Be clipxd : claude — Konsole vo",
+      "source": "ocr",
+      "bbox": [
+        6,
+        0,
+        1899,
+        29
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "File Edit View Bookmarks Plugins Settings Help <",
+      "source": "ocr",
+      "bbox": [
+        11,
+        19,
+        1898,
+        32
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "NewTab ff] split view ~ copy Paste Q",
+      "source": "ocr",
+      "bbox": [
+        42,
+        68,
+        1829,
+        25
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "x leadecho:claude x opencode x x claude x confer: opencode x",
+      "source": "ocr",
+      "bbox": [
+        102,
+        114,
+        788,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "8 #[tokio: :ma",
+      "source": "ocr",
+      "bbox": [
+        61,
+        185,
+        102,
+        10
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "18 let args: VeceString> = oO",
+      "source": "ocr",
+      "bbox": [
+        54,
+        210,
+        1848,
+        22
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "@ Built. Now let's copy the clip (since Gemini's deep pass will overwrite index. json in place) and run the real deep pass against the same test video for a fair comparison:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        289,
+        1373,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Ran 1 shell B",
+      "source": "ocr",
+      "bbox": [
+        21,
+        432,
+        1883,
+        28
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "© Two 503s in a row is suspicious — let me check if gemini-2.5-flash-Lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here. ry",
+      "source": "ocr",
+      "bbox": [
+        4,
+        457,
+        1899,
+        50
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "@ gemini-2.5-flash-Lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-Lite (stable) as the current cheap/fast tier. Let me retry using the model override my code already supports: 6",
+      "source": "ocr",
+      "bbox": [
+        4,
+        519,
+        1905,
+        32
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Ran 1 shell command is",
+      "source": "ocr",
+      "bbox": [
+        21,
+        558,
+        1887,
+        43
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "@ Worked — 17.6 seconds total (upload + wait for ACTIVE + generate). Let's see what it actually produced:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        589,
+        837,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Excellent output — Gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. Let me check on the PaddlecR timing breakdown now.",
+      "source": "ocr",
+      "bbox": [
+        21,
+        649,
+        1580,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "That's a stdout-buffering artifact, not a real 10-minute hang — Python block-buffers non-TTY output. Let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read. bad",
+      "source": "ocr",
+      "bbox": [
+        20,
+        694,
+        1883,
+        28
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Running 1 shell command.. e",
+      "source": "ocr",
+      "bbox": [
+        21,
+        725,
+        1880,
+        27
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "export PATH=\" /home/rsx/Desktop/projx/clipxd-venv/bin: (0)",
+      "source": "ocr",
+      "bbox": [
+        45,
+        784,
+        1856,
+        17
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "import time, glob, sys",
+      "source": "ocr",
+      "bbox": [
+        46,
+        814,
+        172,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "time}",
+      "source": "ocr",
+      "bbox": [
+        110,
+        829,
+        44,
+        11
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Background \"Time PaddleOCR with MKLDNN disabled across all frames (matching the real sidecar)\" failed with exit code 1 @",
+      "source": "ocr",
+      "bbox": [
+        21,
+        874,
+        1880,
+        16
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "* verifying and reviewing 41s 1 42.2k tokens)",
+      "source": "ocr",
+      "bbox": [
+        5,
+        904,
+        485,
+        27
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "2 caption calls g",
+      "source": "ocr",
+      "bbox": [
+        45,
+        921,
+        1856,
+        32
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "v with enrich,",
+      "source": "ocr",
+      "bbox": [
+        45,
+        937,
+        319,
+        32
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": "Verify: cargo build/test, SPA build, code review",
+      "source": "ocr",
+      "bbox": [
+        60,
+        979,
+        384,
+        13
+      ]
+    },
+    {
+      "start": 44.5,
+      "end": 44.5,
+      "text": ">> bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - + for agents",
+      "source": "ocr",
+      "bbox": [
+        22,
+        1054,
+        812,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "Be clipxd : claude — Konsole vox",
+      "source": "ocr",
+      "bbox": [
+        6,
+        0,
+        1904,
+        29
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "File Edit View Bookmarks Plugins Settings Help.",
+      "source": "ocr",
+      "bbox": [
+        11,
+        38,
+        387,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "[E [If] split view ~ copy Paste Q Find",
+      "source": "ocr",
+      "bbox": [
+        18,
+        69,
+        1885,
+        27
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "clipxd : claude X | leadecho: claude x opencode x _utkrusht-ai: claude x utkrusht-ai: claude X confer: opencode x +",
+      "source": "ocr",
+      "bbox": [
+        9,
+        103,
+        1900,
+        31
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "10 let args: Vec<String> = std::env::args().collect()",
+      "source": "ocr",
+      "bbox": [
+        54,
+        214,
+        452,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "+8 Lines",
+      "source": "ocr",
+      "bbox": [
+        61,
+        229,
+        61,
+        10
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ Built. Now let's copy the clip (since Gemini's deep pass will overwrite in place) and run the real deep pass against the same test video for a fair comparison",
+      "source": "ocr",
+      "bbox": [
+        4,
+        289,
+        1367,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ Now running the real Gemini deep pass against this clip, timing it",
+      "source": "ocr",
+      "bbox": [
+        4,
+        349,
+        543,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ The upload succeeded (auth is valid), but generateContent hit a transient 503 (Gemini overloaded) after 39s. Let me retry once — this is a documented transient error, not a real failure",
+      "source": "ocr",
+      "bbox": [
+        4,
+        409,
+        1495,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ Two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here",
+      "source": "ocr",
+      "bbox": [
+        4,
+        469,
+        1327,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "gemini-2.5-flash-Lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-Lite (stable) as the current cheap/fast tier. Let me retry using the model override my code already supports:",
+      "source": "ocr",
+      "bbox": [
+        21,
+        529,
+        1676,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ Worked — 17.6 seconds total (upload + wait for ACTIVE + generate). Let's see what it actually produced",
+      "source": "ocr",
+      "bbox": [
+        4,
+        589,
+        831,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ That's a stdout-buffering artifact, not a real 10-minute hang — Python block-buffers non-TTY output. Let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read",
+      "source": "ocr",
+      "bbox": [
+        4,
+        709,
+        1503,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "@ Running 1 shell",
+      "source": "ocr",
+      "bbox": [
+        4,
+        739,
+        135,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "kill -9 250457 250459 2>/dev/null; sleep 1",
+      "source": "ocr",
+      "bbox": [
+        61,
+        754,
+        334,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "export. PATH=\"/hone/rsx/Desktop/projx/clipxd-venv/bin:",
+      "source": "ocr",
+      "bbox": [
+        45,
+        784,
+        469,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "python3 -u - <<'EOF",
+      "source": "ocr",
+      "bbox": [
+        45,
+        799,
+        150,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "from paddleocr import",
+      "source": "ocr",
+      "bbox": [
+        45,
+        844,
+        165,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "v clip id at",
+      "source": "ocr",
+      "bbox": [
+        45,
+        919,
+        246,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "v with",
+      "source": "ocr",
+      "bbox": [
+        45,
+        938,
+        257,
+        31
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "a Verify: SPA build, code review",
+      "source": "ocr",
+      "bbox": [
+        44,
+        972,
+        400,
+        20
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": "x Auto-update failed - Run /doctor",
+      "source": "ocr",
+      "bbox": [
+        1612,
+        994,
+        271,
+        13
+      ]
+    },
+    {
+      "start": 46.0,
+      "end": 46.0,
+      "text": ">» bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - ~ for agents",
+      "source": "ocr",
+      "bbox": [
+        22,
+        1054,
+        812,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "NewTab ff split view v copy Paste Q Find",
+      "source": "ocr",
+      "bbox": [
+        42,
+        69,
+        1861,
+        24
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "clipxd: claude x | leadecho: claude x cloakpipe.co: opencode claude x utkrusht-ai: claude x confer: opencode",
+      "source": "ocr",
+      "bbox": [
+        9,
+        104,
+        864,
+        30
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "18 let args: Vec<String> = std: :env::args().collect()",
+      "source": "ocr",
+      "bbox": [
+        54,
+        214,
+        452,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "Lines",
+      "source": "ocr",
+      "bbox": [
+        85,
+        229,
+        37,
+        10
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "Ran 4 shell command",
+      "source": "ocr",
+      "bbox": [
+        21,
+        259,
+        150,
+        10
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "© Two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here",
+      "source": "ocr",
+      "bbox": [
+        4,
+        469,
+        1327,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "© gemini-2.5-flash-lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-lite (stable) as the current cheap/fast tier. Let me retry using the model override my code already supports:",
+      "source": "ocr",
+      "bbox": [
+        4,
+        529,
+        1693,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "@ Worked 17.6 seconds total (upload + wait for ACTIVE + generate). Let's see what it actually produced",
+      "source": "ocr",
+      "bbox": [
+        4,
+        589,
+        831,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "© Excellent output — Gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. Let me check on the Paddle0CR timing breakdown now,",
+      "source": "ocr",
+      "bbox": [
+        4,
+        649,
+        1592,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "Running 4 shell",
+      "source": "ocr",
+      "bbox": [
+        21,
+        739,
+        118,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "export PATH=\"/home/rsx/Desktop/projx/clipxd-venv/bin:$PATH\"",
+      "source": "ocr",
+      "bbox": [
+        45,
+        784,
+        469,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "to=time.time()",
+      "source": "ocr",
+      "bbox": [
+        45,
+        829,
+        109,
+        11
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "from paddleocr import Paddleoc.",
+      "source": "ocr",
+      "bbox": [
+        45,
+        844,
+        238,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": ": and reviewing changes.. (22m 45s 1 42.2k tokens - thinking with xhigh effort",
+      "source": "ocr",
+      "bbox": [
+        7,
+        904,
+        708,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "instant clip ia stage commit",
+      "source": "ocr",
+      "bbox": [
+        60,
+        910,
+        576,
+        29
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "v + concurrent caption calls",
+      "source": "ocr",
+      "bbox": [
+        45,
+        924,
+        451,
+        30
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "with lighter franc",
+      "source": "ocr",
+      "bbox": [
+        268,
+        940,
+        208,
+        29
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "v Gemini optional OFF} + endpoint",
+      "source": "ocr",
+      "bbox": [
+        44,
+        964,
+        488,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "= Verify: cargo build/test, SPA build, code review",
+      "source": "ocr",
+      "bbox": [
+        44,
+        979,
+        400,
+        13
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "> ok this is",
+      "source": "ocr",
+      "bbox": [
+        6,
+        1024,
+        93,
+        11
+      ]
+    },
+    {
+      "start": 48.0,
+      "end": 48.0,
+      "text": "bypass permissions on (shift+tab to cycle)",
+      "source": "ocr",
+      "bbox": [
+        45,
+        1054,
+        333,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "Be clipxd : fish — Konsole vox",
+      "source": "ocr",
+      "bbox": [
+        6,
+        0,
+        1904,
+        29
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "clipxd: claude x : claude x cloakpipe.co: opencode claude x utkrusht-ai: claude x confer: opencode x | clipxd::fish x",
+      "source": "ocr",
+      "bbox": [
+        9,
+        104,
+        985,
+        30
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "(LOQ 15ARP9)",
+      "source": "ocr",
+      "bbox": [
+        590,
+        169,
+        92,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "@ AMD Ryzen 7 7435HS (16) @ 4.55 GHz",
+      "source": "ocr",
+      "bbox": [
+        527,
+        184,
+        292,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "NVIDIA GeForce RTX 4050 Max-Q / Mobile [Discrete]",
+      "source": "ocr",
+      "bbox": [
+        549,
+        199,
+        389,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "cant Gt 1920x1080 in 16\", 144 Hz [Built-in]",
+      "source": "ocr",
+      "bbox": [
+        367,
+        214,
+        459,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "J: 387.66 GiB / 472.94 GiB (52) - btrfs",
+      "source": "ocr",
+      "bbox": [
+        525,
+        229,
+        318,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "10.80 GiB / 23.15 GiB",
+      "source": "ocr",
+      "bbox": [
+        550,
+        244,
+        165,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "= 1 10.19 GiB / 23.15 GiB (44%)",
+      "source": "ocr",
+      "bbox": [
+        528,
+        259,
+        242,
+        12
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "0S: Cachyos",
+      "source": "ocr",
+      "bbox": [
+        516,
+        319,
+        87,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "Linux 7.1.2-3-cachyos",
+      "source": "ocr",
+      "bbox": [
+        549,
+        334,
+        166,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "kwin (Wayland)",
+      "source": "ocr",
+      "bbox": [
+        549,
+        349,
+        109,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "—— (SDE: KDE Plasma 6.7.1",
+      "source": "ocr",
+      "bbox": [
+        47,
+        364,
+        628,
+        11
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "konsole 26.4.2",
+      "source": "ocr",
+      "bbox": [
+        549,
+        379,
+        110,
+        10
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "5 (appimage), 14 (flatpak), 1648 (pacman)",
+      "source": "ocr",
+      "bbox": [
+        549,
+        394,
+        325,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "Breeze",
+      "source": "ocr",
+      "bbox": [
+        549,
+        410,
+        46,
+        9
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "/ Uptime / Update —————_,",
+      "source": "ocr",
+      "bbox": [
+        669,
+        444,
+        264,
+        30
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "| 8 0S Age: 53 days",
+      "source": "ocr",
+      "bbox": [
+        111,
+        469,
+        524,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "@ Uptime: 3 hours, 8 mins",
+      "source": "ocr",
+      "bbox": [
+        500,
+        484,
+        199,
+        13
+      ]
+    },
+    {
+      "start": 56.0,
+      "end": 56.0,
+      "text": "Size: 236 x 62",
+      "source": "ocr",
+      "bbox": [
+        905,
+        623,
+        108,
+        10
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "cam i 1920x1080 in 16\", 144 Hz [Built-in]",
+      "source": "ocr",
+      "bbox": [
+        367,
+        214,
+        459,
+        12
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "J: 387.66 GiB / 472.94 GiB - btrfs",
+      "source": "ocr",
+      "bbox": [
+        525,
+        229,
+        318,
+        12
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "10.80 GiB / 23.15 GiB (47%)",
+      "source": "ocr",
+      "bbox": [
+        550,
+        244,
+        212,
+        12
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "KDE Plasma 6.7.1",
+      "source": "ocr",
+      "bbox": [
+        549,
+        364,
+        126,
+        10
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "/ Uptime / Update",
+      "source": "ocr",
+      "bbox": [
+        669,
+        444,
+        146,
+        30
+      ]
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": "© Uptime: 3 hours, 8 mins",
+      "source": "ocr",
+      "bbox": [
+        500,
+        474,
+        199,
+        30
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "claude x leadecho : claude x opencode claude x utkrusht-ai: claude x confer: opencode | clipxd::fish x",
+      "source": "ocr",
+      "bbox": [
+        54,
+        104,
+        940,
+        30
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "cam 1920x1080 in 16\", 144 Hz [Built-in]",
+      "source": "ocr",
+      "bbox": [
+        367,
+        214,
+        459,
+        13
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "J: 387.66 GiB / 472.94 GiB (>) - btrfs",
+      "source": "ocr",
+      "bbox": [
+        525,
+        229,
+        318,
+        12
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "A OS: Cachyos x86_64",
+      "source": "ocr",
+      "bbox": [
+        343,
+        319,
+        316,
+        13
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "/ Uptime /",
+      "source": "ocr",
+      "bbox": [
+        669,
+        455,
+        76,
+        12
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "© Update: 74 pending",
+      "source": "ocr",
+      "bbox": [
+        500,
+        499,
+        159,
+        13
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 60.0,
+      "text": "feat/instant-link-fast-indexing © ?",
+      "source": "ocr",
+      "bbox": [
+        62,
+        559,
+        277,
+        13
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "Be clipxdd — Konsole vox",
+      "source": "ocr",
+      "bbox": [
+        6,
+        6,
+        1905,
+        16
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "claude x : claude x opencode = claude x claude x confer: opencode x | x",
+      "source": "ocr",
+      "bbox": [
+        54,
+        104,
+        927,
+        30
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "83JC (LOQ 15ARP9)",
+      "source": "ocr",
+      "bbox": [
+        549,
+        169,
+        133,
+        12
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "=: 10.19 GiB / 23.15 GiB (44%)",
+      "source": "ocr",
+      "bbox": [
+        528,
+        259,
+        242,
+        12
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "0S: Cachyos x86_64",
+      "source": "ocr",
+      "bbox": [
+        516,
+        319,
+        143,
+        13
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "8 0s Age: 53 days",
+      "source": "ocr",
+      "bbox": [
+        501,
+        469,
+        134,
+        13
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "Lipxd feat/instant-Link-fast-indexing © 2 ) ssh clipxdd",
+      "source": "ocr",
+      "bbox": [
+        13,
+        559,
+        438,
+        13
+      ]
+    },
+    {
+      "start": 70.0,
+      "end": 70.0,
+      "text": "clipxd feat/instant-Link-fast-indexing © ? x clipxdd",
+      "source": "ocr",
+      "bbox": [
+        5,
+        604,
+        445,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "ono eee 8 ® © + -",
+      "source": "ocr",
+      "bbox": [
+        967,
+        12,
+        875,
+        16
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "< aec=",
+      "source": "ocr",
+      "bbox": [
+        16,
+        52,
+        1875,
+        16
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "x Brave 2)",
+      "source": "ocr",
+      "bbox": [
+        1594,
+        73,
+        313,
+        26
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "Elements console Sources Network Performance Appl Ea",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        89,
+        793,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "Library - clipxd",
+      "source": "ocr",
+      "bbox": [
+        1615,
+        99,
+        92,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "+ | 14:54:55-clipxd.com ~ @ = 5",
+      "source": "ocr",
+      "bbox": [
+        1045,
+        106,
+        851,
+        33
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "https://clipxd.com/",
+      "source": "ocr",
+      "bbox": [
+        1076,
+        145,
+        100,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "and does not guarantee the accessibility of your web} @.",
+      "source": "ocr",
+      "bbox": [
+        1279,
+        237,
+        623,
+        33
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "is also encouraged.",
+      "source": "ocr",
+      "bbox": [
+        1438,
+        267,
+        103,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "is sharing your screen",
+      "source": "ocr",
+      "bbox": [
+        1680,
+        279,
+        135,
+        31
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "controls are keyboard focusable|",
+      "source": "ocr",
+      "bbox": [
+        1224,
+        301,
+        179,
+        28
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "elements indicate their purpose and state",
+      "source": "ocr",
+      "bbox": [
+        1224,
+        356,
+        234,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "he page has a logical tab order S",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        395,
+        432,
+        25
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "isual order on the page follows DOM order a|",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        423,
+        749,
+        75
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "jUser focus is not accidentally trapped in a region v &",
+      "source": "ocr",
+      "bbox": [
+        1157,
+        477,
+        745,
+        37
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "he user's focus is directed to new content added to the page v 1S)",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        515,
+        741,
+        49
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "[HTMLS landmark elements are used to improve navigation v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        591,
+        641,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "JOffscreen content is hidden from assistive technology v J",
+      "source": "ocr",
+      "bbox": [
+        1157,
+        611,
+        749,
+        47
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "[Custom controls have associated v 2",
+      "source": "ocr",
+      "bbox": [
+        1157,
+        675,
+        738,
+        30
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "attributes match their roles| ?",
+      "source": "ocr",
+      "bbox": [
+        1213,
+        817,
+        686,
+        27
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "isnot present on the document <body> @",
+      "source": "ocr",
+      "bbox": [
+        1287,
+        856,
+        613,
+        37
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "[rote]s have all required [aria-*] attributes| v",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        910,
+        639,
+        25
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "[Elements with an ARIA [rote] that require children to contain a specific [rote] have all required children.",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        964,
+        584,
+        13
+      ]
+    },
+    {
+      "start": 86.0,
+      "end": 86.0,
+      "text": "are contained by their required parent element v af",
+      "source": "ocr",
+      "bbox": [
+        1208,
+        1024,
+        709,
+        25
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "ono eee 8 ® © + - 8x",
+      "source": "ocr",
+      "bbox": [
+        967,
+        12,
+        940,
+        16
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "Elements console Performance Memory Application Lighthouse _>> @ x",
+      "source": "ocr",
+      "bbox": [
+        1111,
+        87,
+        795,
+        15
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "and does not guarantee the of your web app, so manual",
+      "source": "ocr",
+      "bbox": [
+        1279,
+        247,
+        383,
+        13
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "elements indicate their purpose and state v",
+      "source": "ocr",
+      "bbox": [
+        1224,
+        356,
+        577,
+        13
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "isual order on the page follows DOM order v |",
+      "source": "ocr",
+      "bbox": [
+        1168,
+        422,
+        749,
+        77
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "focus is not accidentally trapped in a region",
+      "source": "ocr",
+      "bbox": [
+        1190,
+        497,
+        243,
+        13
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "JOffscreen content is hidden from assistive technology v",
+      "source": "ocr",
+      "bbox": [
+        1161,
+        638,
+        641,
+        13
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "attributes match their roles|",
+      "source": "ocr",
+      "bbox": [
+        1213,
+        817,
+        157,
+        27
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "isnot present on the document <body>",
+      "source": "ocr",
+      "bbox": [
+        1286,
+        858,
+        216,
+        35
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "[rote]s have all required [aria-*]",
+      "source": "ocr",
+      "bbox": [
+        1162,
+        910,
+        188,
+        25
+      ]
+    },
+    {
+      "start": 86.75,
+      "end": 86.75,
+      "text": "are contained by their required parent element v Ue",
+      "source": "ocr",
+      "bbox": [
+        1208,
+        1024,
+        709,
+        25
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "@ on 0 eee @ @ 8 x + - 8 x",
+      "source": "ocr",
+      "bbox": [
+        869,
+        12,
+        1038,
+        16
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "< e clipxd.com 8",
+      "source": "ocr",
+      "bbox": [
+        16,
+        35,
+        1725,
+        34
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "KSPACE read index forms on stop",
+      "source": "ocr",
+      "bbox": [
+        289,
+        167,
+        1083,
+        15
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "(@ Ree) 61:27 scree 2",
+      "source": "ocr",
+      "bbox": [
+        516,
+        186,
+        294,
+        12
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "© cursor-follow auto-zoom",
+      "source": "ocr",
+      "bbox": [
+        1202,
+        278,
+        190,
+        10
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "https:",
+      "source": "ocr",
+      "bbox": [
+        549,
+        292,
+        44,
+        23
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "Copy link i t i",
+      "source": "ocr",
+      "bbox": [
+        553,
+        337,
+        951,
+        26
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "SI t now — the page fills in live the fi deo lands when you stop * agent-queryable",
+      "source": "ocr",
+      "bbox": [
+        629,
+        373,
+        712,
+        25
+      ]
+    },
+    {
+      "start": 87.25,
+      "end": 87.25,
+      "text": "= Stop & get link ia Camera off ‘) Prompter",
+      "source": "ocr",
+      "bbox": [
+        540,
+        786,
+        376,
+        15
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "ono eee + - 8x",
+      "source": "ocr",
+      "bbox": [
+        967,
+        12,
+        940,
+        15
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "< e clipxd.com O88",
+      "source": "ocr",
+      "bbox": [
+        16,
+        51,
+        1754,
+        18
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "> clp @ Library Filter the library by title (é",
+      "source": "ocr",
+      "bbox": [
+        273,
+        98,
+        1251,
+        33
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "AE — read forms on stop",
+      "source": "ocr",
+      "bbox": [
+        311,
+        167,
+        1061,
+        15
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "(@ REC ) 01:28 ee",
+      "source": "ocr",
+      "bbox": [
+        516,
+        186,
+        165,
+        12
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "© salience gate",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        215,
+        156,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "https: t",
+      "source": "ocr",
+      "bbox": [
+        549,
+        287,
+        720,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "+ Import",
+      "source": "ocr",
+      "bbox": [
+        276,
+        313,
+        70,
+        13
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "= OCR + captions",
+      "source": "ocr",
+      "bbox": [
+        1201,
+        330,
+        129,
+        13
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "Copy link '",
+      "source": "ocr",
+      "bbox": [
+        553,
+        335,
+        687,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "Share it now ~ the page fills in Live and the FULL video Lands when you stop",
+      "source": "ocr",
+      "bbox": [
+        633,
+        371,
+        493,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "eco",
+      "source": "ocr",
+      "bbox": [
+        550,
+        463,
+        39,
+        9
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "The browser will ask which screen/window/tab to capture. System audio +",
+      "source": "ocr",
+      "bbox": [
+        568,
+        546,
+        509,
+        11
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "= Stop & get link fai Camera off Prompter",
+      "source": "ocr",
+      "bbox": [
+        540,
+        778,
+        376,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "@ NCP server - connected",
+      "source": "ocr",
+      "bbox": [
+        265,
+        982,
+        168,
+        30
+      ]
+    },
+    {
+      "start": 88.0,
+      "end": 88.0,
+      "text": "R ‘Sion out",
+      "source": "ocr",
+      "bbox": [
+        259,
+        1049,
+        209,
+        10
+      ]
+    }
+  ],
+  "event_track": [
+    {
+      "t": 88.868,
+      "kind": "click",
+      "text": "click at (0.22, 0.50)",
+      "data": {
+        "x": 0.219140625,
+        "y": 0.5006944444444444
+      }
+    }
+  ],
+  "summary": {
+    "tldr": "A screenshot shows a recording interface in a macOS recording application. The recording interface displays a waveform graphic, a text box showing “Recording your screen…”, and a “Stop & get link” button. The recording library shows a file path and timestamp. Various menu…",
+    "chapters": [
+      {
+        "start": 0.0,
+        "title": "A computer screen displays a web browser window showing a re…"
+      },
+      {
+        "start": 2.0,
+        "title": "A computer screen displays a web page with a recording inter…"
+      },
+      {
+        "start": 6.75,
+        "title": "A screenshot shows a dark interface with tabs and windows. O…"
+      },
+      {
+        "start": 7.5,
+        "title": "A screenshot shows a web page displaying performance metrics…"
+      },
+      {
+        "start": 7.75,
+        "title": "A screenshot shows a web page displaying performance metrics…"
+      },
+      {
+        "start": 8.0,
+        "title": "A screenshot shows a web page displaying performance metrics…"
+      },
+      {
+        "start": 8.0,
+        "title": "A screenshot shows a web page displaying performance metrics…"
+      },
+      {
+        "start": 8.0,
+        "title": "A screenshot shows a web page displaying performance metrics…"
+      }
+    ]
+  },
+  "redaction": {
+    "ran": false,
+    "policy": "none-phase1-stub"
+  },
+  "search": {
+    "transcript": "",
+    "screen_text": "8 oag a 80 x @ e & clipxd.com bpl@ a read index forms on stop (@ rec) 00:00 = library © veyo salience gate © recording cursor-follow auto-zoom 2 import recording your screen... = ocr+ captions settings sharing your screen. ice = stop & get link camera off prompter © ncp server - connected ‘sign out ong eee 8 @ x @ e clipxd.com qe%= ace forms on stop rec) 08:82 screen - 103 t recording recording - link is live 9 cursor-follow auto-zoom https: pe import = = ocr+ captions copy link ask agent i now — the page fills in live and the f deo lands when you stop * agent-queryable ere recording your screen... il clipxd.com is sharing your screen. hide the browser will ask which = stop & get link ima camera off prompter [0 | elements console sources network performance memory application security >> @ i x + | 14:54:55 -clipxd.com @ & https://clipxd.com/ performance accessibility best seo practices ‘there were issues affecting this run of lighthouse: = the page did not paint any content. please ensure you keep the browser window in the foreground during the load and try again. (no_fcp) performance values are estimated and may vary. the performance score is calculated directly from these metrics. see calculator. metrics collapse view contentful paint ! largest contentful paint error! error! ‘the page did not paint any content. please ensure ‘the page did not paint any content. please ensure you keep the browser window in the foreground you keep the browser window in the foreground during the load and try again. (no_fcp) during the load and try again. (no_fcp) ! total blocking time ! cumulative layout shift speed index error! ba console what's new < e & clipxd.com relea confer — pick a doc = [0 | elements console sources network performance memory x + | 14:54:55 -clipxd.com ~ @ memory usage: 38.6 mb there were issues affecting this run of lighthouse: + the page did not paint any content. please ensure you keep the browser window in the {first contentful paint contentful paint | speed index elements console sources network performance memory x @ & lipxd.com elements console sources network performance memory application : x the page did not paint any content. please ensure the page did not paint any content. please ensure [0 elements console sources network performance memory application lighthouse >> @ i x + | 14:54:55- clipxd.com ~ @ oon bx @ * 20280 x @ © + = < ie) & lipxd.com elements console sources network performance memory application lighthouse >> x first contentful paint contentful paint ! speed index error! you keep the browser window in the foreground insight use efficient cache lifetimes — error! v ! layout shift culprits — error! ! document request latency — error dom size — v font display — error! < ie) & lipxd.com 658 | elements console sources network performance memory application lighthouse _ >> : x + | 14:54:55-clipxd.com ~ q 1 links have a discernible name — error v ! elements have alternate text. — error! ! no form fields have multiple labels — error! v 1 skip links are focusable. — error v ! image elements do not have attributes that are redundant text. — error! v | the document does not use — error! v notless than 5. — error ! touch targets have sufficient size and spacing. — error! v document has a main landmark. — v ! attributes are used correctly — error! v elements with or do not have conflicts — error! v svg elements with an ing role have an accessible text alternative — error! v tables have different content in the summary attribute and — error! v allheading elements contain content. — error! v console what's new og og | elements console sources network performance memory application lighthouse _ >> : x = the page did ints paint any content. please ensure you keep the browser window in the com x © + - 8x @ & lipxd.com 658 | elements console sources network performance memory application _ lighthouse >> @ i x application > d) manifest service workers © storage storage > local storage » &b session storage » © cookies & cache storage storage buckets background services & back/forward cache bounce tracking mitig qd notifications & payment handler » i> speculative loads push messaging 5 extension storage on this page you can view, add, edit, and delete extension storage key-value pairs. learn more > top | elements console sources network performance memory application lighthouse : x + the page did not paint any please ensure you keep the browser window in the {first contentful paint largest contentful paint ! total blocking time ! layout shift toregrouna auring tne 1oaa ana try again. 1 first contentful paint largest contentful paint ! total blocking time cumulative layout shift during the load and try again. (no_fcp during the load and try again. (no_fcp insight: | use efficient cache lifetimes — error! v ! request latency — error first contentful paint largest contentful paint ! request latency — error v @ & lipxd.com q0@8%= og | elements console sources network performance memory application lighthouse : x ! first contentful paint ! largest contentful paint 86 ono @ eo + - 8x e & clipxd.com library - clipxd = clipxd.com e filter the library by title. c @ recc > clip @ y by @ memory usage: 102 mb library ©) @ browser screen recording paste link 4 cap.so/.. youtube.com/. any video link read it screen agent ep ) © settings ~ © server - connected ng 6 ong eee @b @ rg + - 8x e & clipxd.com library - clipxd > @ p filter the library by title. (+) c @ memory usage: 102 mb paste link 4 loom.com/share/.. - cap.so/.. - youtube.com/.. - any video link read it ‘screen ‘screen ask agent z = © settings 9:00 > recording events-1) scenes-11 acr-152) (events-1) | scenes-16 © np server - connected oe ex co bx @ eleiel+ - 8x < qq & clipxd.com q@@%= [0 elements console sources network performance memory application lighthouse >> @ : x elements console sources network performance memory application lighthouse >> : x oa go eee 8 © + - 8x < dlipxd.com | elements console sources network performance memory application lighthouse _>> x fyour web app. automatic detection can only detect a subset of issues and does not guarantee the accessibility of your web app, so manual esting is also encouraged controls are keyboard focusable| v interactive elements indicate their purpose and state : he page has a logical tab order isual order on the page follows dom order v juser focus is not accidentally trapped in a region he user's focus is directed to new content added to the page v [htmls landmark elements are used to improve navigation content is hidden from assistive technology v [custom controls have associated labels v [custom controls have aria roles| v attributes match their roles| v isnot the document <body> [rote]s have all required [aria-*] v with an aria [rote] that require children to contain a specific [rote] have all required children, are contained by their required parent element v be clipxd : claude — konsole file edit view bookmarks plugins settings help newtab ff] split view ~ copy paste q 2 | dade = 6 use std::time::instant; 8 #[tokio::ma 9 async fn main() { 18 let args: vecestring> = std::env::args().collect(); oo _ +8 lines ran 1 shell command @ built. now let's copy the clip (since gemini's deep pass will overwrite in place) and run the real deep pass against the same test video for a fair comparison: ran 3 shell commands @ now running the real gemini deep pass against this clip, timing it: ran 1 shell command = @ the upload succeeded (auth is valid), but generatecontent hit a transient 503 (gemini overloaded) after 39s. let me retry once — this is a documented transient error, not a real failure: ran 1 shell command b @ two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here. © gemini-2.5-flash-lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-lite (stable) as the current cheap/fast tier. let me retry using the model override my code already supports: 6 ran 1 shell command | @ worked — 17.6 seconds total (upload + wait for active + generate). let's see what it actually produced: =) ran 4 shell command bd © excellent output — gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. let me check on the timing breakdown now. ran 1 shell command a @ that's a stdout-buffering artifact, not a real 10-minute hang — python block-buffers non-tty output. let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read. ba © running 1 shell e l$ kill -9 250457 250459 2>/dev/null; sleep 1 export. path=\"/hone/rsx/desktop/projx/clipxd-venv/bin: $path\" (0) python3 -u - import time, glob, sys 5 from paddleocr import © background command \"time paddleocr with mkldnn disabled across all frames (matching the real sidecar)\" failed with exit code 1 = verify: cargo build/test, spa build, code review = x auto-update failed - run /docte = >> bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - + for agents io) be clipxd : claude — konsole vo file edit view bookmarks plugins settings help < newtab ff] split view ~ copy paste q x leadecho:claude x opencode x x claude x confer: opencode x 8 #[tokio: :ma 18 let args: vecestring> = oo @ built. now let's copy the clip (since gemini's deep pass will overwrite index. json in place) and run the real deep pass against the same test video for a fair comparison: ran 1 shell b © two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here. ry @ gemini-2.5-flash-lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-lite (stable) as the current cheap/fast tier. let me retry using the model override my code already supports: 6 ran 1 shell command is @ worked — 17.6 seconds total (upload + wait for active + generate). let's see what it actually produced: excellent output — gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. let me check on the paddlecr timing breakdown now. that's a stdout-buffering artifact, not a real 10-minute hang — python block-buffers non-tty output. let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read. bad running 1 shell command.. e export path=\" /home/rsx/desktop/projx/clipxd-venv/bin: (0) import time, glob, sys time} background \"time paddleocr with mkldnn disabled across all frames (matching the real sidecar)\" failed with exit code 1 @ * verifying and reviewing 41s 1 42.2k tokens) 2 caption calls g v with enrich, verify: cargo build/test, spa build, code review >> bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - + for agents be clipxd : claude — konsole vox file edit view bookmarks plugins settings help. [e [if] split view ~ copy paste q find clipxd : claude x | leadecho: claude x opencode x _utkrusht-ai: claude x utkrusht-ai: claude x confer: opencode x + 10 let args: vec<string> = std::env::args().collect() +8 lines @ built. now let's copy the clip (since gemini's deep pass will overwrite in place) and run the real deep pass against the same test video for a fair comparison @ now running the real gemini deep pass against this clip, timing it @ the upload succeeded (auth is valid), but generatecontent hit a transient 503 (gemini overloaded) after 39s. let me retry once — this is a documented transient error, not a real failure @ two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here gemini-2.5-flash-lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-lite (stable) as the current cheap/fast tier. let me retry using the model override my code already supports: @ worked — 17.6 seconds total (upload + wait for active + generate). let's see what it actually produced @ that's a stdout-buffering artifact, not a real 10-minute hang — python block-buffers non-tty output. let me kill it and rerun unbuffered with a smaller frame count for a fast, clean read @ running 1 shell kill -9 250457 250459 2>/dev/null; sleep 1 export. path=\"/hone/rsx/desktop/projx/clipxd-venv/bin: python3 -u - <<'eof from paddleocr import v clip id at v with a verify: spa build, code review x auto-update failed - run /doctor >» bypass permissions on (shift+tab to cycle) - esc to interrupt - ctrl+t to hide tasks - ~ for agents newtab ff split view v copy paste q find clipxd: claude x | leadecho: claude x cloakpipe.co: opencode claude x utkrusht-ai: claude x confer: opencode 18 let args: vec<string> = std: :env::args().collect() lines ran 4 shell command © two 503s in a row is suspicious — let me check if gemini-2.5-flash-lite is even a valid/current model id for this key, since my knowledge cutoff might be stale here © gemini-2.5-flash-lite exists but may be getting deprioritized — the catalog now has gemini-3.1-flash-lite (stable) as the current cheap/fast tier. let me retry using the model override my code already supports: @ worked 17.6 seconds total (upload + wait for active + generate). let's see what it actually produced © excellent output — gemini correctly narrated the error-then-resolved arc across the whole timeline, which no single-frame caption could represent. let me check on the paddle0cr timing breakdown now, running 4 shell export path=\"/home/rsx/desktop/projx/clipxd-venv/bin:$path\" to=time.time() from paddleocr import paddleoc. : and reviewing changes.. (22m 45s 1 42.2k tokens - thinking with xhigh effort instant clip ia stage commit v + concurrent caption calls with lighter franc v gemini optional off} + endpoint = verify: cargo build/test, spa build, code review > ok this is bypass permissions on (shift+tab to cycle) be clipxd : fish — konsole vox clipxd: claude x : claude x cloakpipe.co: opencode claude x utkrusht-ai: claude x confer: opencode x | clipxd::fish x (loq 15arp9) @ amd ryzen 7 7435hs (16) @ 4.55 ghz nvidia geforce rtx 4050 max-q / mobile [discrete] cant gt 1920x1080 in 16\", 144 hz [built-in] j: 387.66 gib / 472.94 gib (52) - btrfs 10.80 gib / 23.15 gib = 1 10.19 gib / 23.15 gib (44%) 0s: cachyos linux 7.1.2-3-cachyos kwin (wayland) —— (sde: kde plasma 6.7.1 konsole 26.4.2 5 (appimage), 14 (flatpak), 1648 (pacman) breeze / uptime / update —————_, | 8 0s age: 53 days @ uptime: 3 hours, 8 mins size: 236 x 62 cam i 1920x1080 in 16\", 144 hz [built-in] j: 387.66 gib / 472.94 gib - btrfs 10.80 gib / 23.15 gib (47%) kde plasma 6.7.1 / uptime / update © uptime: 3 hours, 8 mins claude x leadecho : claude x opencode claude x utkrusht-ai: claude x confer: opencode | clipxd::fish x cam 1920x1080 in 16\", 144 hz [built-in] j: 387.66 gib / 472.94 gib (>) - btrfs a os: cachyos x86_64 / uptime / © update: 74 pending feat/instant-link-fast-indexing © ? be clipxdd — konsole vox claude x : claude x opencode = claude x claude x confer: opencode x | x 83jc (loq 15arp9) =: 10.19 gib / 23.15 gib (44%) 0s: cachyos x86_64 8 0s age: 53 days lipxd feat/instant-link-fast-indexing © 2 ) ssh clipxdd clipxd feat/instant-link-fast-indexing © ? x clipxdd ono eee 8 ® © + - < aec= x brave 2) elements console sources network performance appl ea library - clipxd + | 14:54:55-clipxd.com ~ @ = 5 https://clipxd.com/ and does not guarantee the accessibility of your web} @. is also encouraged. is sharing your screen controls are keyboard focusable| elements indicate their purpose and state he page has a logical tab order s isual order on the page follows dom order a| juser focus is not accidentally trapped in a region v & he user's focus is directed to new content added to the page v 1s) [htmls landmark elements are used to improve navigation v joffscreen content is hidden from assistive technology v j [custom controls have associated v 2 attributes match their roles| ? isnot present on the document <body> @ [rote]s have all required [aria-*] attributes| v [elements with an aria [rote] that require children to contain a specific [rote] have all required children. are contained by their required parent element v af ono eee 8 ® © + - 8x elements console performance memory application lighthouse _>> @ x and does not guarantee the of your web app, so manual elements indicate their purpose and state v isual order on the page follows dom order v | focus is not accidentally trapped in a region joffscreen content is hidden from assistive technology v attributes match their roles| isnot present on the document <body> [rote]s have all required [aria-*] are contained by their required parent element v ue @ on 0 eee @ @ 8 x + - 8 x < e clipxd.com 8 kspace read index forms on stop (@ ree) 61:27 scree 2 © cursor-follow auto-zoom https: copy link i t i si t now — the page fills in live the fi deo lands when you stop * agent-queryable = stop & get link ia camera off ‘) prompter ono eee + - 8x < e clipxd.com o88 > clp @ library filter the library by title (é ae — read forms on stop (@ rec ) 01:28 ee © salience gate https: t + import = ocr + captions copy link ' share it now ~ the page fills in live and the full video lands when you stop eco the browser will ask which screen/window/tab to capture. system audio + = stop & get link fai camera off prompter @ ncp server - connected r ‘sion out",
+    "events": "click at (0.22, 0.50)"
+  }
+}

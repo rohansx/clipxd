@@ -16,7 +16,7 @@ pub mod clean;
 pub mod query;
 pub mod schema;
 
-pub use clean::clean_index;
+pub use clean::{caption_similarity, clean_index};
 pub use query::{Answer, FrameContext, TextHit};
 pub use schema::{
     AppFocus, Chapter, Emphasis, EmphasisSegment, EmphasisWord, Event, Index, Metadata, OnScreenText,

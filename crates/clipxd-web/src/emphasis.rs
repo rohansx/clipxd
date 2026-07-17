@@ -167,7 +167,7 @@ mod tests {
             },
         );
         idx.transcript.push(TranscriptSegment { start: 0.0, end: 1.0, speaker: None, text: "hello world".into() });
-        idx.visual_timeline.push(VisualMoment { t: 5.0, salience: 1.0, caption: "not speech".into(), delta: "d".into(), frame_ref: None });
+        idx.visual_timeline.push(VisualMoment { t: 5.0, salience: 1.0, caption: "not speech".into(), delta: "d".into(), frame_ref: None, label: None });
         idx.on_screen_text.push(OnScreenText { start: 1.0, end: 1.0, text: "also not speech".into(), source: TextKind::Ocr, bbox: None });
         let block = transcript_block(&idx);
         assert!(block.contains("hello world"));

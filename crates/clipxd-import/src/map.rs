@@ -70,6 +70,7 @@ pub fn to_index(
             caption: m.caption.clone(),
             delta: m.delta_kind.clone(),
             frame_ref: m.frame_ref.as_deref().map(rel_frame),
+            label: None, // the indexing-time label pass fills this in later, if a key exists
         })
         .collect();
 

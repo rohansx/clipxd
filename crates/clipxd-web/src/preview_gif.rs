@@ -92,7 +92,7 @@ mod tests {
     use clipxd_index::VisualMoment;
 
     fn moment(t: f64, frame_ref: Option<&str>) -> VisualMoment {
-        VisualMoment { t, salience: 1.0, caption: String::new(), delta: "d".into(), frame_ref: frame_ref.map(String::from) }
+        VisualMoment { t, salience: 1.0, caption: String::new(), delta: "d".into(), frame_ref: frame_ref.map(String::from), label: None }
     }
 
     fn idx_with(moments: Vec<VisualMoment>) -> Index {
