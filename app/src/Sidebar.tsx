@@ -92,7 +92,12 @@ export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }
         </span>
       </div>
 
-      <div className="side-workspace">WORKSPACE · local</div>
+      {/* Tell the truth about where the clips actually live. Signed into the hosted service,
+          "local" was simply false — and claiming local-first while running in our cloud
+          undercuts the exact trust story the badge exists to tell. */}
+      <div className="side-workspace">
+        {user ? `WORKSPACE · ${user.username || "cloud"}` : "WORKSPACE · local"}
+      </div>
 
       {items.map((n) => {
         const active = isActive(n.view);
@@ -123,7 +128,11 @@ export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }
           <span className="dot signal" style={{ width: 8, height: 8, boxShadow: "0 0 8px var(--signal)" }} />
           MCP server · connected
         </div>
-        <div className="sub">0 px egress · {clipCount} clips indexed</div>
+        {/* "0 px egress" is a claim about LOCAL mode (your pixels never leave the machine). On
+            the hosted service the video is on our box, so state what's actually true there. */}
+        <div className="sub">
+          {user ? `${clipCount} clip${clipCount === 1 ? "" : "s"} indexed` : `0 px egress · ${clipCount} clips indexed`}
+        </div>
         {user && (
           <div className="side-user">
             <span className="who" title={user.email}>{user.name || user.email}</span>

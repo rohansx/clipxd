@@ -61,19 +61,12 @@ export function WatchBody(p: WatchBodyProps) {
     ? { transformOrigin: `${kf.cx * 100}% ${kf.cy * 100}%`, transform: `scale(${kf.scale})` }
     : undefined;
 
-  // nearest captioned moment to the playhead → live caption
-  const moment = index.visual_timeline.reduce<{ m: (typeof index.visual_timeline)[number]; d: number } | null>(
-    (acc, m) => {
-      const d = Math.abs(m.t - t);
-      return !acc || d < acc.d ? { m, d } : acc;
-    },
-    null,
-  );
-  // Cap the live caption badge's length — an older clip's caption (predating the server-side
-  // repetition-collapse fix) or just a genuinely long one otherwise overflows the whole video
-  // (no natural max-height for text sitting over playback controls).
-  const rawCaption = moment && moment.d < 1.2 ? moment.m.caption : null;
-  const caption = rawCaption && rawCaption.length > 140 ? rawCaption.slice(0, 140).trimEnd() + "…" : rawCaption;
+  // The live scene-caption badge is gone: it was machine narration of a video the viewer is
+  // already watching, and it sat squarely on top of the player controls (its 42px started at
+  // bottom:12px, inside the 53px control bar, wiping out the seek track). The same caption is
+  // still reachable three better ways — the seek-bar marker tooltips, the Moments tab, and the
+  // outline — none of which fight the controls. Deleting it also retires the 140-char clamp and
+  // the line-clamp that existed only to contain it.
   const zoomLabel = manualScale ? `✎ manual ${manualScale.toFixed(1)}×` : kf && kf.scale > 1.05 ? `◎ ${kf.scale.toFixed(1)}× auto-zoom` : null;
 
   const frameRef = useRef<HTMLDivElement>(null);
@@ -158,10 +151,6 @@ export function WatchBody(p: WatchBodyProps) {
                 onPause={() => setPlaying(false)}
                 onVolumeChange={(e) => setMuted((e.currentTarget as HTMLVideoElement).muted)}
               />
-              {caption && <div className="cap-badge">{caption}</div>}
-              {/* Styled subtitle layer: the user's chosen design + the indexing-time emphasis.
-                  Only renders when a transcript exists AND the user has picked a design. */}
-              {hasVideo && <SubtitleLayer index={index} t={t} />}
               {/* single glass control bar — the whole player chrome, overlaid Loom-style */}
               <div className="player-bar">
                 <button className="pbtn" onClick={togglePlay} title={playing ? "Pause" : "Play"} aria-label={playing ? "Pause" : "Play"}>
@@ -171,7 +160,7 @@ export function WatchBody(p: WatchBodyProps) {
                 <div className="pseek" onClick={onScrub} role="slider" aria-label="Seek" aria-valuenow={Math.round(shownT)} aria-valuemax={Math.round(effDur)}>
                   <div className="pseek-fill" style={{ width: `${pct}%` }} />
                   {index.visual_timeline.map((m, i) => (
-                    <span key={i} className="pseek-mark" title={m.caption} style={{ left: `${effDur ? (m.t / effDur) * 100 : 0}%` }} />
+                    <span key={i} className="pseek-mark" title={m.label || m.caption} style={{ left: `${effDur ? (m.t / effDur) * 100 : 0}%` }} />
                   ))}
                   <div className="pseek-head" style={{ left: `${pct}%` }} />
                 </div>
@@ -194,7 +183,7 @@ export function WatchBody(p: WatchBodyProps) {
       </div>
 
       <div className="salient-note">
-        <span className="ok">●</span> salient markers — veyo emitted {index.visual_timeline.length} captioned moments
+        <span className="ok">●</span> {index.visual_timeline.length} key moment{index.visual_timeline.length === 1 ? "" : "s"} marked on the timeline — click a marker to jump
       </div>
 
       {/* Chapters rail removed.  Two reasons: (1) the chapter list was the LLM's
@@ -206,9 +195,15 @@ export function WatchBody(p: WatchBodyProps) {
           toolbar below already lives in the same gap, and the toolbar is the one a
           user is much more likely to need than a flat chapter list. */}
 
-      {/* editor power-features: manual zoom, cut/speed, render, export */}
+      {/* Editor power-features: manual zoom, cut/speed, render, export. Collapsed by default —
+          this is an authoring surface, and most visits to a clip page are someone watching, not
+          editing. Native <details> so there's no state, no hook, and no JS; the wrapper (rather
+          than putting <details> on .editor-controls itself) keeps that element's flex layout
+          exactly as it was. */}
+      <details className="editor-details">
+        <summary className="editor-summary">Cinematic editor — zoom, cut, speed, render</summary>
       <div className="editor-controls">
-        <div className="ec-head">CINEMATIC EDITOR — manual zoom overrides auto · cut/speed ramp · render to MP4</div>
+        <div className="ec-head">manual zoom overrides auto · cut/speed ramp · render to MP4</div>
         <div className="toolbar">
           <button className="btn" onClick={p.addRegion}>
             + Zoom
@@ -278,6 +273,7 @@ export function WatchBody(p: WatchBodyProps) {
           hint="“✂ Cut” skips a span; “⏩ Speed” ramps it 2×"
         />
       </div>
+      </details>
     </div>
   );
 }

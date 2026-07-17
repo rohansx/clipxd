@@ -6,6 +6,10 @@ import { usePrefersReducedMotion } from "./motion";
 interface ImportProps {
   initialUrl?: string;
   onDone: (id: string) => void;
+  /** Fired the instant the auto-run consumes `initialUrl`, so the caller can drop it. Without
+   *  this the URL stays parked in App state and every later remount of this view (sidebar →
+   *  Import) auto-runs the SAME url again, silently importing a duplicate. */
+  onUrlConsumed?: () => void;
   showToast: (m: string) => void;
 }
 
@@ -26,13 +30,17 @@ const STEP_DEFS = [
   { label: "Publish index + MCP", detail: "/clip/<id> + index.json sidecar" },
 ];
 
-export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
+export function ImportView({ initialUrl, onDone, onUrlConsumed, showToast }: ImportProps) {
   const reduced = usePrefersReducedMotion();
   const [url, setUrl] = useState(initialUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(-1);
   const [err, setErr] = useState<string | null>(null);
   const autoRan = useRef(false);
+  /** Set once an import for this URL has actually landed. `busy` alone can't prevent a repeat:
+   *  it drops back to false on success, which re-arms the (still pre-filled) button — that is
+   *  how the paste-bar flow produced two identical clips. */
+  const [doneUrl, setDoneUrl] = useState<string | null>(null);
 
   const stepState = (i: number): StepState => {
     if (!busy && active < 0) return "pending";
@@ -43,7 +51,9 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
 
   const run = async () => {
     const u = url.trim();
-    if (!u || busy) return;
+    // `busy` blocks a CONCURRENT double-submit; `doneUrl` blocks a SEQUENTIAL one (clicking
+    // the re-armed button after the first import already succeeded).
+    if (!u || busy || u === doneUrl) return;
     setBusy(true);
     setErr(null);
     setActive(0);
@@ -52,6 +62,7 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
       const id = await importUrl(u);
       timers.forEach(window.clearTimeout);
       setActive(STEP_DEFS.length);
+      setDoneUrl(u);
       showToast("Imported — opening your clip");
       onDone(id);
     } catch (e) {
@@ -66,6 +77,7 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
   useEffect(() => {
     if (initialUrl && initialUrl.trim() && !autoRan.current) {
       autoRan.current = true;
+      onUrlConsumed?.();
       void run();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,8 +102,13 @@ export function ImportView({ initialUrl, onDone, showToast }: ImportProps) {
               autoFocus
             />
           </div>
-          <button className="btn-signal btn-pill" onClick={run} disabled={busy || !url.trim()} style={{ padding: "0 22px" }}>
-            {busy ? <span className="spin" /> : "Read it →"}
+          <button
+            className="btn-signal btn-pill"
+            onClick={run}
+            disabled={busy || !url.trim() || url.trim() === doneUrl}
+            style={{ padding: "0 22px" }}
+          >
+            {busy ? <span className="spin" /> : url.trim() === doneUrl ? "✓ Imported" : "Read it →"}
           </button>
         </div>
 

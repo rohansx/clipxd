@@ -30,6 +30,10 @@ export interface VisualMoment {
   t: number;
   salience: number;
   caption: string;
+  /** A short (<=6 word) action label written by the index-time cleanup pass — "Introduces the
+   *  elephants". Absent on clips indexed before that pass existed, or when no LLM key was
+   *  configured, so every consumer MUST fall back to `caption`. */
+  label?: string;
   delta: string;
   frame_ref?: string;
 }

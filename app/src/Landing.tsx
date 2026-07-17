@@ -9,6 +9,7 @@ interface LandingProps {
   toggleTheme: () => void;
   onOpenApp: () => void;
   onImport: () => void;
+  onDocs: () => void;
   onLogin?: () => void;
 }
 
@@ -49,7 +50,7 @@ const WIPE_MAX = 96;
 const WIPE_AUTO_MIN = 16;
 const WIPE_AUTO_MAX = 82;
 
-export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: LandingProps) {
+export function Landing({ theme, toggleTheme, onOpenApp, onImport, onDocs, onLogin }: LandingProps) {
   const reduced = usePrefersReducedMotion();
   const [wipe, setWipe] = useState(50);
   const [autoSweep, setAutoSweep] = useState(true);
@@ -522,7 +523,7 @@ export function Landing({ theme, toggleTheme, onOpenApp, onImport, onLogin }: La
               </button>
               <button
                 className="btn"
-                onClick={() => window.open("https://github.com/rohansx/clipxd", "_blank", "noopener,noreferrer")}
+                onClick={onDocs}
                 style={{ fontSize: 15, padding: "13px 22px" }}
               >
                 Read the docs

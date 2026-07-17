@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useEscape } from "./useEscape";
 
 const SAMPLE = `Paste your script here — clipxd scrolls it while you record, so you can read naturally and still look at your camera.
 
@@ -44,6 +45,7 @@ function savePrompterConfig(c: PrompterConfig) {
 // Eye-line placement (just below the camera, top-center) so the presenter's gaze stays near
 // the lens. Opacity / size / speed / mirror are all adjustable and persisted.
 export function Prompter({ onClose }: { onClose: () => void }) {
+  useEscape(onClose);
   const [cfg, setCfg] = useState<PrompterConfig>(loadPrompterConfig);
   const [scrolling, setScrolling] = useState(false);
   const [editing, setEditing] = useState(false);

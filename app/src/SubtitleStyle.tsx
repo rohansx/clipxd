@@ -125,7 +125,9 @@ export function SubtitleLayer({ index, t }: { index: Index; t: number }) {
   const posCss: React.CSSProperties =
     style.position === "top" ? { top: "8%" }
     : style.position === "center" ? { top: "50%", transform: "translateY(-50%)" }
-    : { bottom: "12%" };
+    // 12% alone lands inside the ~53px player bar on any video shorter than ~442px, putting the
+    // subtitle on top of the seek track. Floor it just above the bar.
+    : { bottom: "max(12%, 64px)" };
   return (
     <div
       className={"subtitle-layer sub-" + style.design}
@@ -168,13 +170,17 @@ export function SubtitleStyleBar({
   };
 
   return (
+    // Collapsed by default: styling subtitles is authoring, and most clip-page visits are
+    // someone watching. Native <details> — no state, no JS. Wrapping (rather than converting
+    // .subtitle-style-bar itself) leaves that element's flex layout untouched.
+    <details className="ssb-details">
+      <summary className="ssb-summary">Edit subtitles</summary>
     <div className="subtitle-style-bar">
       <div className="ssb-head">
-        <b>Subtitle design</b>
         <span className="ssb-note">
           {hasEmphasis
-            ? "focus words from the Ollama pass are available ✓"
-            : "no focus-word pass yet — re-enrich after indexing to get emphasis"}
+            ? "highlighted keywords are ready ✓"
+            : "keyword highlighting isn’t ready yet — re-index this clip to add it"}
         </span>
       </div>
       <div className="ssb-designs">
@@ -200,7 +206,7 @@ export function SubtitleStyleBar({
         </div>
         <label className="ssb-toggle">
           <input type="checkbox" checked={style.emphasis} onChange={(e) => setStyle((s) => ({ ...s, emphasis: e.target.checked }))} />
-          use focus words
+          highlight keywords
         </label>
       </div>
       {/* live preview against the first transcript segment */}
@@ -211,6 +217,7 @@ export function SubtitleStyleBar({
         {saving ? <span className="spin" /> : "Save style"}
       </button>
     </div>
+    </details>
   );
 }
 

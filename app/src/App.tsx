@@ -284,6 +284,7 @@ export default function App() {
               toggleTheme={toggleTheme}
               onOpenApp={() => goCloud("library")}
               onImport={goImport}
+              onDocs={() => goCloud("docs")}
               onLogin={goAuth}
             />
           </motion.main>
@@ -455,7 +456,17 @@ function ViewBody(p: {
           <motion.div key="import" className="cloud-view-wrap" {...baseProps}>
             <ImportView
               initialUrl={p.importUrl}
-              onDone={p.afterCreate}
+              // Drop the parked URL the moment the auto-run consumes it, so coming back to
+              // Import later doesn't re-import the same link.
+              onUrlConsumed={() => p.setImportUrl(undefined)}
+              // Land the user ON the finished clip. Previously this only reloaded the library
+              // and rewrote ?clip=, leaving them parked on the form with a live pre-filled
+              // button and no sign it had worked — which is what produced duplicate imports.
+              // (Recording doesn't route through here: it navigates itself via stopAndOpen.)
+              onDone={(id) => {
+                p.afterCreate(id);
+                p.openClip(id);
+              }}
               showToast={p.showToast}
             />
           </motion.div>

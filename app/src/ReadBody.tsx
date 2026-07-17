@@ -36,7 +36,7 @@ export function ReadBody({ id, index, t, seek }: ReadBodyProps) {
     <div className="read-body">
       <div className="read-head">
         <span className="lbl">INDEX</span>
-        <span className="engines mono">veyo · whisper.cpp · PaddleOCR · Moondream2</span>
+        <span className="engines mono">transcript · on-screen text · moments</span>
       </div>
       <div className="read-tabs">
         {tabs.map((tb) => (
@@ -101,9 +101,11 @@ function Moments({ id, index, t, seek }: ReadBodyProps) {
             ) : (
               <span className="moment-thumb moment-thumb-empty" aria-hidden />
             )}
+            {/* Prefer the cleaned action label ("Introduces the elephants") over the raw vision
+                caption; older clips (and any indexed without an LLM key) have no label. */}
             <div className="moment-text">
               <span className="moment-t mono">{fmt(m.t)}</span>
-              <span className="moment-cap">{m.caption}</span>
+              <span className="moment-cap" title={m.label ? m.caption : undefined}>{m.label || m.caption}</span>
             </div>
           </button>
         );

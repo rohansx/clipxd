@@ -15,6 +15,7 @@ import {
 } from "./CameraConfig";
 import { apiBase } from "./api";
 import { usePrefersReducedMotion } from "./motion";
+import { useEscape } from "./useEscape";
 import {
   recordLastClipPending,
   recordLastClipReady,
@@ -680,6 +681,7 @@ function CameraBubble({ stream, cfg }: { stream: MediaStream; cfg: CameraConfig 
 // inset inside the bubble — a soft blur, a solid, or a gradient for a clean produced look.
 function CameraSettings({ cfg, setCfg, onClose }: { cfg: CameraConfig; setCfg: (c: CameraConfig) => void; onClose: () => void }) {
   const reduced = usePrefersReducedMotion();
+  useEscape(onClose);
   const set = (patch: Partial<CameraConfig>) => setCfg({ ...cfg, ...patch });
   const setFilter = (patch: Partial<CameraConfig["filter"]>) => set({ filter: { ...cfg.filter, ...patch } });
   const setBg = (patch: Partial<CameraConfig["background"]>) => set({ background: { ...cfg.background, ...patch } });

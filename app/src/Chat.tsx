@@ -64,7 +64,12 @@ export function Chat({ clips, onOpen }: ChatProps) {
         reply = {
           who: "agent",
           text,
-          cites: ranked.map((r) => ({ id: r.c.id, label: `clip:${r.c.id.replace(/^clp_/, "")}` })),
+          // Cite the clip by its title — a raw `clip:18c2c723…` tells the reader nothing about
+          // which clip the answer came from. Fall back to the short id only for untitled clips.
+          cites: ranked.map((r) => ({
+            id: r.c.id,
+            label: r.c.metadata.title || `clip:${r.c.id.replace(/^clp_/, "")}`,
+          })),
         };
       }
       setThread((t) => [...t.filter((m) => !m.thinking), reply]);
@@ -107,7 +112,7 @@ export function Chat({ clips, onOpen }: ChatProps) {
                 <div className="cites">
                   <span className="lead">grounded in:</span>
                   {m.cites.map((c) => (
-                    <button key={c.id} className="cite" onClick={() => onOpen(c.id)}>
+                    <button key={c.id} className="cite" onClick={() => onOpen(c.id)} title={c.id}>
                       {c.label}
                     </button>
                   ))}

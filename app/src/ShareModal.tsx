@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import { usePrefersReducedMotion } from "./motion";
+import { useEscape } from "./useEscape";
 
 interface ShareModalProps {
   url: string;
@@ -27,6 +28,7 @@ function splitUrl(url: string): { base: string; tail: string } {
  */
 export function ShareModal({ url, onClose }: ShareModalProps) {
   const reduced = usePrefersReducedMotion();
+  useEscape(onClose);
   const [copied, setCopied] = useState(false);
   const { base, tail } = splitUrl(url);
   const copy = async () => {

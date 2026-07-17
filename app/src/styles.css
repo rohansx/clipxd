@@ -845,6 +845,18 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   background:var(--panel-2);border:1px solid var(--border);
   border-radius:var(--r-sm);padding:2px 6px;
 }
+/* First-run card — shown only when the library is genuinely empty (not when a filter matches
+   nothing). Points back at the paste-bar directly above it. */
+.first-run{
+  margin-top:26px;padding:30px 28px;text-align:center;
+  border:1px dashed var(--border-2);border-radius:var(--r);background:var(--panel);
+}
+.first-run-title{font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:-.01em}
+.first-run-sub{
+  margin:10px auto 0;max-width:520px;font-size:13.5px;line-height:1.6;color:var(--text-2);
+}
+.first-run-or{margin-top:16px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-3)}
+
 .empty{
   color:var(--text-3);padding:60px;text-align:center;grid-column:1/-1;
   font-family:var(--font-mono);font-size:13px;
@@ -923,6 +935,11 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
      visibly distinct so the camera-stage frame still reads as a frame, not a hole. */
   background:var(--panel-3);position:relative;overflow:hidden;box-shadow:var(--clay);
 }
+/* Hug the video. .vframe.has-player already shrink-wraps the player, but the shell is a
+   stretch-aligned flex child of .watch-body, so it kept painting full-column — a portrait clip
+   left ~640px of dead panel either side. Scoped with :has() because .stage-shell is shared with
+   the recording preview (.vframe.mock), which SHOULD keep stretching. */
+.stage-shell:has(.vframe.has-player){align-self:center;max-width:100%}
 .scan-sweep{position:absolute;inset:0;z-index:3;pointer-events:none;overflow:hidden}
 .scan-sweep span{
   position:absolute;top:0;bottom:0;width:36%;
@@ -965,15 +982,9 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   font-family:var(--font-mono);font-size:10.5px;color:#fff;
   background:rgba(0,0,0,.5);padding:3px 8px;border-radius:8px;
 }
-.cap-badge{
-  position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:4;
-  max-width:84%;text-align:center;font-size:13px;color:#fff;
-  background:rgba(0,0,0,.55);backdrop-filter:blur(6px);
-  padding:6px 14px;border-radius:99px;
-  /* Defense-in-depth: the JS side already caps caption length, but a badge with this much
-     text sitting over playback controls has no natural height limit otherwise — clamp it. */
-  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
-}
+/* (.cap-badge removed — the live scene-caption sat on top of the player controls and was
+   machine narration of a video the viewer is already watching. The same text still lives on
+   the seek-bar marker tooltips, the Moments tab, and the outline.) */
 
 /* single glass control bar — the whole player chrome, overlaid on the video */
 .vframe video{cursor:pointer}
@@ -1022,7 +1033,25 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
 .chapter .x{font-size:13.5px;color:var(--text)}
 
 /* editor power tools */
-.editor-controls{display:flex;flex-direction:column;gap:10px;border-top:1px dashed var(--border);padding-top:14px}
+/* Collapsed-by-default disclosures for the two authoring surfaces (cinematic editor + subtitle
+   design). A viewer sees a one-line summary; an author is one click from the full toolset. */
+.editor-details,.ssb-details{border-top:1px dashed var(--border);padding-top:12px}
+.ssb-details{border-top:none;padding-top:0}
+.editor-summary,.ssb-summary{
+  cursor:pointer;list-style:none;user-select:none;
+  font-family:var(--font-ui);font-weight:600;font-size:12.5px;color:var(--text-2);
+  display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:99px;
+  background:var(--panel-2);border:1px solid var(--border);box-shadow:var(--clay-sm);
+}
+.editor-summary::-webkit-details-marker,.ssb-summary::-webkit-details-marker{display:none}
+.editor-summary::before,.ssb-summary::before{content:"▸";color:var(--text-3);font-size:10px}
+details[open]>.editor-summary::before,details[open]>.ssb-summary::before{content:"▾"}
+.editor-summary:hover,.ssb-summary:hover{color:var(--text);border-color:var(--border-2)}
+.ssb-details[open] .subtitle-style-bar{margin-top:10px}
+.editor-details{margin-top:2px}
+.editor-details[open]>.editor-summary{margin-bottom:10px}
+
+.editor-controls{display:flex;flex-direction:column;gap:10px;padding-top:2px}
 .editor-controls .ec-head{font-family:var(--font-mono);font-size:11px;color:var(--text-3)}
 .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .toolbar .sp{flex:1}
@@ -1185,6 +1214,9 @@ h1.view-title{font-family:var(--font-display);font-size:28px;letter-spacing:-.02
   font-family:var(--font-mono);font-size:11px;color:var(--signal-text);
   border:1px solid color-mix(in oklab,var(--signal) 40%,transparent);
   padding:2px 8px;background:transparent;cursor:pointer;border-radius:99px;
+  /* Citations now carry the clip TITLE, which is LLM-generated and unbounded — clamp it so a
+     long title can't blow out the citation row. */
+  max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .cite:hover{background:var(--signal-wash)}
 

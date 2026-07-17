@@ -118,7 +118,9 @@ function AccountCard({
   const [loggingOut, setLoggingOut] = useState(false);
 
   const dirty = usernameInput.trim() !== (user.username ?? "");
-  const shareBase = net?.user_share_base ?? (user.username ? `${location.origin}/u/${user.username}/clip` : null);
+  // The branded slug form is what shareLink() actually hands out now — mirror its preferred
+  // branch rather than showing the legacy /clip/<id> shape.
+  const shareBase = net?.user_slug_share_base ?? (user.username ? `${location.origin}/u/${user.username}` : null);
 
   const saveUsername = async () => {
     const slug = usernameInput.trim();
@@ -167,7 +169,7 @@ function AccountCard({
       <div className="settings-username">
         <div className="settings-row-label">Username (your share-link slug)</div>
         <div className="settings-row-hint" style={{ marginBottom: 8 }}>
-          {shareBase ? <>Your clips share at <code className="settings-mono">{shareBase}/&lt;id&gt;</code></> : "Pick one so your share links carry your name instead of a bare id."}
+          {shareBase ? <>Your clips share at <code className="settings-mono">{shareBase}/&lt;title-slug&gt;</code></> : "Pick one so your share links carry your name instead of a bare id."}
         </div>
         <div className="settings-username-row">
           <input

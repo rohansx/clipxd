@@ -261,12 +261,22 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
       </div>
 
       {clips == null && <div className="empty">loading clips…</div>}
-      {clips != null && shown.length === 0 && (
-        <div className="empty">
-          {clips.length === 0
-            ? "No clips yet — hit Record or Import to make one."
-            : "No clips match that filter."}
+      {/* First run is the one shot at the aha-moment, and "hit Record or Import" wasted it by
+          naming buttons instead of showing what the product DOES. Point at the paste-bar that's
+          already right above and promise the payoff: a link you can ask questions. */}
+      {clips != null && clips.length === 0 && (
+        <div className="first-run">
+          <div className="first-run-title">Paste any Loom or YouTube link ↑</div>
+          <p className="first-run-sub">
+            clipxd reads it in about a minute — you get the video back as a link that has a
+            transcript, a searchable outline of what happened, and an agent you can ask
+            “what was the error?” without watching it again.
+          </p>
+          <div className="first-run-or">or record something new →</div>
         </div>
+      )}
+      {clips != null && clips.length > 0 && shown.length === 0 && (
+        <div className="empty">No clips match that filter.</div>
       )}
       {shown.length > 0 && (
         <motion.div
