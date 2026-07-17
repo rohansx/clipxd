@@ -2952,9 +2952,14 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
     // ponytail: 240px is the topbar+title+meta chrome above the player — a calibration knob,
     // retune it if the hero grows. The 0x0 recording-in-progress stub falls through to the
     // CSS's own 16/9 default.
+    // Two caps, whichever binds first:
+    //   {vw}px  — the video's OWN width. Never upscale past it. The fold cap alone blew a
+    //             320x240 clip up to 880px: a blurry 2.75x mess that also ate the whole fold.
+    //   fold    — the width whose derived height still clears the chrome, so the outline is
+    //             visible without scrolling.
     let [vw, vh] = idx.metadata.resolution;
     let player_style = if vw > 0 && vh > 0 {
-        format!(r#" style="--ar:{vw}/{vh};--ar-cap:calc((100svh - 240px) * {vw} / {vh})""#)
+        format!(r#" style="--ar:{vw}/{vh};--ar-cap:min({vw}px, calc((100svh - 240px) * {vw} / {vh}))""#)
     } else {
         String::new()
     };
@@ -4226,7 +4231,9 @@ mod tests {
         idx.metadata.resolution = [640, 480];
         let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
         assert!(html.contains("--ar:640/480"), "player must hug the real ratio");
-        assert!(html.contains("--ar-cap:calc((100svh - 240px) * 640 / 480)"), "and stay inside the fold");
+        // Two caps. The fold cap alone let a 320x240 clip render at 880px — a blurry 2.75x
+        // upscale that also pushed the outline off-screen — so the natural width caps it too.
+        assert!(html.contains("--ar-cap:min(640px, calc((100svh - 240px) * 640 / 480))"), "cap at natural width AND the fold");
 
         // A recording-in-progress stub has no probe yet — fall through to the CSS 16/9 default
         // rather than emitting a degenerate 0/0 ratio.

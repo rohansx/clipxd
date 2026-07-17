@@ -18,7 +18,7 @@
 
 use crate::llm;
 use anyhow::{bail, Context, Result};
-use clipxd_index::{Index, VisualMoment};
+use clipxd_index::{Chapter, Index, VisualMoment};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -101,10 +101,43 @@ pub async fn run(clip_dir: &Path, id: &str, nvidia_key: Option<&str>, gemini_key
         .collect();
     labelled.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     let n = labelled.len();
+
+    // Rebuild the chapter fallback off the labels we just wrote.
+    //
+    // `map::summarize` fabricates chapters by truncating the first 8 raw captions to 60 chars —
+    // it runs before this pass, so it has nothing better to use. The result is the caption soup
+    // this pass exists to kill, rendered as the share page's Chapters card ABOVE the clean
+    // outline. The deep pass replaces these with real chapters when CLIPXD_DEEP_PASS is on and
+    // runs AFTER us, so it still wins; this only fixes the fallback nobody was looking at.
+    // Guarded on `is_caption_derived` so a real chapter set is never clobbered.
+    if is_caption_derived(&index.summary.chapters, &orig) {
+        index.summary.chapters = labelled
+            .iter()
+            .filter_map(|m| m.label.as_ref().map(|l| Chapter { start: m.t, title: l.clone() }))
+            .collect();
+    }
+
     index.visual_timeline = labelled;
     std::fs::write(&index_path, serde_json::to_string_pretty(&index)?)?;
     eprintln!("label pass ({used}): {n} moments for {id} (from {})", orig.len());
     Ok(())
+}
+
+/// Are these chapters just truncated captions (i.e. `map::summarize`'s fallback), rather than a
+/// real LLM-written set? Compares each title against the caption at the same timestamp — the
+/// fallback truncates to 60 chars, so match on the prefix rather than the whole string.
+fn is_caption_derived(chapters: &[Chapter], moments: &[VisualMoment]) -> bool {
+    if chapters.is_empty() {
+        return false;
+    }
+    chapters.iter().all(|c| {
+        moments.iter().any(|m| {
+            (m.t - c.start).abs() < f64::EPSILON && {
+                let title = c.title.trim_end_matches('…').trim();
+                !title.is_empty() && m.caption.starts_with(title)
+            }
+        })
+    })
 }
 
 /// Keep only what we can honestly honor: in-range indices, first mention of each index, a
@@ -205,5 +238,33 @@ mod tests {
         // existing visual_timeline untouched rather than wiping it.
         let r = result(r#"{"keep":[{"i":42,"label":"invented"}]}"#);
         assert!(validate(r, 3).is_empty());
+    }
+
+    fn moment(t: f64, caption: &str) -> VisualMoment {
+        VisualMoment { t, salience: 0.5, caption: caption.into(), delta: "keyframe".into(), frame_ref: None, label: None }
+    }
+
+    #[test]
+    fn spots_the_caption_derived_chapter_fallback() {
+        // Exactly what map::summarize emits: the caption, truncated to 60 chars with an ellipsis.
+        let moments = vec![
+            moment(0.0, "A young man with dark brown hair stands in front of a metal fence, wearing a red jacket"),
+            moment(4.0, "A young man with dark hair, wearing a dark blue shirt, speaks to the camera"),
+        ];
+        let fallback = vec![
+            Chapter { start: 0.0, title: "A young man with dark brown hair stands in front of a metal…".into() },
+            Chapter { start: 4.0, title: "A young man with dark hair, wearing a dark blue shirt, speak…".into() },
+        ];
+        assert!(is_caption_derived(&fallback, &moments), "must recognise its own fallback so it can be replaced");
+    }
+
+    #[test]
+    fn leaves_real_chapters_alone() {
+        let moments = vec![moment(0.0, "A young man with dark brown hair stands in front of a metal fence")];
+        // A real (deep-pass or human) chapter is not a prefix of the caption — never clobber it.
+        let real = vec![Chapter { start: 0.0, title: "Introduces the elephants".into() }];
+        assert!(!is_caption_derived(&real, &moments));
+        // An empty set is not "caption-derived" either — nothing to replace.
+        assert!(!is_caption_derived(&[], &moments));
     }
 }
