@@ -185,8 +185,11 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
 
         // 1. Repair the container, then re-probe it.
         if video.exists() {
-            let needs = clipxd_import::media::probe(&video).map(|i| i.duration_s <= 0.0).unwrap_or(true);
-            if needs {
+            // Ask the *container*, not `media::probe` — probe falls back to walking the file when
+            // the header has no duration, so it happily reports 46.6 s for a file whose header
+            // says nothing. That fallback is what a browser can't do: it has to download
+            // everything before it can seek. So the remux decision has to read the header alone.
+            if !container_has_duration(&video) {
                 let staged = dir.join("video.remux.webm");
                 if clipxd_web::remux_seekable(&video, &staged) {
                     // remux_seekable removes its source on success; put the repaired file back.
@@ -272,6 +275,21 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
         "\nrepair complete: {remuxed} remuxed, {retimed} retimed, {rezoomed} zoom tracks rebuilt, {unstuck} unstuck, {pruned} empty dirs pruned"
     );
     Ok(())
+}
+
+/// Does the file's own header carry a duration? `-show_entries format=duration` alone, with no
+/// decode fallback: this is exactly what a browser reads before deciding whether it can seek.
+fn container_has_duration(video: &std::path::Path) -> bool {
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1"])
+        .arg(video)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().map(|d| d > 0.0).unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 /// A clip's recorded input events (`events.json`), if it has any — the input to the zoom track.
