@@ -150,6 +150,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         .route("/clip/:id/video", get(get_video))
         .route("/clip/:id/frames/:name", get(get_frame))
         .route("/clip/:id/view", post(post_view))
+        .route("/clip/:id/visibility", get(get_visibility).post(set_visibility))
         .route("/clip/:id/comments", get(get_comments).post(post_comment))
         // Username-canonical share-link form: /u/:username/clip/:id and all the same
         // sub-resources. Resolved via ownership (404 if the clip isn't owned by that user).
@@ -230,6 +231,9 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         });
     }
     router
+        // Link privacy, applied once for every clip route (present and future) rather than
+        // per handler — see `visibility_guard`.
+        .layer(axum::middleware::from_fn_with_state(state.clone(), visibility_guard))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         // `CorsLayer::permissive()` sends `Access-Control-Allow-Origin: *`, which browsers
         // categorically reject on any request sent with `credentials: 'include'` (used
@@ -644,6 +648,84 @@ async fn github_callback(State(s): State<AppState>, Query(q): Query<CallbackQuer
 }
 
 type WebErr = (StatusCode, String);
+
+/// Side-file marking a clip's link as owner-only. Present with `private` = restricted; absent
+/// (every clip that exists today) = the current public-link behaviour, unchanged.
+const VISIBILITY_KEY: &str = "visibility";
+
+/// Is this clip restricted to its owner?
+async fn clip_is_private(state: &AppState, id: &str) -> bool {
+    match read_object_or_local(state, &format!("{id}/{VISIBILITY_KEY}")).await {
+        Ok(Some(b)) => String::from_utf8_lossy(&b).trim() == "private",
+        _ => false,
+    }
+}
+
+/// Does the request's session own this clip? Local/LAN mode (no auth configured) has no
+/// concept of ownership, so nothing is restricted there.
+fn viewer_owns_clip(state: &AppState, id: &str, headers: &HeaderMap) -> bool {
+    let Some(a) = &state.auth else { return true };
+    let Some(user) = auth::authenticate(&a.jwt_secret, headers) else { return false };
+    a.db.clip_owner(id).ok().flatten() == Some(user.id)
+}
+
+/// Link-privacy guard for every `/clip/...` and `/u/...` route at once.
+///
+/// A clip URL is unguessable but was not access-controlled: anyone with the link could fetch the
+/// share page, the video, the frames, the index, and the query endpoints — verified by loading a
+/// real clip while signed out. Rather than bolt a check onto ~20 handlers (and miss the next one
+/// added), this middleware pulls the `clp_` id straight out of the path and refuses early.
+///
+/// It answers 404, not 403: a private link should be indistinguishable from one that never
+/// existed, or the existence of the clip itself leaks.
+async fn visibility_guard(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+    let id = path.split('/').find(|seg| seg.starts_with("clp_") && safe(seg)).map(str::to_string);
+    if let Some(id) = id {
+        if clip_is_private(&state, &id).await && !viewer_owns_clip(&state, &id, req.headers()) {
+            return (StatusCode::NOT_FOUND, "no such clip").into_response();
+        }
+    }
+    next.run(req).await
+}
+
+/// `POST /clip/:id/visibility` — owner-only. Body `{"visibility":"private"|"public"}`.
+async fn set_visibility(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad clip id".into()));
+    }
+    if !viewer_owns_clip(&s, &id, &headers) {
+        return Err((StatusCode::NOT_FOUND, "no such clip".into()));
+    }
+    let want_private = body.get("visibility").and_then(|v| v.as_str()) == Some("private");
+    let value = if want_private { "private" } else { "public" };
+    let dir = s.clips_dir.join(&id);
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tokio::fs::write(dir.join(VISIBILITY_KEY), value)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    write_object_best_effort(&s, &format!("{id}/{VISIBILITY_KEY}"), value.as_bytes().to_vec(), "text/plain").await;
+    Ok(Json(serde_json::json!({ "visibility": value })))
+}
+
+/// `GET /clip/:id/visibility` — what the owner's share UI shows. Readable by anyone who can
+/// already reach the clip (the guard above has run), so it never leaks a private clip's state.
+async fn get_visibility(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad clip id".into()));
+    }
+    let private = clip_is_private(&s, &id).await;
+    Ok(Json(serde_json::json!({ "visibility": if private { "private" } else { "public" } })))
+}
 
 /// Reject anything that isn't a plain clip-id / filename (no path traversal).
 fn safe(s: &str) -> bool {

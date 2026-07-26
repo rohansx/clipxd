@@ -61,7 +61,8 @@ pub async fn complete_with_keys(
     nvidia_key: Option<&str>,
     gemini_key: Option<&str>,
 ) -> Result<(String, &'static str)> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build()?;
+    let client = reqwest::Client::builder().timeout(call_timeout()).build()?;
+    let deadline = std::time::Instant::now() + budget();
 
     let ollama = resolve_key(None, "OLLAMA_API_KEY");
     let nvidia = resolve_key(nvidia_key, "NVIDIA_API_KEY");
@@ -70,7 +71,7 @@ pub async fn complete_with_keys(
     let mut used = "none";
     let mut result: Option<Result<String>> = None;
     if let Some(key) = ollama.as_deref() {
-        let r = call_ollama_cascade(&client, prompt, json_mode, key).await;
+        let r = call_ollama_cascade(&client, prompt, json_mode, key, deadline).await;
         if let Err(e) = &r {
             eprintln!("llm: all Ollama Cloud models failed, falling back to NVIDIA: {e:#}");
         } else {
@@ -80,7 +81,7 @@ pub async fn complete_with_keys(
     }
     if result.as_ref().is_none_or(|r| r.is_err()) {
         if let Some(key) = nvidia.as_deref() {
-            let r = call_nvidia_cascade(&client, prompt, key).await;
+            let r = call_nvidia_cascade(&client, prompt, key, deadline).await;
             if let Err(e) = &r {
                 eprintln!("llm: all NVIDIA models failed, falling back to Gemini: {e:#}");
             } else {
@@ -100,6 +101,26 @@ pub async fn complete_with_keys(
     }
     let text = result.ok_or_else(|| anyhow!("no LLM backend configured (set OLLAMA_API_KEY, NVIDIA_API_KEY, or GEMINI_API_KEY)"))??;
     Ok((text, used))
+}
+
+/// Per-request timeout for one model call. Was a flat 60 s, which is the wrong unit of patience:
+/// with three Ollama models, three NVIDIA models and Gemini behind it, one hung provider could
+/// burn minutes before the caller gave up. Every LLM path here has a deterministic fallback
+/// (`query::query_clip`'s grounded keyword retrieval, the recorder's default title), so failing
+/// fast and using it beats waiting.
+fn call_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(env_secs("CLIPXD_LLM_TIMEOUT_SECS", 25))
+}
+
+/// Total budget for the whole cascade. Once it's spent no further model is tried, so a user
+/// waiting on an answer waits for this at worst — measured on production before this change,
+/// "Ask across the library" took 75–90 s and the timeout chain was the whole reason.
+fn budget() -> std::time::Duration {
+    std::time::Duration::from_secs(env_secs("CLIPXD_LLM_BUDGET_SECS", 45))
+}
+
+fn env_secs(name: &str, default: u64) -> u64 {
+    std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).filter(|n| *n > 0).unwrap_or(default)
 }
 
 /// `Some(explicit)` (trimmed, non-empty) wins; otherwise fall back to the named env var.
@@ -137,9 +158,18 @@ fn ollama_models() -> Vec<String> {
 
 /// Try each Ollama Cloud model in turn, returning the first success — same "stay within the
 /// tier before giving up on it" reasoning as `call_nvidia_cascade`.
-async fn call_ollama_cascade(client: &reqwest::Client, prompt: &str, json_mode: bool, key: &str) -> Result<String> {
+async fn call_ollama_cascade(
+    client: &reqwest::Client,
+    prompt: &str,
+    json_mode: bool,
+    key: &str,
+    deadline: std::time::Instant,
+) -> Result<String> {
     let mut last_err = None;
     for model in ollama_models() {
+        if std::time::Instant::now() >= deadline {
+            return Err(last_err.unwrap_or_else(|| anyhow!("llm budget exhausted before ollama {model}")));
+        }
         match call_ollama(client, prompt, &model, json_mode, key).await {
             Ok(text) => return Ok(text),
             Err(e) => {
@@ -185,19 +215,37 @@ async fn call_ollama(client: &reqwest::Client, prompt: &str, model: &str, json_m
 const NVIDIA_MODEL_CASCADE: &[&str] = &["moonshotai/kimi-k2.6", "minimaxai/minimax-m2.7", "z-ai/glm4.7"];
 
 fn nvidia_models() -> Vec<String> {
-    match std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.is_empty()) {
-        Some(pinned) => vec![pinned],
-        None => NVIDIA_MODEL_CASCADE.iter().map(|s| s.to_string()).collect(),
+    // Same resolution order Ollama already had — pin one, or set the whole cascade — because a
+    // hardcoded list rots: the built-in default still names `z-ai/glm4.7`, which NVIDIA retired
+    // (410 Gone, EOL 2026-05-14) and which production has been uselessly retrying ever since.
+    // Now the box can be corrected with an env var instead of a rebuild + redeploy.
+    if let Some(pinned) = std::env::var("CLIPXD_NVIDIA_MODEL").ok().filter(|m| !m.trim().is_empty()) {
+        return vec![pinned.trim().to_string()];
     }
+    if let Some(list) = std::env::var("CLIPXD_NVIDIA_MODELS").ok().filter(|m| !m.trim().is_empty()) {
+        let models: Vec<String> = list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if !models.is_empty() {
+            return models;
+        }
+    }
+    NVIDIA_MODEL_CASCADE.iter().map(|s| s.to_string()).collect()
 }
 
 /// Try each NVIDIA model in turn, returning the first success. Distinct from the
 /// NVIDIA→Gemini fallback in `complete()`: this stays *within* the free NVIDIA tier before
 /// giving up on it entirely, since a single model being down/rate-limited doesn't mean the
 /// whole backend is unavailable.
-async fn call_nvidia_cascade(client: &reqwest::Client, prompt: &str, key: &str) -> Result<String> {
+async fn call_nvidia_cascade(
+    client: &reqwest::Client,
+    prompt: &str,
+    key: &str,
+    deadline: std::time::Instant,
+) -> Result<String> {
     let mut last_err = None;
     for model in nvidia_models() {
+        if std::time::Instant::now() >= deadline {
+            return Err(last_err.unwrap_or_else(|| anyhow!("llm budget exhausted before nvidia {model}")));
+        }
         match call_nvidia(client, prompt, &model, key).await {
             Ok(text) => return Ok(text),
             Err(e) => {

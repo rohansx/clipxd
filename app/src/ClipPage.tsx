@@ -408,7 +408,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
         </div>
       )}
 
-      {shareUrl && <ShareModal url={shareUrl} onClose={() => setShareUrl(null)} />}
+      {shareUrl && <ShareModal url={shareUrl} clipId={id} onClose={() => setShareUrl(null)} />}
     </div>
   );
 }

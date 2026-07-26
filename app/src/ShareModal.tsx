@@ -1,12 +1,17 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiBase } from "./api";
 import { usePrefersReducedMotion } from "./motion";
 import { useEscape } from "./useEscape";
 
 interface ShareModalProps {
   url: string;
+  /** The clip being shared — needed to read/write its link visibility. */
+  clipId?: string | null;
   onClose: () => void;
 }
+
+type Visibility = "public" | "private";
 
 /** Split the URL into the parts we want to emphasise differently in the preview.
  *  - `base` is the protocol + host (dim, supporting role)
@@ -26,11 +31,49 @@ function splitUrl(url: string): { base: string; tail: string } {
  * Share a clip. The URL resolves to the backend's watch+ask page (which itself renders a
  * scan-to-phone QR, generated offline). We show the link, a copy button, and a way to open it.
  */
-export function ShareModal({ url, onClose }: ShareModalProps) {
+export function ShareModal({ url, clipId, onClose }: ShareModalProps) {
   const reduced = usePrefersReducedMotion();
   useEscape(onClose);
   const [copied, setCopied] = useState(false);
   const { base, tail } = splitUrl(url);
+
+  // Who can open this link. Until now a clip URL was unguessable but not access-controlled —
+  // anyone holding it could watch the video and read the index, signed in or not.
+  const [visibility, setVisibility] = useState<Visibility | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!clipId) return;
+    let cancelled = false;
+    fetch(`${apiBase()}/clip/${clipId}/visibility`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { visibility?: Visibility } | null) => {
+        if (!cancelled && d?.visibility) setVisibility(d.visibility);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [clipId]);
+
+  const setVis = async (next: Visibility) => {
+    if (!clipId) return;
+    setSaving(true);
+    const previous = visibility;
+    setVisibility(next); // optimistic — reverted below if the server disagrees
+    try {
+      const r = await fetch(`${apiBase()}/clip/${clipId}/visibility`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ visibility: next }),
+      });
+      if (!r.ok) setVisibility(previous);
+    } catch {
+      setVisibility(previous);
+    } finally {
+      setSaving(false);
+    }
+  };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -77,6 +120,33 @@ export function ShareModal({ url, onClose }: ShareModalProps) {
                 {copied ? "✓ Copied" : "Copy"}
               </button>
             </div>
+            {visibility && (
+              <div className="share-vis" role="group" aria-label="Who can open this link">
+                <button
+                  type="button"
+                  className={"filter-pill" + (visibility === "public" ? " on" : "")}
+                  aria-pressed={visibility === "public"}
+                  disabled={saving}
+                  onClick={() => setVis("public")}
+                >
+                  Anyone with the link
+                </button>
+                <button
+                  type="button"
+                  className={"filter-pill" + (visibility === "private" ? " on" : "")}
+                  aria-pressed={visibility === "private"}
+                  disabled={saving}
+                  onClick={() => setVis("private")}
+                >
+                  Only me
+                </button>
+                <span className="share-hint">
+                  {visibility === "private"
+                    ? "The link 404s for everyone but you — video, index and all."
+                    : "Unlisted, but not access-controlled: anyone who gets the link can watch and read it."}
+                </span>
+              </div>
+            )}
             <div className="share-actions">
               <a className="btn btn-pill" href={url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
                 Open watch page ↗

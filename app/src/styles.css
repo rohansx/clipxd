@@ -1412,6 +1412,8 @@ details[open]>.editor-summary::before,details[open]>.ssb-summary::before{content
   display:flex;align-items:center;gap:10px;justify-content:space-between;
 }
 .share-hint{font-family:var(--font-mono);font-size:11px;color:var(--text-3)}
+.share-vis{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.share-vis .share-hint{flex-basis:100%;line-height:1.5}
 .qr-box{background:#fff;padding:12px;width:186px;border-radius:var(--r-sm)}
 .qr-box svg{width:100%;height:auto;display:block}
 .cam-bubble{
