@@ -281,7 +281,10 @@ async fn repair_clips(clips_dir: &std::path::Path, force_mirror: bool) -> anyhow
         // The hosted box serves S3 first, so a local-only write would never be seen.
         if dirty || video_dirty {
             if let Ok(st) = storage.make_storage().await {
-                if dirty {
+                // `force_mirror` covers index.json too: an earlier repair run that fell back to
+                // Local storage already cleaned the file on disk, so a later run finds nothing to
+                // change, stays "not dirty", and would leave the stale copy in S3 forever.
+                if dirty || force_mirror {
                     if let Ok(body) = std::fs::read(&index_path) {
                         if st.write_object(&format!("{id}/index.json"), body, "application/json").await.is_err() {
                             println!("          {id}: INDEX MIRROR FAILED — check CLIPXD_STORAGE");
