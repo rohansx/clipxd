@@ -669,6 +669,31 @@ fn viewer_owns_clip(state: &AppState, id: &str, headers: &HeaderMap) -> bool {
     a.db.clip_owner(id).ok().flatten() == Some(user.id)
 }
 
+/// How a request path names a clip. Kept separate from the guard so the URL shapes can be
+/// unit-tested without a database or a live request.
+#[derive(Debug, PartialEq)]
+enum ClipRef {
+    /// A literal `clp_…` segment, e.g. `/clip/clp_abc/video`, `/u/rohan/clip/clp_abc`.
+    Id(String),
+    /// The branded form `/u/<username>/<title-slug>-<short-tail>`, where the id is only
+    /// recoverable by looking the slug up against that user's clips.
+    Slug { username: String, slug: String },
+}
+
+fn clip_ref_in_path(path: &str) -> Option<ClipRef> {
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if let Some(id) = segs.iter().find(|s| s.starts_with("clp_") && safe(s)) {
+        return Some(ClipRef::Id((*id).to_string()));
+    }
+    // `/u/<username>/<slug>` — and only that shape; `/u/<username>/clip/…` is the id form above.
+    match segs.as_slice() {
+        ["u", username, slug] if safe(username) && safe(slug) => {
+            Some(ClipRef::Slug { username: (*username).to_string(), slug: (*slug).to_string() })
+        }
+        _ => None,
+    }
+}
+
 /// Link-privacy guard for every `/clip/...` and `/u/...` route at once.
 ///
 /// A clip URL is unguessable but was not access-controlled: anyone with the link could fetch the
@@ -684,7 +709,17 @@ async fn visibility_guard(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let path = req.uri().path().to_string();
-    let id = path.split('/').find(|seg| seg.starts_with("clp_") && safe(seg)).map(str::to_string);
+    let id = match clip_ref_in_path(&path) {
+        Some(ClipRef::Id(id)) => Some(id),
+        // The branded share link carries no `clp_` segment — the id is only the short tail of a
+        // cosmetic slug — so it has to be resolved before it can be checked. Missing this meant
+        // `/clip/<id>` correctly 404'd on a private clip while `/u/<user>/<slug>` still served
+        // it: the pretty URL, i.e. the one people actually paste, bypassed the guard entirely.
+        Some(ClipRef::Slug { username, slug }) => {
+            state.auth.as_ref().and_then(|a| resolve_share_slug(&a.db, &username, &slug))
+        }
+        None => None,
+    };
     if let Some(id) = id {
         if clip_is_private(&state, &id).await && !viewer_owns_clip(&state, &id, req.headers()) {
             return (StatusCode::NOT_FOUND, "no such clip").into_response();
@@ -4539,6 +4574,34 @@ mod tests {
             assert!(try_claim(&claims, "clp_seq").is_none());
         } // _first drops here — e.g. the sweeper's promote_staged failed and returned early
         assert!(try_claim(&claims, "clp_seq").is_some(), "a released id must be claimable again");
+    }
+
+    #[test]
+    fn every_url_shape_that_serves_a_clip_is_seen_by_the_privacy_guard() {
+        use super::{clip_ref_in_path, ClipRef};
+        let id = |s: &str| Some(ClipRef::Id(s.to_string()));
+
+        // Direct forms.
+        assert_eq!(clip_ref_in_path("/clip/clp_abc123"), id("clp_abc123"));
+        assert_eq!(clip_ref_in_path("/clip/clp_abc123/video"), id("clp_abc123"));
+        assert_eq!(clip_ref_in_path("/clip/clp_abc123/frames/00012.jpg"), id("clp_abc123"));
+        assert_eq!(clip_ref_in_path("/u/rohan/clip/clp_abc123/index.json"), id("clp_abc123"));
+
+        // The branded link. This is the one that used to slip past: no `clp_` anywhere in it,
+        // so a private clip stayed fully readable through the URL people actually share.
+        assert_eq!(
+            clip_ref_in_path("/u/rohan/navigating-the-console-eca0"),
+            Some(ClipRef::Slug { username: "rohan".into(), slug: "navigating-the-console-eca0".into() })
+        );
+
+        // Non-clip paths must not be treated as clips (they'd cost a lookup on every request).
+        assert_eq!(clip_ref_in_path("/"), None);
+        assert_eq!(clip_ref_in_path("/docs"), None);
+        assert_eq!(clip_ref_in_path("/auth/me"), None);
+        assert_eq!(clip_ref_in_path("/u/rohan"), None);
+        assert_eq!(clip_ref_in_path("/clips"), None);
+        // Path traversal in either component is refused rather than resolved.
+        assert_eq!(clip_ref_in_path("/u/../etc/passwd"), None);
     }
 
     #[test]
