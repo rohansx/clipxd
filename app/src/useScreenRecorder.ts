@@ -30,6 +30,9 @@ export interface StartOptions {
   cameraConfig?: CameraConfig;
   /** `voice` records the microphone only (no display media, no canvas, no camera). */
   mode?: RecordMode;
+  /** Narrate the screen recording. `getDisplayMedia` only ever yields *system/tab* audio, so
+   *  without this a screen recording is silent — no narration, and an empty transcript track. */
+  mic?: boolean;
 }
 
 // Total time we'll wait between Stop and a usable id. The server's commit
@@ -42,15 +45,52 @@ export interface StartOptions {
 const COMMIT_TIMEOUT_MS = 60_000;
 const INGEST_TIMEOUT_MS = 60_000;
 
-// Best available high-quality recorder config (VP9 → VP8 → default, ~8 Mbps).
+// Best available high-quality recorder config (VP9 → VP8 → default).
+// 3 Mbps, not 8: screen content is mostly static, VP9 handles it at a third of the bitrate with
+// no visible loss, and 8 Mbps was making a 45 s clip a 30 MB download for every viewer (~3× what
+// Loom ships). Audio gets its own bitrate so narration stays clean at the lower video rate.
 function recorderOpts(): MediaRecorderOptions {
-  const prefs = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  const prefs = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
   for (const mimeType of prefs) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(mimeType)) {
-      return { mimeType, videoBitsPerSecond: 8_000_000 };
+      return { mimeType, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 };
     }
   }
-  return { videoBitsPerSecond: 8_000_000 };
+  return { videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 };
+}
+
+/** Ask for the microphone. Best-effort: a denial or a machine with no mic must never block the
+ *  recording, it just means this clip has no narration (and therefore no transcript). */
+async function getMic(): Promise<MediaStream | null> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mix every audio track we have (system/tab audio from `getDisplayMedia` + the mic) into one
+ * track via Web Audio, and tap it with an `AnalyserNode` so the UI can show a *real* level.
+ * Returns null when there's no audio at all to mix.
+ */
+function mixAudio(sources: MediaStream[]): { track: MediaStreamTrack; ctx: AudioContext; analyser: AnalyserNode } | null {
+  const withAudio = sources.filter((s) => s.getAudioTracks().length > 0);
+  if (!withAudio.length) return null;
+  const ctx = new AudioContext();
+  const dest = ctx.createMediaStreamDestination();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  for (const s of withAudio) {
+    const node = ctx.createMediaStreamSource(s);
+    node.connect(dest);
+    node.connect(analyser); // tap only — analyser is not connected to ctx.destination, so no echo
+  }
+  const track = dest.stream.getAudioTracks()[0];
+  return track ? { track, ctx, analyser } : null;
 }
 
 // Voice-only mode: an audio-only container. Opus-in-webm first (what MediaRecorder prefers on
@@ -88,6 +128,12 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   const [countdown, setCountdown] = useState<number | null>(null);
   const ref = useRef<{ mr: MediaRecorder } | null>(null);
   const chunks = useRef<Blob[]>([]);
+  /** Live 0..1 audio peak of whatever is actually being recorded. Read by the meter in
+   *  `Recording.tsx` from a rAF loop, so a moving meter now means real sound is landing in
+   *  the file (the old meter was a hardcoded sine curve that animated even in silence). */
+  const micLevel = useRef(0);
+  /** True once a microphone track is actually part of the recording. */
+  const [micLive, setMicLive] = useState(false);
   // Resolves the in-flight countdown promise: true → proceed to recording, false → abort.
   // null whenever state !== "counting".
   const countdownResolve = useRef<((proceed: boolean) => void) | null>(null);
@@ -100,17 +146,24 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       // Voice-only mode: capture the microphone, no display media. Produces an audio-only
       // clip (has_video: false) whose value is the transcript + styled captions.
       if (mode === "voice") {
-        const mic = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: false,
-        });
-        return startFromStream(mic, mic, mode, null);
+        const mic = await getMic();
+        if (!mic) throw new Error("Microphone unavailable — check permissions");
+        return startFromStream(mic, mic, mode, null, undefined, null);
       }
-      const screen = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: true,
-      });
-      return startFromStream(screen, screen, mode, cameraStream, cameraConfig);
+      // Mic FIRST, so both permission prompts are done before the countdown starts and the
+      // user isn't answering a dialog while the screen is already being shared.
+      const mic = (opts.mic ?? true) ? await getMic() : null;
+      let screen: MediaStream;
+      try {
+        screen = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: true,
+        });
+      } catch (e) {
+        mic?.getTracks().forEach((t) => t.stop()); // don't leave the mic light on after a cancel
+        throw e;
+      }
+      return startFromStream(screen, screen, mode, cameraStream, cameraConfig, mic);
     } catch (e) {
       setState("idle");
       setError((e as Error).message ?? "Could not start recording");
@@ -126,12 +179,16 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
     mode: RecordMode,
     cameraStream: MediaStream | null,
     cameraConfig?: CameraConfig,
+    micStream?: MediaStream | null,
   ) => {
     try {
       const screen = sourceStream;
       let recordStream: MediaStream = initialRecordStream;
       let raf = 0;
-      const cleanups: Array<() => void> = [() => screen.getTracks().forEach((t) => t.stop())];
+      const cleanups: Array<() => void> = [
+        () => screen.getTracks().forEach((t) => t.stop()),
+        () => micStream?.getTracks().forEach((t) => t.stop()),
+      ];
 
       if (cameraStream && cameraStream.getVideoTracks().length && mode === "screen") {
         const st = screen.getVideoTracks()[0].getSettings();
@@ -218,9 +275,36 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         };
         draw();
         cleanups.push(() => cancelAnimationFrame(raf));
-        const comp = canvas.captureStream(30);
-        screen.getAudioTracks().forEach((t) => comp.addTrack(t)); // keep system audio
-        recordStream = comp;
+        recordStream = canvas.captureStream(30); // audio is attached below, for every path alike
+      }
+
+      // Audio. `getDisplayMedia` only ever hands back *system/tab* audio, so a screen recording
+      // without this block is silent: no narration, and an empty transcript track for the index
+      // to be built from. Mix whatever exists (display audio + mic) into one track, and tap it
+      // for the level meter.
+      const audioSources = mode === "voice" ? [sourceStream] : [screen, ...(micStream ? [micStream] : [])];
+      const mixed = mixAudio(audioSources);
+      recordStream = new MediaStream([...recordStream.getVideoTracks(), ...(mixed ? [mixed.track] : [])]);
+      setMicLive(!!micStream?.getAudioTracks().length);
+      if (mixed) {
+        const buf = new Uint8Array(mixed.analyser.frequencyBinCount);
+        let lvlRaf = 0;
+        const pump = () => {
+          mixed.analyser.getByteTimeDomainData(buf);
+          let peak = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const d = Math.abs(buf[i] - 128) / 128;
+            if (d > peak) peak = d;
+          }
+          micLevel.current = peak;
+          lvlRaf = requestAnimationFrame(pump);
+        };
+        pump();
+        cleanups.push(() => {
+          cancelAnimationFrame(lvlRaf);
+          micLevel.current = 0;
+          mixed.ctx.close().catch(() => {});
+        });
       }
 
       // Loom/Cap.so-style countdown: the screen/window/tab is already picked (the browser's
@@ -274,8 +358,36 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         .catch(() => null);
 
       let chunkSeq = 0;
-      // Track the last PUT so we can await it before commit (ensures final chunk is on server).
-      let lastChunkPut: Promise<unknown> = Promise.resolve();
+      // Every in-flight PUT, so `onstop` can await all of them (not just the last — an earlier
+      // chunk can still be retrying when the final one lands).
+      const chunkPuts: Promise<void>[] = [];
+      // Chunks that never made it after retries. Only chunk 0 carries the WebM header, so a
+      // silently-dropped chunk used to corrupt the whole recording server-side — one clip on
+      // prod is unplayable for exactly this reason. Any permanent failure now disqualifies the
+      // staged commit and routes to the full-blob `/ingest` fallback, which still has every
+      // chunk in memory.
+      const failedChunks = new Set<number>();
+
+      const putChunk = async (session: string, seq: number, data: Blob): Promise<void> => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const r = await fetch(`${apiBase}/ingest/stage/${session}?seq=${seq}`, {
+              method: "PUT",
+              body: data,
+              credentials: "include",
+            });
+            if (r.ok) {
+              failedChunks.delete(seq);
+              return;
+            }
+            if (r.status === 404 || r.status === 401) break; // session gone / logged out — retrying won't help
+          } catch {
+            /* network blip — back off and retry */
+          }
+          await new Promise((res) => window.setTimeout(res, 400 * (attempt + 1)));
+        }
+        failedChunks.add(seq);
+      };
 
       const cursors: { t: number; x: number; y: number }[] = [];
       const clicks: { t: number; x: number; y: number }[] = [];
@@ -306,19 +418,13 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       mr.ondataavailable = (e) => {
         if (!e.data.size) return;
         chunks.current.push(e.data);
-        // Upload every chunk (both mid-recording 5 s slices and the final flush on stop)
-        // as a fire-and-forget PUT, once the session id is known. Track the promise so
-        // onstop can await the last one.
+        // Upload every chunk (both mid-recording 5 s slices and the final flush on stop) as
+        // soon as the session id is known, with retries. Tracked so onstop can await them all.
         const seq = chunkSeq++;
         const chunkData = e.data;
-        lastChunkPut = sessionPromise.then((session) => {
-          if (!session) return;
-          return fetch(`${apiBase}/ingest/stage/${session}?seq=${seq}`, {
-            method: "PUT",
-            body: chunkData,
-            credentials: "include",
-          }).catch(() => {});
-        });
+        chunkPuts.push(
+          sessionPromise.then((session) => (session ? putChunk(session, seq, chunkData) : undefined)),
+        );
       };
 
       mr.onstop = async () => {
@@ -345,15 +451,20 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
         };
 
         try {
-          // Wait for the final chunk PUT to land before calling commit.
-          await lastChunkPut;
+          // Wait for every chunk PUT (including retries) to settle before committing.
+          await Promise.all(chunkPuts);
           const session = await sessionPromise;
 
-          if (session) {
+          if (session && failedChunks.size > 0) {
+            console.warn(`[clipxd] ${failedChunks.size} chunk(s) never uploaded — committing the full blob instead`);
+          }
+          if (session && failedChunks.size === 0) {
             let res: Response;
             try {
               res = await fetchWithTimeout(
-                `${apiBase}/ingest/stage/${session}/commit`,
+                // `chunks` lets the server verify it got the whole recording before it
+                // promotes the stub — a gap means the assembled WebM would be corrupt.
+                `${apiBase}/ingest/stage/${session}/commit?chunks=${chunkSeq}`,
                 { method: "POST", credentials: "include" },
                 COMMIT_TIMEOUT_MS,
                 "commit",
@@ -421,7 +532,7 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
   /** Abort during the countdown — no recording happens, back to idle. */
   const cancelCountdown = () => countdownResolve.current?.(false);
 
-  return { state, error, countdown, start, stop, skipCountdown, cancelCountdown };
+  return { state, error, countdown, start, stop, skipCountdown, cancelCountdown, micLevel, micLive };
 }
 
 async function ingestWithTimeout(blob: Blob, apiBase: string, timeoutMs: number, reuseId: string | null = null): Promise<string | null> {

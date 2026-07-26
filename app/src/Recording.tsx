@@ -38,22 +38,59 @@ interface RecordingProps {
   onRetry: (id: string) => void;
 }
 
-const MIC_BARS = Array.from({ length: 56 }, (_, i) => ({
-  h: 14 + Math.round(Math.abs(Math.sin(i * 0.7) * Math.cos(i * 0.3)) * 40),
-  delay: (i % 12) * 0.08,
-}));
+const BAR_COUNT = 56;
 
 const HINTS = [
   { icon: "●", label: "veyo salience gate", detail: "emits a frame only when the scene changes" },
-  { icon: "◎", label: "cursor-follow auto-zoom", detail: "zoom tracks your pointer + clicks" },
+  { icon: "◎", label: "auto-zoom", detail: "pushes in on the moments the index marks as salient" },
   { icon: "▦", label: "OCR + captions", detail: "on-screen text + scene captions, timestamped" },
-  { icon: "◈", label: "agent-queryable", detail: "ask the clip the moment it finishes" },
+  { icon: "◈", label: "ask the clip", detail: "question it the moment it finishes" },
 ];
+
+/**
+ * The audio meter. Reads the recorder's live 0..1 peak from a ref inside a rAF loop and writes
+ * bar heights straight to the DOM — no React state, so a 60 fps meter costs zero re-renders.
+ * It moves only when sound is actually being captured; the previous version was a fixed sine
+ * curve that animated identically whether or not anything was recorded.
+ */
+function AudioMeter({ level, active }: { level: React.MutableRefObject<number>; active: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!active) return;
+    let raf = 0;
+    const bars = Array.from(host.current?.children ?? []) as HTMLElement[];
+    const tick = () => {
+      const peak = level.current;
+      for (let i = 0; i < bars.length; i++) {
+        // A little per-bar variation around the real peak so it reads as a waveform rather
+        // than one flat block, but every bar's amplitude is driven by the true signal.
+        const spread = 0.55 + 0.45 * Math.abs(Math.sin(i * 0.7 + Date.now() / 240));
+        bars[i].style.height = `${Math.max(6, Math.min(100, peak * 130 * spread))}%`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const b of bars) b.style.height = "10%";
+    };
+  }, [active, level]);
+  return (
+    <div className="mic-bars" ref={host} aria-hidden>
+      {Array.from({ length: BAR_COUNT }, (_, i) => (
+        <span key={i} style={{ height: "10%", animation: "none" }} />
+      ))}
+    </div>
+  );
+}
 
 export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: RecordingProps) {
   const reduced = usePrefersReducedMotion();
   const base = apiBase();
   const [camera, setCamera] = useState(false);
+  // Narration on by default: a screen recording without the mic has no voice-over and produces
+  // an empty transcript, which is most of what makes a clip worth asking questions about.
+  const [mic, setMic] = useState(true);
   const [showPrompter, setShowPrompter] = useState(false);
   const [mode, setMode] = useState<RecordMode>("screen");
   const [cameraCfg, setCameraCfg] = useState<CameraConfig>(loadCameraConfig);
@@ -103,7 +140,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
     showToast(reason);
   }, [showToast]);
 
-  const { state, countdown, start, stop, skipCountdown, cancelCountdown } = useScreenRecorder(base, {
+  const { state, countdown, start, stop, skipCountdown, cancelCountdown, micLevel, micLive } = useScreenRecorder(base, {
     onRecordingLink: handleRecordingLink,
     onPending: handlePending,
     onClipReady: handleReady,
@@ -270,7 +307,10 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
               : "READY"}
           </span>
           <span className="rec-clock">{recording ? clock : "00:00"}</span>
-          <span className="rec-hint">{mode === "voice" ? "voice only · mic · captions on" : "screen · 1080p · auto-zoom on"}{camera ? " · camera" : ""}</span>
+          <span className="rec-hint">
+            {mode === "voice" ? "voice only · mic · captions on" : `screen · 1080p · ${mic ? "mic on" : "no mic"}`}
+            {camera ? " · camera" : ""}
+          </span>
         </div>
 
         {/* Live-link card — the instant link. Mounts the moment recording starts: the
@@ -458,7 +498,7 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                 <button
                   type="button"
                   className="btn btn-pill"
-                  onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode }); }}
+                  onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode, mic }); }}
                   style={{ padding: "0 18px" }}
                 >
                   Record again
@@ -507,12 +547,12 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
                 </div>
                 <div style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "#777" }}>
                   {recording
-                    ? "System audio + your cursor are being captured. Hit Stop when you're done."
+                    ? `${micLive ? "Your voice and system audio are" : "System audio is"} being captured. Hit Stop when you're done.`
                     : processing
                     ? "The link already works — the full video finishes assembling in the background."
                     : failed
                     ? "See the card above for what to do next."
-                    : "The browser will ask which screen/window/tab to capture. System audio + your cursor are recorded too."}
+                    : `The browser will ask for ${mic ? "your microphone, then " : ""}which screen/window/tab to capture. System audio is recorded too.`}
                 </div>
               </div>
             )}
@@ -520,24 +560,21 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
         </div>
 
         <div>
-          <div className="rec-hint" style={{ marginBottom: 6 }}>mic</div>
-          <div className="mic-bars">
-            {MIC_BARS.map((b, i) => (
-              <span
-                key={i}
-                style={{
-                  height: recording ? `${b.h}%` : "10%",
-                  animationDelay: `${b.delay}s`,
-                  animationPlayState: recording ? "running" : "paused",
-                }}
-              />
-            ))}
+          <div className="rec-hint" style={{ marginBottom: 6 }}>
+            {recording
+              ? micLive
+                ? "mic + system audio · live level"
+                : "system audio only — no mic on this recording"
+              : mic
+              ? "mic"
+              : "mic off — this clip will have no narration or transcript"}
           </div>
+          <AudioMeter level={micLevel} active={recording} />
         </div>
 
         <div className="toolbar">
           {!counting && !recording && !processing && !failed && (
-            <button className="btn-sodium btn-pill" onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode }); }} style={{ fontSize: 14, padding: "12px 22px" }}>
+            <button className="btn-sodium btn-pill" onClick={() => { retire(); start({ camera: camStream, cameraConfig: cameraCfg, mode, mic }); }} style={{ fontSize: 14, padding: "12px 22px" }}>
               ● {mode === "voice" ? "Record voice" : lastClip?.status === "failed" ? "Try again" : lastClip ? "Record another" : "Start recording"}
             </button>
           )}
@@ -571,6 +608,16 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
           )}
           {mode === "screen" && (
             <button
+              className={"btn btn-pill" + (mic ? " on" : "")}
+              onClick={() => setMic((m) => !m)}
+              style={mic ? { borderColor: "var(--signal)" } : undefined}
+              title="Record your voice over the screen. Off means no narration and no transcript."
+            >
+              🎙 Mic {mic ? "on" : "off"}
+            </button>
+          )}
+          {mode === "screen" && (
+            <button
               className={"btn btn-pill" + (camera ? " on" : "")}
               onClick={() => setCamera((c) => !c)}
               style={camera ? { borderColor: "var(--signal)" } : undefined}
@@ -601,9 +648,9 @@ export function Recording({ onClipReady, showToast, onOpenClip, onRetry }: Recor
         <div className="head">
           <span className="led-on" />
           <span className="lbl">
-            <b>read</b> · index forms on stop
+            <b>read</b> · index builds while you record
           </span>
-          <span className="egress">on device · 0 px egress</span>
+          <span className="egress">uploads while recording</span>
         </div>
         <div className="rec-events">
           <AnimatePresence initial={false}>

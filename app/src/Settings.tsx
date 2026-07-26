@@ -65,11 +65,18 @@ export function Settings({ authEnabled, user, clipCount, theme, toggleTheme, onS
           <div className="settings-row">
             <div>
               <div className="settings-row-label">Clips indexed</div>
-              <div className="settings-row-hint">Every one queryable from its link — 0 px video egress by default.</div>
+              <div className="settings-row-hint">
+                {authEnabled
+                  ? "Stored on this server. Anyone with a clip's link can open it."
+                  : "Every one queryable from its link — 0 px video egress by default."}
+              </div>
             </div>
             <span className="pill signal">{clipCount}</span>
           </div>
-          {net?.lan_ip && (
+          {/* The LAN row is a LOCAL-mode fact ("your machine, reachable on your network"). On the
+              hosted service it printed the production server's public address under copy about
+              "anyone on this network", which is both wrong and needless disclosure. */}
+          {!authEnabled && net?.lan_ip && (
             <div className="settings-row">
               <div>
                 <div className="settings-row-label">LAN address</div>

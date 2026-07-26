@@ -224,7 +224,9 @@ export function Library({ clips, filter, onOpen, onPasteImport }: LibraryProps) 
         <div>
           <h1 className="view-title">Library</h1>
           <p className="view-sub">
-            {clips == null ? "loading…" : `${clips.length} clips · every one queryable from its link`}
+            {clips == null
+              ? "loading…"
+              : `${clips.length} clip${clips.length === 1 ? "" : "s"} · watch it, read it, or ask it a question`}
           </p>
         </div>
         <div className="filters">

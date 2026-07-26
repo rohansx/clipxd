@@ -1023,6 +1023,13 @@ struct StageQuery {
     seq: u32,
 }
 
+/// `?chunks=` on a stage commit — how many chunks the client believes it uploaded, so the
+/// server can refuse to promote a recording with a gap. Absent on older clients.
+#[derive(serde::Deserialize, Default)]
+struct CommitQuery {
+    chunks: Option<u32>,
+}
+
 /// `GET /clip/:id/query` — a grounded, cited answer to a question about the clip.
 ///
 /// Two-tier: synthesize with an LLM when a backend is configured (server- or owner-supplied),
@@ -1597,7 +1604,17 @@ async fn ingest_stage_append(
         let video_so_far = video_so_far.clone();
         move || -> anyhow::Result<()> {
             std::fs::write(&chunk_path, &body)?;
-            concat_chunks(&dir, &video_so_far)?;
+            // Build the new snapshot beside the live one and swap it in with a single atomic
+            // rename. Writing `video-so-far.webm` in place truncated it to zero and refilled it
+            // while the previous chunk's `add_increment` was still reading it — ffprobe then hit
+            // a half-written file, failed, and the whole incremental pass bailed. That race is
+            // why "indexing while uploading" silently no-op'd on every recording in production;
+            // a reader now always sees one complete generation or the other.
+            // ponytail: still an O(n²) full rewrite per chunk — fine up to a few minutes; if long
+            // recordings matter, append in-order into a single handle and only re-concat on a gap.
+            let staging = dir.join("video-so-far.next");
+            concat_chunks(&dir, &staging)?;
+            std::fs::rename(&staging, &video_so_far)?;
             Ok(())
         }
     })
@@ -1638,6 +1655,45 @@ fn concat_chunks(dir: &std::path::Path, out: &std::path::Path) -> anyhow::Result
     Ok(())
 }
 
+/// Which chunk sequence numbers actually landed in a stage dir.
+fn chunk_seqs(dir: &std::path::Path) -> Vec<u32> {
+    let mut seqs: Vec<u32> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_prefix("chunk-").and_then(|r| r.strip_suffix(".bin")).and_then(|n| n.parse().ok())
+        })
+        .collect();
+    seqs.sort_unstable();
+    seqs
+}
+
+/// Refuse to promote a recording whose chunks are incomplete.
+///
+/// Only chunk 0 carries the WebM/EBML header, so a missing chunk 0 makes the assembled file
+/// unplayable outright and a missing middle chunk truncates or corrupts everything after it —
+/// one production clip is dead on disk from exactly this. `expected` is the client's own count
+/// of emitted chunks (`?chunks=`); older clients omit it and only get the header + contiguity
+/// checks. On any failure the caller returns non-2xx, which routes the client to the
+/// `/ingest?reuse=` fallback where the full recording is still in memory.
+fn validate_chunks(dir: &std::path::Path, expected: Option<u32>) -> Result<(), String> {
+    let seqs = chunk_seqs(dir);
+    if seqs.first() != Some(&0) {
+        return Err("chunk 0 (the WebM header) never arrived".into());
+    }
+    if let Some(gap) = seqs.windows(2).find(|w| w[1] != w[0] + 1) {
+        return Err(format!("chunk sequence has a gap between {} and {}", gap[0], gap[1]));
+    }
+    if let Some(n) = expected {
+        if seqs.len() as u32 != n {
+            return Err(format!("expected {n} chunks, stored {}", seqs.len()));
+        }
+    }
+    Ok(())
+}
+
 /// `POST /ingest/stage/:session/commit` — assemble the uploaded chunks into the final clip.
 /// For instant-link sessions (session == `clp_` id, minted at stage-open) Phase 1 is *cheap*:
 /// one on-disk concat + a rename into the clip dir + a probe — never the old
@@ -1647,6 +1703,7 @@ fn concat_chunks(dir: &std::path::Path, out: &std::path::Path) -> anyhow::Result
 async fn ingest_stage_commit(
     State(s): State<AppState>,
     Path(session): Path<String>,
+    Query(q): Query<CommitQuery>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, WebErr> {
@@ -1662,6 +1719,13 @@ async fn ingest_stage_commit(
     let dir = std::env::temp_dir().join(format!("clipxd-stage-{session}"));
     if !dir.exists() {
         return Err((StatusCode::NOT_FOUND, "session not found; call POST /ingest/stage first".into()));
+    }
+
+    // Never promote an incomplete upload into a "finished" clip — see `validate_chunks`. The
+    // client falls back to posting the whole recording it still holds in memory.
+    if let Err(why) = validate_chunks(&dir, q.chunks) {
+        eprintln!("stage commit for {session} rejected: {why}");
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, format!("incomplete upload: {why}")));
     }
 
     let stage_slot = s.stage_sessions.lock().await.remove(&session);
@@ -1753,9 +1817,49 @@ fn assemble_recording(stage_dir: &std::path::Path, clip_dir: &std::path::Path, i
     concat_chunks(stage_dir, &out)?;
     std::fs::create_dir_all(clip_dir)?;
     let video = clip_dir.join("video.webm");
-    move_file(&out, &video)?;
+    if !remux_seekable(&out, &video) {
+        move_file(&out, &video)?; // remux unavailable — ship the raw concat rather than nothing
+    }
     clipxd_recorder::promote_recording_stub(clip_dir, &video, id, "Screen recording")?;
     Ok(video)
+}
+
+/// Rewrite a raw chunk-concatenated WebM into a properly muxed one: same packets (`-c copy`, so
+/// no re-encode and no quality loss), but with a real Duration in the Segment header and a Cues
+/// index at the end.
+///
+/// Without this every stored recording reports `duration=N/A`: `metadata.duration` lands as 0.0,
+/// chapter/moment seeking is guesswork, the VideoObject schema is wrong, and — worst for a
+/// share-first product — a viewer's browser has to download the *entire* file before it knows how
+/// long the video is, so scrubbing waits on the full transfer. Measured on production: pressing
+/// play on a 30 MB clip immediately buffered all 46 s of it.
+///
+/// Returns false (leaving `dst` untouched) if ffmpeg is missing or fails, so the caller can fall
+/// back to the raw file — a slightly worse clip beats a lost one.
+fn remux_seekable(src: &std::path::Path, dst: &std::path::Path) -> bool {
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-y", "-fflags", "+genpts", "-i"])
+        .arg(src)
+        .args(["-c", "copy", "-f", "webm"])
+        .arg(dst)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    match out {
+        Ok(o) if o.status.success() && dst.exists() => {
+            let _ = std::fs::remove_file(src);
+            true
+        }
+        Ok(o) => {
+            eprintln!("remux failed ({}), keeping the raw concat: {}", o.status, String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or(""));
+            let _ = std::fs::remove_file(dst);
+            false
+        }
+        Err(e) => {
+            eprintln!("remux could not run ffmpeg ({e}), keeping the raw concat");
+            false
+        }
+    }
 }
 
 /// Blocking Phase-1 of the sweeper's salvage path: [`assemble_recording`] plus dropping the
@@ -3113,7 +3217,6 @@ fn share_topbar(url: &str) -> String {
     <span class="topbar-name">Clip<span class="topbar-xd">XD</span></span>
   </a>
   <nav class="topbar-nav">
-    <span class="pill signal">agent-queryable</span>
     <a class="btn-share-link" href="#" data-copy="{url}">Copy link</a>
   </nav>
 </header>"##,
@@ -4074,7 +4177,7 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 mod tests {
     use super::{
         format_view_count, html_escape, merge_browser_trace_into_clip, mint_clip_id, share_base, share_slug_for, short_tail,
-        slugify_title, truncate_chars, try_claim, ClipClaims,
+        slugify_title, truncate_chars, try_claim, validate_chunks, ClipClaims,
     };
     use std::sync::{Arc, Mutex as StdMutex};
 
@@ -4347,6 +4450,36 @@ mod tests {
             assert!(try_claim(&claims, "clp_seq").is_none());
         } // _first drops here — e.g. the sweeper's promote_staged failed and returned early
         assert!(try_claim(&claims, "clp_seq").is_some(), "a released id must be claimable again");
+    }
+
+    #[test]
+    fn incomplete_chunk_uploads_are_refused_before_they_become_a_clip() {
+        let dir = std::env::temp_dir().join(format!("clipxd-chunkval-{}", std::process::id()));
+        let write = |seqs: &[u32]| {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for s in seqs {
+                std::fs::write(dir.join(format!("chunk-{s:06}.bin")), b"x").unwrap();
+            }
+        };
+
+        write(&[0, 1, 2]);
+        assert!(validate_chunks(&dir, Some(3)).is_ok(), "a complete upload commits");
+        assert!(validate_chunks(&dir, None).is_ok(), "older clients send no count and still pass");
+
+        // Chunk 0 holds the only EBML header — without it the assembled file is unplayable.
+        write(&[1, 2]);
+        assert!(validate_chunks(&dir, Some(3)).is_err());
+
+        // A hole mid-stream corrupts everything after it.
+        write(&[0, 1, 3]);
+        assert!(validate_chunks(&dir, Some(4)).is_err());
+
+        // Contiguous but short: the tail never arrived, so the recording is cut off.
+        write(&[0, 1]);
+        assert!(validate_chunks(&dir, Some(3)).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

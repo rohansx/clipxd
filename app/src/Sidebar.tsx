@@ -55,7 +55,8 @@ const ICONS = {
 export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }: SidebarProps) {
   const items: NavDef[] = [
     { icon: ICONS.library, label: "Library", view: "library", count: clipCount > 0 ? String(clipCount) : "", accent: "var(--grape)" },
-    { icon: ICONS.recording, label: "Recording", view: "recording", accent: "var(--sodium)" },
+    // "Record" (the action) rather than "Recording" (a state) — the row starts a recording.
+    { icon: ICONS.recording, label: "Record", view: "recording", accent: "var(--sodium)" },
     { icon: ICONS.import, label: "Import", view: "import", accent: "var(--signal)" },
     { icon: ICONS.chat, label: "Ask agent", view: "chat", accent: "var(--signal)" },
     { icon: ICONS.docs, label: "Docs", view: "docs", accent: "var(--grape)" },
@@ -124,9 +125,13 @@ export function Sidebar({ cloudView, clipCount, onNav, onBrand, user, onLogout }
       })}
 
       <div className="side-foot">
+        {/* Was "MCP server · connected" — a hardcoded string that never checked anything, so it
+            claimed a live connection even when nothing was listening. State the capability
+            (every clip exposes an MCP endpoint), which is true without pretending to a status
+            we don't poll. */}
         <div className="row">
           <span className="dot signal" style={{ width: 8, height: 8, boxShadow: "0 0 8px var(--signal)" }} />
-          MCP server · connected
+          MCP endpoint per clip
         </div>
         {/* "0 px egress" is a claim about LOCAL mode (your pixels never leave the machine). On
             the hosted service the video is on our box, so state what's actually true there. */}
