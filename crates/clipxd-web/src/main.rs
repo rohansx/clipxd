@@ -149,6 +149,18 @@ const STUCK_AFTER_SECS: u64 = 6 * 3600;
 /// flat keyframe). Repairing the container repairs all three.
 async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
     let storage = clipxd_web::storage::StorageKind::from_env(clips_dir);
+    // Say which backend this run is writing to, up front. The hosted box serves S3 first, so a
+    // repair that silently fell back to Local (an unset/unreadable CLIPXD_STORAGE — the env file
+    // is root-only, and `source`ing it as the service user yields nothing) fixes every file on
+    // disk and changes nothing anyone can see. That happened on the first production run.
+    match &storage {
+        clipxd_web::storage::StorageKind::Local { root } => println!(
+            "storage: LOCAL ({}) — if this box serves from S3, set CLIPXD_STORAGE or the repair \
+             will not be visible over HTTP\n",
+            root.display()
+        ),
+        clipxd_web::storage::StorageKind::S3 { bucket, .. } => println!("storage: S3 ({bucket})\n"),
+    }
     let (mut remuxed, mut retimed, mut rezoomed, mut unstuck, mut pruned) = (0u32, 0u32, 0u32, 0u32, 0u32);
 
     let mut dirs: Vec<PathBuf> =
