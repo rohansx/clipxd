@@ -41,22 +41,32 @@ Fix: `getUserMedia({audio:true})` + mix with display audio through one `AudioCon
 `MediaStreamDestination`, add a mic device picker + real level meter from an `AnalyserNode`,
 default mic **on** for screen mode.
 
-### P0-2 — Auto-zoom never fires on any real recording.
-The zoom track is computed from a cursor/click track collected via `window` pointer events
-(`useScreenRecorder.ts:285`) — which only fire while the pointer is over the clipxd tab. When you
-record another window (i.e. always) the track is empty.
+### P0-2 — Auto-zoom dies on exactly the clips whose duration is missing. *(corrected)*
 
-Evidence: **no `cursor.json` on any of the 33 prod clips**; `clp_445ee98d/zoom.json` is literally
-`[{"t":0.0,"scale":1.0,"cx":0.5,"cy":0.5}]` — one flat keyframe, zoom 1.0, forever.
+**An earlier draft of this doc said auto-zoom "never fires." That was wrong**, and the correction
+matters because it changes the fix. I sampled one clip's `zoom.json` (`clp_445ee98d`: a single flat
+keyframe at scale 1.0) and generalised. Measuring all of them says otherwise:
 
-Fix (two tracks, do both):
-1. **Real cursor** requires a capture surface that sees the OS pointer → the MV3 extension (tab-scoped)
-   or a desktop app. This is the Screen Studio path.
-2. **Cursor-free attention track** — the one that serves "zoom where the important part is" today:
-   derive anchors server-side from what's already computed — veyo salience regions, frame-diff
-   centroids, and OCR bounding-box clusters (the OCR pass already produces boxes). Feed those into
-   `compute_zoom_track` as synthetic triggers alongside `dwell_anchors`. No new capture needed and
-   it works for imports too.
+| clip | duration | zoom keyframes | max scale | % of timeline zoomed |
+|---|---|---|---|---|
+| clp_18bfa626 | 46.6 s | 1396 | **2.00×** | 7% |
+| clp_18c05b42 | 18.7 s | 559 | **2.00×** | 64% |
+| clp_bc219f7a | 102.0 s | 3051 | **2.00×** | 3% |
+| clp_4e203602 | 41.7 s | 1248 | **2.00×** | 4% |
+| clp_445ee98d | **0.0** | **1** | 1.00× | 0% |
+| clp_18be6ed0 | **0.0** | **1** | 1.00× | 0% |
+
+The engine works, and the cursor-free path already exists: `autofocus::focus_track_from_deltas`
+turns veyo's salience regions into a synthetic cursor path + zoom triggers, which is why clips with
+no `cursor.json` (i.e. all of them) still push in to 2.0×. What kills it is
+`compute_zoom_track` emitting `duration × fps + 1` keyframes — at duration 0.0 that is exactly one
+flat keyframe. **Same root cause as P0-4**, so the remux fixes auto-zoom too, and `--repair`
+rebuilds the track for clips already on disk.
+
+What's still true from the original finding: no recording has a real cursor track, because `window`
+pointer events only fire over the clipxd tab. So the camera follows *content salience*, not the
+pointer — good enough that it reaches 2.0× on the action, but a real OS cursor (extension or
+desktop app) would still aim it better.
 
 ### P0-3 — "Indexing while uploading" is built but **fails on every session in prod**.
 ```
@@ -134,9 +144,11 @@ card instead of an eternal spinner.
 
 **The share page — the surface that actually sells the product — is the weakest one.**
 
-- It uses a raw `<video controls>`: default browser chrome, black rectangle, no poster, no big play
-  button, no speed control, no captions, no keyboard shortcuts. The *internal* app has a far better
-  liquid-glass player. That's backwards — ship the good player on the public page.
+- It uses a raw `<video controls>`: default browser chrome, no speed control, no captions, no
+  keyboard shortcuts, while the *internal* app has a far better liquid-glass player. That's
+  backwards — the public page should get the good one. *(Correction: it does set `poster` and
+  `preload="metadata"`, and `/clip/:id/thumbnail` returns a valid 169 KB JPEG — the black
+  rectangle in my screenshot was that clip's genuinely dark first frame, not a missing poster.)*
 - The top bar carries an `agent-queryable` pill (this is the navbar copy you flagged). Dev-facing
   affordances — index.json, MCP url, agent link, Copy index — should collapse into one
   "For agents ⌄" disclosure. Recipients want: title, play, chapters, comment, copy link.
