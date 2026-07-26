@@ -1,5 +1,9 @@
 # clipxd product audit — 2026-07-26
 
+> **Status:** everything in §5 weeks 1–3 that could be fixed in code is shipped and live on
+> clipxd.com, and the existing clips on the box have been repaired. See §7 for what landed, how
+> each fix was verified in production, and what is deliberately still open.
+
 Method: live browse of clipxd.com (landing + a real public share page) with agent-browser,
 full read of the SPA + recorder + web crate, and a direct inspection of **production data and
 logs** on the box (33 clip dirs, `journalctl -u clipxd-web`, `ffprobe` on every stored video).
@@ -255,3 +259,43 @@ New findings from clicking:
   Undo, backgrounds, Render MP4, `.clipxd` export), the Import view's framing, and the BYOK
   settings (NVIDIA / Gemini / Moondream keys + "run captioning locally in my browser"), which are
   live in production now.
+
+---
+
+## 7. What shipped — 2026-07-26, live on clipxd.com
+
+Ten commits (`b5afedf`…`2b2c9be`). Each line states how it was verified *in production*, not just
+that it compiles.
+
+| Finding | Fix | Verified by |
+|---|---|---|
+| P0-1 silent recordings | Mic captured and mixed with display audio through one `AudioContext`; on by default; mic toggle in the recorder; the fake sine meter replaced by a real `AnalyserNode` level | `tools/audio-mix-check.html` in a real browser: 21 KB of mixed audio recorded, analyser peak 1.000 |
+| — its follow-on bug | That context is built *after* the countdown's awaits, so Chrome started it `suspended` and the track was silent. Bounded `resume()` | Same page: without it, 0 bytes and peak 0.000; with it, both pass |
+| P0-3 indexing-while-recording | `video-so-far.webm` is built beside the live file and swapped with one atomic rename instead of being truncated in place under a concurrent reader | Journal since deploy: **0** `add_increment failed` lines (previously one or more in every session) |
+| P0-4 no duration / no cues | `-c copy` remux at commit, `--repair` for existing clips, bitrate 8 → 3 Mbps | `ffprobe` on the live URL: `duration=46.646` (was `N/A`); in-browser `video.duration` known after **0.63 s** buffered instead of the whole 30 MB |
+| P0-2 dead auto-zoom | Same root cause; repair rebuilt the tracks | 5 clips went from **1 flat keyframe** to 550–2336 keyframes reaching 2.0× |
+| P0-5 chunk data loss | Retry with backoff; commit refuses a gap (`validate_chunks`, unit-tested) and falls back to the in-memory blob | `cargo test` + the rejection path in the logs |
+| P0-6 stuck / orphan clips | `--repair` retires clips stuck past 6 h and prunes empty dirs | 1 clip unstuck (`enriching` for 596 h), 7 empty dirs pruned |
+| Chapters read "A screenshot shows…" | Preamble strip in `clean_index`, so share page, SPA, unfurl and `index.json` all get content-first text | Live: `A screenshot shows a dark desktop…` → `A dark desktop…` |
+| OCR wall on the share page | Folded behind one `<details>` row | Live: "On-screen text (521 lines)" collapsed |
+| `agent-queryable` pill in the share nav | Removed | Live |
+| Five false copy lines | Rewritten (`0 px egress`, `index forms on stop`, `MCP server · connected`, the mic meter, the library subhead) | Live |
+| `/docs` unreachable signed out | Docs excluded from the auth bounce | Live: loads in a cookie-less session |
+| Dead footer links | Real hrefs, and **Privacy** + **Security** pages written | Live at `/docs#privacy`, `/docs#security` |
+| No link access control | Per-clip visibility + one middleware over every clip route; "Only me" in the Share dialog | Live: signed out gets 404 on the page, the video *and* the index; owner gets 200. Set back to public after the test |
+| Ask took 75–90 s | Per-call timeout 60 → 25 s and a 45 s cascade budget, both env-tunable; NVIDIA cascade made env-configurable so the EOL `glm4.7` can be dropped without a rebuild | Deployed; the deterministic grounded fallback now takes over instead of the UI hanging |
+
+Two mistakes worth keeping visible, both mine, both caught by checking production rather than
+trusting the code path:
+
+1. The first `--repair` run reported success and changed nothing anyone could see: the env file is
+   root-only, so `CLIPXD_STORAGE` came out empty, storage fell back to Local, and every write
+   landed on disk the box doesn't serve from. `--repair` now prints its storage backend first.
+2. The mirror was gated on the *index* changing, so a clip that was only remuxed kept serving the
+   old container to viewers. Fixed, plus `--remirror` to re-send after a misconfigured run.
+
+**Still open**, unchanged from §5 and honestly beyond one session: the custom player on the share
+page, enrichment moved off the request box with memory caps, viewer analytics, SSO, audit log,
+retention policy, CSP on share pages, self-hosted fonts, and the desktop app. The
+`clp_18c0982c…` clip whose first chunk was lost before this work remains unplayable — that data is
+gone; the fix only prevents the next one.
