@@ -34,6 +34,11 @@ struct Args {
     /// removes empty clip directories a crashed session left behind.
     #[arg(long)]
     repair: bool,
+    /// With `--repair`: re-upload every clip's `video.webm` to object storage even if this run
+    /// changed nothing. Needed once after a repair whose mirror was misconfigured — the local
+    /// files are already correct, so nothing would otherwise be re-sent.
+    #[arg(long)]
+    remirror: bool,
 }
 
 #[tokio::main]
@@ -51,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
         return backfill_titles(&args.clips_dir).await;
     }
     if args.repair {
-        return repair_clips(&args.clips_dir).await;
+        return repair_clips(&args.clips_dir, args.remirror).await;
     }
 
     let public = args.public
@@ -147,8 +152,9 @@ const STUCK_AFTER_SECS: u64 = 6 * 3600;
 /// keyframe, so auto-zoom is dead on exactly those clips (verified across production: every clip
 /// with a real duration has 286–3051 keyframes reaching 2.0×; every 0.0-duration clip has one
 /// flat keyframe). Repairing the container repairs all three.
-async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
+async fn repair_clips(clips_dir: &std::path::Path, force_mirror: bool) -> anyhow::Result<()> {
     let storage = clipxd_web::storage::StorageKind::from_env(clips_dir);
+    let mut mirrored = 0u32;
     // Say which backend this run is writing to, up front. The hosted box serves S3 first, so a
     // repair that silently fell back to Local (an unset/unreadable CLIPXD_STORAGE — the env file
     // is root-only, and `source`ing it as the service user yields nothing) fixes every file on
@@ -194,6 +200,9 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
             }
         };
         let mut dirty = false;
+        // A repaired *video* also has to reach storage: the box serves S3 first, so a remux that
+        // only lands on local disk leaves every viewer on the old, unseekable container.
+        let mut video_dirty = force_mirror;
 
         // 1. Repair the container, then re-probe it.
         if video.exists() {
@@ -208,6 +217,7 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
                     if std::fs::rename(&staged, &video).is_ok() {
                         println!("remuxed   {id}");
                         remuxed += 1;
+                        video_dirty = true;
                     }
                 }
             }
@@ -267,16 +277,29 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
 
         if dirty {
             std::fs::write(&index_path, serde_json::to_string_pretty(&index)?)?;
-            // The hosted box serves S3 first, so a local-only write would never be seen.
+        }
+        // The hosted box serves S3 first, so a local-only write would never be seen.
+        if dirty || video_dirty {
             if let Ok(st) = storage.make_storage().await {
-                if let Ok(body) = std::fs::read(&index_path) {
-                    if st.write_object(&format!("{id}/index.json"), body, "application/json").await.is_err() {
-                        println!("          {id}: STORAGE MIRROR FAILED — check CLIPXD_STORAGE");
+                if dirty {
+                    if let Ok(body) = std::fs::read(&index_path) {
+                        if st.write_object(&format!("{id}/index.json"), body, "application/json").await.is_err() {
+                            println!("          {id}: INDEX MIRROR FAILED — check CLIPXD_STORAGE");
+                        }
                     }
                 }
-                if video.exists() {
-                    if let Ok(body) = std::fs::read(&video) {
-                        let _ = st.write_object(&format!("{id}/video.webm"), body, "video/webm").await;
+                if video_dirty && video.exists() {
+                    match std::fs::read(&video) {
+                        Ok(body) => {
+                            let mb = body.len() as f64 / 1e6;
+                            if st.write_object(&format!("{id}/video.webm"), body, "video/webm").await.is_err() {
+                                println!("          {id}: VIDEO MIRROR FAILED — check CLIPXD_STORAGE");
+                            } else {
+                                println!("mirrored  {id}: video.webm ({mb:.1} MB)");
+                                mirrored += 1;
+                            }
+                        }
+                        Err(e) => println!("          {id}: could not read video to mirror: {e}"),
                     }
                 }
             }
@@ -284,7 +307,7 @@ async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
     }
 
     println!(
-        "\nrepair complete: {remuxed} remuxed, {retimed} retimed, {rezoomed} zoom tracks rebuilt, {unstuck} unstuck, {pruned} empty dirs pruned"
+        "\nrepair complete: {remuxed} remuxed, {retimed} retimed, {rezoomed} zoom tracks rebuilt, {unstuck} unstuck, {pruned} empty dirs pruned, {mirrored} videos mirrored"
     );
     Ok(())
 }
