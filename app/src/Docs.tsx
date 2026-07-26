@@ -235,11 +235,11 @@ export function Docs() {
               Your email and username are stored for your account. That's the whole set.
             </p>
             <p>
-              <b>Share links are public to anyone who has them.</b> A clip URL is unguessable, but it is not
-              access-controlled: there is no per-viewer permission, expiry, or password yet, so treat a clip
-              link the way you'd treat an unlisted video link. Don't record anything you couldn't hand to
-              whoever the link reaches. Scoped links are on the roadmap and this page will say so when they
-              land.
+              <b>A share link defaults to "anyone with the link".</b> That URL is unguessable but otherwise
+              unrestricted, so treat it the way you'd treat an unlisted video link. Every clip's Share dialog
+              has an <b>Only me</b> switch that makes the link 404 for everyone but you — page, video, frames,
+              index and query endpoints alike. What doesn't exist yet: per-person permissions, expiring links,
+              passwords, and domain restrictions.
             </p>
             <p>
               Enrichment sends frames and audio to whichever backends are configured for captioning,
@@ -276,10 +276,12 @@ export function Docs() {
               HTML-escaped, never as raw markup.
             </p>
             <p>
-              <b>What isn't there yet</b>, stated plainly so you can judge it: share links have no
-              access control (see Privacy), there's no SSO/SAML, no audit log, no per-workspace roles, and no
-              published retention or data-processing agreement. If you need those before you can use this at
-              work, say so — it's the roadmap's next block, and self-hosting is available today.
+              <b>What isn't there yet</b>, stated plainly so you can judge it: a share link is either
+              owner-only or open to anyone holding it — there's nothing in between (no per-person
+              permissions, no expiry, no password, no domain restriction). There's also no SSO/SAML, no audit
+              log, no per-workspace roles, and no published retention or data-processing agreement. If you
+              need those before you can use this at work, say so — it's the roadmap's next block, and
+              self-hosting is available today.
             </p>
           </DocSection>
         </div>
