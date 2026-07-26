@@ -14,6 +14,9 @@ path = "src/main.rs"
 [dependencies]
 clipxd-index = { path = "../clipxd-index" }
 clipxd-recorder = { path = "../clipxd-recorder" }
+# ffprobe/ffmpeg wrappers, shared with the import path — used by `--repair` to re-probe a
+# remuxed recording without duplicating the probe logic.
+clipxd-import = { path = "../clipxd-import" }
 clipxd-browser = { path = "../clipxd-browser" }
 # BYOK caption overrides (CaptionSource) — passed down into clipxd-recorder's enrich_clip/
 # IncrementalIndexer, and used directly to build the /clip/:id/local-captions visual_timeline.

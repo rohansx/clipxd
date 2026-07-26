@@ -213,12 +213,16 @@ export default function App() {
   // If the optimistic restore above lands us in the cloud view but the real auth check
   // (which only starts once `view === "cloud"`) comes back unauthenticated, don't strand
   // the user on a cloud view they can't use — send them to the auth screen instead.
+  // Docs is the exception: it's public content with a real crawlable URL and nothing
+  // per-user on it. Bouncing a signed-out visitor to the login card meant /docs served the
+  // login wall (and rewrote the URL back to /), so crawlers indexed nothing and a prospect
+  // couldn't read how the product works before creating an account.
   useEffect(() => {
-    if (view === "cloud" && !auth.loading && auth.authEnabled && !auth.user) {
+    if (view === "cloud" && cloudView !== "docs" && !auth.loading && auth.authEnabled && !auth.user) {
       setView("auth");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.loading, auth.authEnabled, auth.user]);
+  }, [auth.loading, auth.authEnabled, auth.user, cloudView]);
 
   // Auth gate — ONLY blocks the cloud view, never the landing. Showing a
   // spinner in place of the landing is the single biggest reason FCP/LCP

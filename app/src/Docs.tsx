@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Section {
   id: string;
@@ -18,11 +18,23 @@ const SECTIONS: Section[] = [
   { id: "cinematic", label: "Cinematic editor" },
   { id: "extension", label: "Browser extension" },
   { id: "byok", label: "Bring your own keys" },
-  { id: "privacy", label: "Privacy — CloakPipe" },
+  { id: "privacy", label: "Privacy" },
+  { id: "security", label: "Security" },
 ];
 
 export function Docs() {
   const [active, setActive] = useState("overview");
+
+  // `/docs#security` from the footer: the browser's own hash jump happens before React has
+  // rendered the sections, so without this the deep link silently lands at the top of the page.
+  useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+    if (!id || !SECTIONS.some((s) => s.id === id)) return;
+    setActive(id);
+    // One frame, so the section exists before we scroll to it.
+    const h = requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "start" }));
+    return () => cancelAnimationFrame(h);
+  }, []);
 
   const jump = (id: string) => {
     setActive(id);
@@ -216,12 +228,58 @@ export function Docs() {
             </ul>
           </DocSection>
 
-          <DocSection id="privacy" title="Privacy — CloakPipe">
+          <DocSection id="privacy" title="Privacy — what we store, and who can see it">
             <p>
-              Every index passes through CloakPipe before it's shared — a redaction pass that checks for
-              secrets before the link goes live. The clip page's Summary tab always shows the result: either
+              A recording you make on the hosted service is stored on our server: the video file, the frames
+              the indexer kept, and the index built from them (transcript, on-screen text, captions, events).
+              Your email and username are stored for your account. That's the whole set.
+            </p>
+            <p>
+              <b>Share links are public to anyone who has them.</b> A clip URL is unguessable, but it is not
+              access-controlled: there is no per-viewer permission, expiry, or password yet, so treat a clip
+              link the way you'd treat an unlisted video link. Don't record anything you couldn't hand to
+              whoever the link reaches. Scoped links are on the roadmap and this page will say so when they
+              land.
+            </p>
+            <p>
+              Enrichment sends frames and audio to whichever backends are configured for captioning,
+              OCR, transcription and titling. Transcription and OCR run on our own server; captioning and
+              title generation call a model provider. You can point all of them at your own keys under
+              Settings → Bring your own keys, or switch captioning to run locally in your browser.
+            </p>
+            <p>
+              Running clipxd yourself is the strongest privacy answer: the recorder, indexer and share
+              layer are Apache-2.0 and nothing leaves your machine unless you configure a backend that
+              sends it somewhere. Delete a clip and its files and index go with it.
+            </p>
+            <p>
+              Every index also passes through CloakPipe before it's shared — a redaction pass that checks
+              for secrets before the link goes live. The clip page's Summary always shows the result: either
               "redaction ran" with the policy used, or an explicit "no secrets detected before this index
               was shared."
+            </p>
+          </DocSection>
+
+          <DocSection id="security" title="Security">
+            <p>
+              <b>Reporting.</b> Send anything you find to <a href="mailto:hello@clipxd.com">hello@clipxd.com</a>{" "}
+              — or open a GitHub advisory on{" "}
+              <a href="https://github.com/rohansx/clipxd/security" target="_blank" rel="noreferrer">
+                the repository
+              </a>
+              . Please don't file a public issue for an unpatched vulnerability.
+            </p>
+            <p>
+              <b>How it's built.</b> Sessions are JWT cookies over HTTPS; passwords are hashed with Argon2;
+              sign-in with GitHub is supported. The app is served under a strict Content-Security-Policy with
+              Trusted Types, and every user-supplied string (comments, titles, embeds) is inserted as text or
+              HTML-escaped, never as raw markup.
+            </p>
+            <p>
+              <b>What isn't there yet</b>, stated plainly so you can judge it: share links have no
+              access control (see Privacy), there's no SSO/SAML, no audit log, no per-workspace roles, and no
+              published retention or data-processing agreement. If you need those before you can use this at
+              work, say so — it's the roadmap's next block, and self-hosting is available today.
             </p>
           </DocSection>
         </div>

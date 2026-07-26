@@ -55,7 +55,13 @@ const NEAR_SIM: f64 = 0.6;
 /// already-clean ones) and idempotent.
 pub fn clean_index(index: &mut Index) {
     for m in &mut index.visual_timeline {
-        m.caption = collapse_repetition(&m.caption);
+        m.caption = strip_frame_preamble(&collapse_repetition(&m.caption));
+        if let Some(l) = m.label.as_mut() {
+            *l = strip_frame_preamble(l);
+        }
+    }
+    for c in &mut index.summary.chapters {
+        c.title = strip_frame_preamble(&c.title);
     }
     dedup_visual_timeline(&mut index.visual_timeline);
     dedup_on_screen_text(&mut index.on_screen_text);
@@ -64,6 +70,61 @@ pub fn clean_index(index: &mut Index) {
     // A cleaned index carries the v2 shape (search + deduped streams), whether it was just
     // enriched or backfilled from a v1 clip — stamp it so consumers can trust the field.
     index.clipxd_version = CLIPXD_SCHEMA_VERSION.to_string();
+}
+
+/// Openers a frame captioner reaches for because it is describing *an image*, not narrating a
+/// recording. Lowercase; matched case-insensitively against the start of a caption.
+const FRAME_PREAMBLES: &[&str] = &[
+    "a screenshot of a ",
+    "a screenshot of ",
+    "a screenshot shows ",
+    "a screenshot displays ",
+    "a screenshot captures ",
+    "the screenshot shows ",
+    "the screenshot displays ",
+    "screenshot of ",
+    "a screen recording shows ",
+    "the screen recording shows ",
+    "a screen capture shows ",
+    "the image shows ",
+    "the image displays ",
+    "the image depicts ",
+    "this image shows ",
+    "an image of ",
+    "the video shows ",
+    "the frame shows ",
+    "the picture shows ",
+];
+
+/// Strip "A screenshot shows …" style openers from a caption/label/chapter title.
+///
+/// Every caption model describes the *medium* before the content, so a chapter list reads
+/// "A screenshot shows a dark desktop…", "A screenshot of a LinkedIn page…", "The image displays
+/// …" — eight rows of identical preamble where the useful words should be, in the one place a
+/// recipient looks to navigate. The recording is already the medium; saying so in every row is
+/// pure noise. Runs inside `clean_index`, so the cleaned text is what the share page, the SPA,
+/// the unfurl, and every agent reading `index.json` all get.
+fn strip_frame_preamble(text: &str) -> String {
+    let mut out = text.trim();
+    // Loop: models stack them ("A screenshot shows an image of …").
+    'again: loop {
+        let lower = out.to_lowercase();
+        for p in FRAME_PREAMBLES {
+            if lower.starts_with(p) {
+                out = out[p.len()..].trim_start();
+                continue 'again;
+            }
+        }
+        break;
+    }
+    if out.is_empty() {
+        return text.trim().to_string(); // a caption that was ONLY preamble keeps its original text
+    }
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => out.to_string(),
+    }
 }
 
 /// Collapse a single caption's *internal* degeneration — a small local caption model
@@ -332,6 +393,27 @@ mod tests {
 
     fn ost(t: f64, text: &str) -> OnScreenText {
         OnScreenText { start: t, end: t, text: text.into(), source: TextKind::Ocr, bbox: None }
+    }
+
+    #[test]
+    fn frame_preamble_is_stripped_so_chapters_read_as_content() {
+        // Real production captions from clipxd.com — eight chapter rows in a 46 s clip, every
+        // one of them opening with the same five words.
+        assert_eq!(
+            strip_frame_preamble("A screenshot shows a dark desktop with a web browser window"),
+            "A dark desktop with a web browser window"
+        );
+        assert_eq!(
+            strip_frame_preamble("A screenshot of a LinkedIn page shows a circular blue icon"),
+            "LinkedIn page shows a circular blue icon"
+        );
+        assert_eq!(strip_frame_preamble("The image displays the LinkedIn logo"), "The LinkedIn logo");
+        // Stacked preambles collapse in one go.
+        assert_eq!(strip_frame_preamble("A screenshot shows an image of the console"), "The console");
+        // Text that isn't preamble is untouched, punctuation and all.
+        assert_eq!(strip_frame_preamble("Opens the payments settings page"), "Opens the payments settings page");
+        // A caption that is *only* preamble keeps something rather than becoming empty.
+        assert_eq!(strip_frame_preamble("A screenshot of"), "A screenshot of");
     }
 
     #[test]

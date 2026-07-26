@@ -1836,7 +1836,7 @@ fn assemble_recording(stage_dir: &std::path::Path, clip_dir: &std::path::Path, i
 ///
 /// Returns false (leaving `dst` untouched) if ffmpeg is missing or fails, so the caller can fall
 /// back to the raw file — a slightly worse clip beats a lost one.
-fn remux_seekable(src: &std::path::Path, dst: &std::path::Path) -> bool {
+pub fn remux_seekable(src: &std::path::Path, dst: &std::path::Path) -> bool {
     let out = std::process::Command::new("ffmpeg")
         .args(["-y", "-fflags", "+genpts", "-i"])
         .arg(src)
@@ -3340,9 +3340,16 @@ fn share_main(id: &str, idx: &Index) -> String {
         s.push_str(&h);
     }
 
-    // On-screen text — only when present; the SPA already filters noise server-side.
+    // On-screen text — folded away by default. It's the search corpus, not reading material:
+    // a real clip carries 500+ OCR rows of fragments like "(@ nec) 00:00 en + 1086", and putting
+    // that wall on the page a recipient opens buries the summary, chapters and transcript that
+    // actually answer "what is this?". Still one click away (and untouched in index.json) for
+    // anyone who wants the raw stream.
     if !idx.on_screen_text.is_empty() {
-        let mut h = String::from(r#"<section class="card ost"><h3>On-screen text</h3><ol class="ost-list">"#);
+        let mut h = format!(
+            r#"<section class="card ost"><details><summary class="ost-summary">On-screen text ({} lines) — every word the OCR pass read</summary><ol class="ost-list">"#,
+            idx.on_screen_text.len(),
+        );
         for t in &idx.on_screen_text {
             // Truncate then escape — same entity-splitting bug as the outline, and OCR text is
             // exactly where a stray `&` or `<` actually shows up.
@@ -3352,7 +3359,7 @@ fn share_main(id: &str, idx: &Index) -> String {
                 t.start, fmt_duration(t.start), txt_short,
             ));
         }
-        h.push_str("</ol></section>");
+        h.push_str("</ol></details></section>");
         s.push_str(&h);
     }
 

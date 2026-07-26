@@ -25,6 +25,15 @@ struct Args {
     /// CLIPXD_STORAGE + S3 keys so the regenerated index mirrors back to object storage.
     #[arg(long)]
     backfill_titles: bool,
+    /// One-off maintenance: repair clips already on disk, then exit WITHOUT serving.
+    ///
+    /// Remuxes any recording whose container carries no duration (every clip assembled by the
+    /// old raw-concat path), refills `metadata.duration/resolution/fps` from the repaired file,
+    /// recomputes the zoom track — which collapses to a single flat keyframe whenever the
+    /// duration is 0 — moves clips stuck at `recording`/`enriching` to a terminal status, and
+    /// removes empty clip directories a crashed session left behind.
+    #[arg(long)]
+    repair: bool,
 }
 
 #[tokio::main]
@@ -40,6 +49,9 @@ async fn main() -> anyhow::Result<()> {
 
     if args.backfill_titles {
         return backfill_titles(&args.clips_dir).await;
+    }
+    if args.repair {
+        return repair_clips(&args.clips_dir).await;
     }
 
     let public = args.public
@@ -120,6 +132,152 @@ async fn backfill_titles(clips_dir: &std::path::Path) -> anyhow::Result<()> {
     }
     println!("\nbackfill complete: {titled} titled, {reconciled} reconciled to storage, {nothing} had nothing to title from");
     Ok(())
+}
+
+/// How long a clip may sit at a non-terminal status before `--repair` calls it dead. Generous:
+/// a long recording legitimately stays at `recording` for its whole duration, and enrichment of
+/// a big clip can run for many minutes behind the phase-2 semaphore.
+const STUCK_AFTER_SECS: u64 = 6 * 3600;
+
+/// One-off maintenance repair for clips already on disk — see the `--repair` flag docs.
+///
+/// The load-bearing fix is the remux. Recordings assembled by the old raw-concat path carry no
+/// duration in the container, which cascades: `metadata.duration` is 0.0, the player can't scrub
+/// without downloading the whole file, and `compute_zoom_track` emits `duration * fps + 1` = ONE
+/// keyframe, so auto-zoom is dead on exactly those clips (verified across production: every clip
+/// with a real duration has 286–3051 keyframes reaching 2.0×; every 0.0-duration clip has one
+/// flat keyframe). Repairing the container repairs all three.
+async fn repair_clips(clips_dir: &std::path::Path) -> anyhow::Result<()> {
+    let storage = clipxd_web::storage::StorageKind::from_env(clips_dir);
+    let (mut remuxed, mut retimed, mut rezoomed, mut unstuck, mut pruned) = (0u32, 0u32, 0u32, 0u32, 0u32);
+
+    let mut dirs: Vec<PathBuf> =
+        std::fs::read_dir(clips_dir)?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+
+    for dir in dirs {
+        let id = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        let index_path = dir.join("index.json");
+        let video = dir.join("video.webm");
+
+        // An empty directory is the tombstone of a session that died before its first write —
+        // nothing to serve, nothing to recover, and it shows up in no listing. Prune it.
+        if !index_path.exists() && std::fs::read_dir(&dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
+            if std::fs::remove_dir(&dir).is_ok() {
+                println!("pruned    {id}: empty directory");
+                pruned += 1;
+            }
+            continue;
+        }
+        if !index_path.exists() {
+            println!("skip      {id}: no index.json (has files — left alone for a human)");
+            continue;
+        }
+
+        let mut index: serde_json::Value = match std::fs::read_to_string(&index_path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+            Some(v) => v,
+            None => {
+                println!("skip      {id}: unreadable index.json");
+                continue;
+            }
+        };
+        let mut dirty = false;
+
+        // 1. Repair the container, then re-probe it.
+        if video.exists() {
+            let needs = clipxd_import::media::probe(&video).map(|i| i.duration_s <= 0.0).unwrap_or(true);
+            if needs {
+                let staged = dir.join("video.remux.webm");
+                if clipxd_web::remux_seekable(&video, &staged) {
+                    // remux_seekable removes its source on success; put the repaired file back.
+                    if std::fs::rename(&staged, &video).is_ok() {
+                        println!("remuxed   {id}");
+                        remuxed += 1;
+                    }
+                }
+            }
+            if let Ok(info) = clipxd_import::media::probe(&video) {
+                let stored = index.pointer("/metadata/duration").and_then(|d| d.as_f64()).unwrap_or(0.0);
+                if info.duration_s > 0.0 && (stored - info.duration_s).abs() > 0.05 {
+                    index["metadata"]["duration"] = serde_json::json!(info.duration_s);
+                    index["metadata"]["resolution"] = serde_json::json!([info.width, info.height]);
+                    index["metadata"]["fps"] = serde_json::json!(info.fps);
+                    dirty = true;
+                    retimed += 1;
+                    println!("retimed   {id}: duration {stored:.2} -> {:.2}s", info.duration_s);
+
+                    // 2. A real duration means the zoom track can finally be more than one frame.
+                    if let Some(track) = read_event_track(&dir) {
+                        let zoom = clipxd_recorder::zoom_track(&track, info.duration_s, info.fps as f64);
+                        if zoom.len() > 1 && std::fs::write(dir.join("zoom.json"), serde_json::to_string(&zoom)?).is_ok() {
+                            println!("rezoomed  {id}: {} keyframes", zoom.len());
+                            rezoomed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Re-run the cleaner. It's idempotent by construction (there's a test asserting a
+        //    second pass is a no-op), so this is free for already-clean clips and it back-fills
+        //    whatever the cleaner has learned since a clip was indexed — currently the
+        //    "A screenshot shows …" preamble strip that makes chapter lists readable.
+        if let Ok(mut typed) = serde_json::from_value::<clipxd_index::Index>(index.clone()) {
+            let before = typed.clone();
+            clipxd_index::clean_index(&mut typed);
+            if typed != before {
+                index = serde_json::to_value(&typed)?;
+                dirty = true;
+                println!("recleaned {id}");
+            }
+        }
+
+        // 4. Nothing may spin forever. A clip left at `recording`/`enriching` long past any
+        //    plausible job is a crashed session, and the UI shows it as an eternal spinner.
+        let status = index.get("status").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        if status == "recording" || status == "enriching" {
+            let age = std::fs::metadata(&index_path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if age > STUCK_AFTER_SECS {
+                index["status"] = serde_json::json!("partial");
+                dirty = true;
+                unstuck += 1;
+                println!("unstuck   {id}: {status} for {}h -> partial", age / 3600);
+            }
+        }
+
+        if dirty {
+            std::fs::write(&index_path, serde_json::to_string_pretty(&index)?)?;
+            // The hosted box serves S3 first, so a local-only write would never be seen.
+            if let Ok(st) = storage.make_storage().await {
+                if let Ok(body) = std::fs::read(&index_path) {
+                    if st.write_object(&format!("{id}/index.json"), body, "application/json").await.is_err() {
+                        println!("          {id}: STORAGE MIRROR FAILED — check CLIPXD_STORAGE");
+                    }
+                }
+                if video.exists() {
+                    if let Ok(body) = std::fs::read(&video) {
+                        let _ = st.write_object(&format!("{id}/video.webm"), body, "video/webm").await;
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nrepair complete: {remuxed} remuxed, {retimed} retimed, {rezoomed} zoom tracks rebuilt, {unstuck} unstuck, {pruned} empty dirs pruned"
+    );
+    Ok(())
+}
+
+/// A clip's recorded input events (`events.json`), if it has any — the input to the zoom track.
+fn read_event_track(dir: &std::path::Path) -> Option<clipxd_recorder::EventTrack> {
+    let s = std::fs::read_to_string(dir.join("events.json")).ok()?;
+    clipxd_recorder::EventTrack::from_json(&s).ok()
 }
 
 /// The `metadata.title` in a clip's `index.json`, if readable.

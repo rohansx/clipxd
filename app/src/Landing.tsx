@@ -845,13 +845,40 @@ function TwoBody() {
   );
 }
 
+/** Every footer entry now goes somewhere. They used to be bare `<li>`s with a pointer cursor —
+ *  no href, no handler — so Privacy, Security, Changelog and the rest were decoration that
+ *  looked clickable and did nothing. Anything without a real destination is gone rather than
+ *  faked, and the legal/security pair points at the docs sections that answer them. */
+const FOOTER_LINKS: Record<string, { label: string; href: string }[]> = {
+  Product: [
+    { label: "Recorder", href: "/docs#recording" },
+    { label: "Agent index", href: "/docs#index" },
+    { label: "Cinematic editor", href: "/docs#cinematic" },
+    { label: "MCP server", href: "/docs#mcp" },
+  ],
+  Resources: [
+    { label: "Documentation", href: "/docs" },
+    { label: "GitHub", href: "https://github.com/rohansx/clipxd" },
+    { label: "Releases", href: "https://github.com/rohansx/clipxd/releases" },
+  ],
+  Company: [
+    { label: "Privacy", href: "/docs#privacy" },
+    { label: "Security", href: "/docs#security" },
+    { label: "Contact", href: "mailto:hello@clipxd.com" },
+  ],
+};
+
 function Footer() {
-  const col = (heading: string, items: string[]) => (
+  const col = (heading: string) => (
     <div className="landing-footer-col">
       <h3>{heading}</h3>
       <ul>
-        {items.map((i) => (
-          <li key={i}>{i}</li>
+        {FOOTER_LINKS[heading].map((i) => (
+          <li key={i.label}>
+            <a href={i.href} {...(i.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}>
+              {i.label}
+            </a>
+          </li>
         ))}
       </ul>
     </div>
@@ -892,9 +919,9 @@ function Footer() {
             Record once. Humans watch it. Agents read it. Local-first, open-core.
           </p>
         </div>
-        {col("Product", ["Recorder", "Agent index", "Import from URL", "MCP server"])}
-        {col("Resources", ["Documentation", "GitHub", "Changelog"])}
-        {col("Company", ["About", "Privacy", "Security"])}
+        {col("Product")}
+        {col("Resources")}
+        {col("Company")}
       </div>
       <div className="landing-footer-meta">
         <span>© 2026 ClipXD · clip + index</span>
