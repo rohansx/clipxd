@@ -77,10 +77,23 @@ async function getMic(): Promise<MediaStream | null> {
  * track via Web Audio, and tap it with an `AnalyserNode` so the UI can show a *real* level.
  * Returns null when there's no audio at all to mix.
  */
-function mixAudio(sources: MediaStream[]): { track: MediaStreamTrack; ctx: AudioContext; analyser: AnalyserNode } | null {
+async function mixAudio(
+  sources: MediaStream[],
+): Promise<{ track: MediaStreamTrack; ctx: AudioContext; analyser: AnalyserNode } | null> {
   const withAudio = sources.filter((s) => s.getAudioTracks().length > 0);
   if (!withAudio.length) return null;
   const ctx = new AudioContext();
+  // An AudioContext constructed outside a user gesture starts `suspended`, and a suspended
+  // context passes no samples — the recording would be silent and the meter flat, with nothing
+  // erroring. We're several awaits past the click by now (permission prompts, then a 3 s
+  // countdown), so the gesture no longer covers us. Verified: without this, a mixed recording
+  // came out 0 bytes.
+  // Bounded: on a machine with no audio output device `resume()` can stay pending forever, and
+  // a recording that never starts is far worse than one whose meter is flat. Whatever the
+  // outcome, recording proceeds.
+  if (ctx.state === "suspended") {
+    await Promise.race([ctx.resume().catch(() => {}), new Promise((r) => window.setTimeout(r, 500))]);
+  }
   const dest = ctx.createMediaStreamDestination();
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
@@ -283,7 +296,7 @@ export function useScreenRecorder(apiBase: string, callbacks: RecorderCallbacks 
       // to be built from. Mix whatever exists (display audio + mic) into one track, and tap it
       // for the level meter.
       const audioSources = mode === "voice" ? [sourceStream] : [screen, ...(micStream ? [micStream] : [])];
-      const mixed = mixAudio(audioSources);
+      const mixed = await mixAudio(audioSources);
       recordStream = new MediaStream([...recordStream.getVideoTracks(), ...(mixed ? [mixed.track] : [])]);
       setMicLive(!!micStream?.getAudioTracks().length);
       if (mixed) {

@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>clipxd — audio mix check</title>
+<!--
+  Manual check for the recorder's audio path (useScreenRecorder.mixAudio).
+
+    xdg-open tools/audio-mix-check.html   →  click "Start test"
+
+  MUST be run behind a real click: an AudioContext created without a user gesture starts
+  suspended and passes no samples, which is exactly the bug this page exists to catch — the
+  recorder builds its context several awaits after the click (permission prompts, then the
+  3 s countdown), so the gesture no longer covers it and `resume()` is required.
+  Expected: three PASS lines and `ctx state: running`.
+-->
+<body>
+<button id="go">Start test</button>
+<pre id="out">idle</pre>
+<script>
+// Exercises exactly the shape useScreenRecorder now uses: two audio sources (a fake "display
+// audio" oscillator and a fake "mic" oscillator, standing in for getDisplayMedia + getUserMedia)
+// mixed through one AudioContext into a MediaStreamDestination, recorded by MediaRecorder,
+// with an AnalyserNode tap for the level meter. Asserts the recording actually contains audio
+// and that the analyser sees a non-zero level.
+const log = (s) => { document.getElementById('out').textContent += "\n" + s; };
+
+async function toneStream(freq) {
+  const ctx = new AudioContext();
+  if (ctx.state === 'suspended') await Promise.race([ctx.resume().catch(()=>{}), new Promise(r=>setTimeout(r,500))]);
+  const osc = ctx.createOscillator();
+  osc.frequency.value = freq;
+  const dest = ctx.createMediaStreamDestination();
+  osc.connect(dest);
+  osc.start();
+  return dest.stream;
+}
+
+// --- the code under test, copied in shape from useScreenRecorder.mixAudio ---
+async function mixAudio(sources) {
+  const withAudio = sources.filter((s) => s.getAudioTracks().length > 0);
+  if (!withAudio.length) return null;
+  const ctx = new AudioContext();
+  if (ctx.state === 'suspended') await Promise.race([ctx.resume().catch(()=>{}), new Promise(r=>setTimeout(r,500))]);
+  const dest = ctx.createMediaStreamDestination();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  for (const s of withAudio) {
+    const node = ctx.createMediaStreamSource(s);
+    node.connect(dest);
+    node.connect(analyser);
+  }
+  const track = dest.stream.getAudioTracks()[0];
+  return track ? { track, ctx, analyser } : null;
+}
+
+document.getElementById("go").addEventListener("click", async () => {
+  document.getElementById("out").textContent = "running…";
+  const display = await toneStream(220);   // stands in for getDisplayMedia({audio:true})
+  const mic = await toneStream(660);       // stands in for getUserMedia({audio:true})
+
+  const mixed = await mixAudio([display, mic]);
+  if (!mixed) { log("FAIL: mixAudio returned null with two audio sources"); return; }
+  log("PASS: mixAudio produced a track from 2 sources");
+
+  const recordStream = new MediaStream([mixed.track]);
+  const chunks = [];
+  const mr = new MediaRecorder(recordStream, { mimeType: "audio/webm;codecs=opus" });
+  mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  mr.start(200);
+
+  // Read the analyser the way the meter does.
+  const buf = new Uint8Array(mixed.analyser.frequencyBinCount);
+  let peak = 0;
+  for (let i = 0; i < 40; i++) {
+    mixed.analyser.getByteTimeDomainData(buf);
+    for (const v of buf) peak = Math.max(peak, Math.abs(v - 128) / 128);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  log(peak > 0.01 ? `PASS: analyser saw a real level (peak ${peak.toFixed(3)})`
+                  : `FAIL: analyser flat (peak ${peak.toFixed(3)}) — meter would lie`);
+
+  await new Promise((r) => setTimeout(r, 400));
+  mr.stop();
+  await new Promise((r) => (mr.onstop = r));
+  const blob = new Blob(chunks, { type: "audio/webm" });
+  log(blob.size > 1000 ? `PASS: recorded ${blob.size} bytes of mixed audio`
+                       : `FAIL: recording was ${blob.size} bytes — no audio captured`);
+  log("ctx state: " + mixed.ctx.state);
+  log("DONE");
+});
+</script>
+</body>
