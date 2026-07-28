@@ -3231,8 +3231,28 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
       <span class="pill status-pill">{status}</span>
       <span class="pill ghost" title="views">{views_lbl} view{views_plural}</span>
     </div>
-    <div class="player"{player_style}>
-      <video src="/clip/{id}/video" controls poster="{url}/thumbnail" preload="metadata" playsinline></video>
+    <div class="player"{player_style} id="player" data-marks="{marks}">
+      <!-- `controls` stays in the markup on purpose: the custom bar is progressive
+           enhancement, and the JS removes this attribute only once it has successfully
+           installed itself. A stale cache, a JS error, or a browser we didn't anticipate
+           degrades to the native player instead of an unplayable video. -->
+      <video id="shareVideo" src="/clip/{id}/video" controls poster="{url}/thumbnail" preload="metadata" playsinline></video>
+      <button class="play-big" type="button" aria-label="Play" hidden>
+        <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      </button>
+      <div class="pbar" hidden>
+        <button class="pbtn" type="button" data-act="play" aria-label="Play">▶</button>
+        <span class="ptime" data-cur>0:00</span>
+        <div class="pseek" role="slider" tabindex="0" aria-label="Seek"
+             aria-valuemin="0" aria-valuemax="{dur_secs}" aria-valuenow="0">
+          <div class="pseek-fill"></div>
+          <div class="pseek-head"></div>
+        </div>
+        <span class="ptime">{dur_lbl}</span>
+        <button class="pbtn pbtn-rate" type="button" data-act="rate" aria-label="Playback speed">1&times;</button>
+        <button class="pbtn" type="button" data-act="mute" aria-label="Mute">🔊</button>
+        <button class="pbtn" type="button" data-act="full" aria-label="Fullscreen">⛶</button>
+      </div>
     </div>
   </main>
 
@@ -3260,6 +3280,17 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
         topbar    = share_topbar(&url),
         src_dot   = r#"<span class="dot sodium"></span>"#,
         dur_lbl   = fmt_duration(dur),
+        dur_secs  = format!("{:.0}", dur.max(0.0)),
+        // The salient moments, as plain seconds, for the ticks on the seek bar — the same
+        // "click a marker to jump" affordance the app's player has. Numbers only, so this can
+        // never carry markup into the attribute.
+        marks     = idx
+            .visual_timeline
+            .iter()
+            .map(|m| format!("{:.2}", m.t))
+            .take(60)
+            .collect::<Vec<_>>()
+            .join(","),
         status    = share_status_pill(&idx.status),
         views_lbl = format_view_count(views),
         views_plural = if views == 1 { "" } else { "s" },
@@ -3831,6 +3862,62 @@ a:hover { text-decoration: underline; }
 }
 .player video { width: 100%; height: 100%; display: block; }
 
+/* ---- custom player chrome (mirrors the in-app glass bar) ----------------------------
+   All of it is hidden until the JS un-hides it, so a page whose script didn't run keeps
+   the native controls it was served with instead of showing dead furniture. */
+.player.has-chrome video { cursor: pointer; }
+.play-big {
+  position: absolute; inset: 0; margin: auto; width: 76px; height: 76px;
+  display: grid; place-items: center; border: none; cursor: pointer;
+  border-radius: 50%; color: #0d0f10;
+  background: rgba(255,255,255,.92);
+  box-shadow: 0 10px 34px rgba(0,0,0,.45);
+  transition: transform .16s ease, opacity .16s ease;
+}
+.play-big:hover { transform: scale(1.06); }
+.play-big[hidden] { display: none; }
+.pbar {
+  position: absolute; left: 10px; right: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-radius: 14px; color: #fff;
+  background: rgba(18,20,22,.62);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 8px 28px rgba(0,0,0,.38);
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.pbar[hidden] { display: none; }
+/* Visible while paused, while the pointer is over the player, and on keyboard focus —
+   so the bar is never unreachable without a mouse. */
+.player:hover .pbar, .player.is-paused .pbar, .player:focus-within .pbar {
+  opacity: 1; transform: translateY(0); pointer-events: auto;
+}
+.pbtn {
+  background: transparent; border: none; color: #fff; cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 5px 7px; border-radius: 8px;
+  font-family: var(--mono);
+}
+.pbtn:hover { background: rgba(255,255,255,.16); }
+.pbtn-rate { min-width: 34px; }
+.ptime { font-family: var(--mono); font-size: 11.5px; color: rgba(255,255,255,.86); min-width: 38px; text-align: center; }
+.pseek { position: relative; flex: 1; height: 16px; cursor: pointer; display: flex; align-items: center; }
+.pseek::before {
+  content: ""; position: absolute; left: 0; right: 0; height: 4px;
+  border-radius: 3px; background: rgba(255,255,255,.24);
+}
+.pseek-fill { position: absolute; left: 0; height: 4px; border-radius: 3px; background: var(--signal); width: 0; }
+.pseek-head {
+  position: absolute; width: 11px; height: 11px; border-radius: 50%; background: #fff;
+  left: 0; transform: translateX(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.5);
+}
+.pseek-mark {
+  position: absolute; width: 2px; height: 9px; border-radius: 1px;
+  background: rgba(255,255,255,.72); transform: translateX(-50%);
+}
+.pseek:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 3px; }
+
 /* ============ body grid (main + aside) ============ */
 .body-grid {
   max-width: 1100px; margin: 8px auto 60px; padding: 0 26px;
@@ -4086,6 +4173,145 @@ a:hover { text-decoration: underline; }
 /// JS for the share page — copy buttons + the Ask form.  Inlined so the
 /// page works without a network round-trip for the script.
 const SHARE_JS: &str = r##"
+// ---- player chrome -------------------------------------------------------------------
+// The share page is the surface a recipient actually lands on, and it shipped with a raw
+// <video controls>: browser-default chrome, no speed control, no keyboard shortcuts, and no
+// sign of the salient moments the index already knows about. This installs the same glass bar
+// the app uses. It only takes over once everything it needs is present — otherwise the native
+// controls served in the HTML stay exactly as they are.
+(function () {
+  const player = document.getElementById('player');
+  const v = document.getElementById('shareVideo');
+  if (!player || !v) return;
+  const bar = player.querySelector('.pbar');
+  const big = player.querySelector('.play-big');
+  const seek = player.querySelector('.pseek');
+  const fill = player.querySelector('.pseek-fill');
+  const head = player.querySelector('.pseek-head');
+  const cur = player.querySelector('[data-cur]');
+  if (!bar || !big || !seek || !fill || !head || !cur) return;
+
+  // Take over: drop the native controls, reveal ours.
+  v.removeAttribute('controls');
+  bar.hidden = false;
+  big.hidden = false;
+  player.classList.add('has-chrome', 'is-paused');
+
+  const fmt = (s) => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60), r = Math.floor(s % 60);
+    return m + ':' + String(r).padStart(2, '0');
+  };
+  // Duration comes from the index (rendered into aria-valuemax) so the bar is correct before
+  // metadata loads; the element's own duration wins once it's known.
+  const declared = parseFloat(seek.getAttribute('aria-valuemax')) || 0;
+  const dur = () => (isFinite(v.duration) && v.duration > 0 ? v.duration : declared);
+
+  // Salient-moment ticks — same "click a marker to jump" affordance as the app's player.
+  const marks = (player.getAttribute('data-marks') || '')
+    .split(',').map(parseFloat).filter((n) => isFinite(n) && n >= 0);
+  const placeMarks = () => {
+    const d = dur();
+    if (!d) return;
+    seek.querySelectorAll('.pseek-mark').forEach((n) => n.remove());
+    for (const t of marks) {
+      if (t > d) continue;
+      const s = document.createElement('span');
+      s.className = 'pseek-mark';
+      s.style.left = (t / d) * 100 + '%';
+      seek.appendChild(s);
+    }
+  };
+  placeMarks();
+
+  const paint = () => {
+    const d = dur();
+    const pct = d ? Math.min(100, (v.currentTime / d) * 100) : 0;
+    fill.style.width = pct + '%';
+    head.style.left = pct + '%';
+    cur.textContent = fmt(v.currentTime);
+    seek.setAttribute('aria-valuenow', Math.round(v.currentTime));
+  };
+  const setPlayIcons = () => {
+    const playing = !v.paused && !v.ended;
+    const btn = bar.querySelector('[data-act="play"]');
+    btn.textContent = playing ? '❚❚' : '▶';
+    btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    big.hidden = playing;
+    player.classList.toggle('is-paused', !playing);
+  };
+  const toggle = () => { if (v.paused) v.play().catch(() => {}); else v.pause(); };
+  const RATES = [1, 1.25, 1.5, 2];
+  const cycleRate = () => {
+    const next = RATES[(RATES.indexOf(v.playbackRate) + 1) % RATES.length] || 1;
+    v.playbackRate = next;
+    bar.querySelector('[data-act="rate"]').textContent = (next === 1 ? '1' : String(next)) + '×';
+  };
+  const toggleMute = () => {
+    v.muted = !v.muted;
+    const b = bar.querySelector('[data-act="mute"]');
+    b.textContent = v.muted ? '🔇' : '🔊';
+    b.setAttribute('aria-label', v.muted ? 'Unmute' : 'Mute');
+  };
+  const toggleFull = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (player.requestFullscreen) player.requestFullscreen();
+  };
+  const seekTo = (t) => { v.currentTime = Math.max(0, Math.min(dur() || 0, t)); paint(); };
+  const seekFromEvent = (e) => {
+    const r = seek.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    seekTo((Math.max(0, Math.min(1, x / r.width))) * (dur() || 0));
+  };
+
+  v.addEventListener('timeupdate', paint);
+  v.addEventListener('loadedmetadata', () => { placeMarks(); paint(); });
+  v.addEventListener('play', setPlayIcons);
+  v.addEventListener('pause', setPlayIcons);
+  v.addEventListener('ended', setPlayIcons);
+  v.addEventListener('click', toggle);
+  big.addEventListener('click', toggle);
+  bar.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]');
+    if (!act) return;
+    e.preventDefault();
+    ({ play: toggle, rate: cycleRate, mute: toggleMute, full: toggleFull }[act.dataset.act] || (() => {}))();
+  });
+
+  // Scrub: click, then drag anywhere until release.
+  let dragging = false;
+  seek.addEventListener('pointerdown', (e) => { dragging = true; seek.setPointerCapture?.(e.pointerId); seekFromEvent(e); });
+  seek.addEventListener('pointermove', (e) => { if (dragging) seekFromEvent(e); });
+  const endDrag = () => { dragging = false; };
+  seek.addEventListener('pointerup', endDrag);
+  seek.addEventListener('pointercancel', endDrag);
+
+  // Keyboard, on the seek slider and on the page as a whole — the native controls had this
+  // for free and losing it would have been a real regression for anyone not using a mouse.
+  const keys = (e) => {
+    if (e.target.matches('input, textarea, [contenteditable]')) return;
+    const d = dur() || 0;
+    switch (e.key) {
+      case ' ': case 'k': e.preventDefault(); toggle(); break;
+      case 'ArrowRight': e.preventDefault(); seekTo(v.currentTime + 5); break;
+      case 'ArrowLeft': e.preventDefault(); seekTo(v.currentTime - 5); break;
+      case 'l': seekTo(v.currentTime + 10); break;
+      case 'j': seekTo(v.currentTime - 10); break;
+      case 'm': toggleMute(); break;
+      case 'f': toggleFull(); break;
+      case 'Home': e.preventDefault(); seekTo(0); break;
+      case 'End': e.preventDefault(); seekTo(d); break;
+      default:
+        if (/^[0-9]$/.test(e.key)) seekTo((parseInt(e.key, 10) / 10) * d);
+    }
+  };
+  seek.addEventListener('keydown', keys);
+  document.addEventListener('keydown', keys);
+
+  setPlayIcons();
+  paint();
+})();
+
 // copy-on-click for the [data-copy] buttons
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-copy]');
@@ -4467,7 +4693,29 @@ mod tests {
         idx.metadata.resolution = [0, 0];
         let stub = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
         assert!(!stub.contains("--ar:"), "a 0x0 stub must not emit a ratio at all");
-        assert!(stub.contains(r#"<div class="player">"#), "and renders the bare player");
+        assert!(stub.contains(r#"<div class="player" id="player""#), "and renders the bare player");
+    }
+
+    #[test]
+    fn share_player_degrades_to_native_controls_and_marks_the_salient_moments() {
+        let idx = outline_idx(vec![moment(0.0, "opens the console", None), moment(12.5, "reads the error", None)]);
+        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+
+        // Progressive enhancement: the served markup keeps `controls`, and the script removes
+        // it only after the custom bar is installed. A JS failure must never leave a recipient
+        // with a video they can't play.
+        assert!(html.contains(r#"<video id="shareVideo""#));
+        assert!(html.contains(" controls "), "native controls must ship in the HTML");
+        assert!(html.contains("v.removeAttribute('controls')"), "and be dropped only by the script");
+
+        // The seek bar gets the index's salient moments as ticks — numbers only, so the
+        // attribute can never carry markup.
+        assert!(html.contains(r#"data-marks="0.00,12.50""#), "moment ticks come from the index");
+
+        // Controls a recipient expects, which the native player didn't give us.
+        for act in ["play", "rate", "mute", "full"] {
+            assert!(html.contains(&format!(r#"data-act="{act}""#)), "missing control: {act}");
+        }
     }
 
     #[test]
