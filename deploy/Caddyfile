@@ -38,7 +38,12 @@
 	}
 
 	# Backend surface
-	@backend path /clip/* /clips /ingest* /import /net /auth/* /u/* /settings/keys
+	# /fonts/* is served by the Rust binary (the woff2 files are compiled into it) because the
+	# share page is server-rendered by the backend and must reference fonts that exist wherever
+	# it runs — including a self-hosted box with no Caddy. Without this path here, the static
+	# file_server below answered /fonts/*.woff2 with the SPA's index.html, so the share page
+	# asked for a font and got HTML: no error anywhere, just silently unstyled type.
+	@backend path /clip/* /clips /ingest* /import /net /auth/* /u/* /settings/keys /fonts/*
 	handle @backend {
 		reverse_proxy 127.0.0.1:8787
 	}
