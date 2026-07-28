@@ -65,21 +65,23 @@
     <link rel="shortcut icon" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.json" />
 
-    <!-- Fonts (Space Grotesk + JetBrains Mono — the brand) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
-    />
-    <noscript>
-      <link
-        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-        rel="stylesheet"
-      />
-    </noscript>
+    <!-- Fonts (Space Grotesk + JetBrains Mono — the brand).
+         Served from our own origin: /fonts/* is routed to the clipxd-web binary, which has the
+         woff2 files compiled in. They used to come from fonts.googleapis.com, which put two
+         third-party requests in front of first paint on every page load and forced two Google
+         origins into the CSP. Both faces are variable fonts, so one file covers 400-700. -->
+    <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        src: url('/fonts/space-grotesk.woff2') format('woff2');
+        font-weight: 100 900; font-style: normal; font-display: swap;
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+        font-weight: 100 900; font-style: normal; font-display: swap;
+      }
+    </style>
 
     <!--
       Critical inline CSS for above-the-fold (the hero).
