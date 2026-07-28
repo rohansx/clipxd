@@ -197,6 +197,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
+        .route("/fonts/:name", get(get_font))
         .route("/clip/:id", get(share_page))
         .route("/clip/:id/agent.md", get(get_agent_md))
         .route("/clip/:id/doc/:kind", get(get_doc))
@@ -3085,7 +3086,7 @@ fn share_page_body(
          script-src 'nonce-{nonce}' https://analytics.rohan.sh; \
          style-src 'self' 'unsafe-inline'; \
          img-src 'self' data: blob:; media-src 'self' blob:; \
-         font-src 'self' https://fonts.gstatic.com; \
+         font-src 'self'; \
          connect-src 'self' https://analytics.rohan.sh; \
          object-src 'none'; base-uri 'none'; form-action 'self'",
         nonce = nonce
@@ -3348,12 +3349,10 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64, nonce: &str) -> Stri
   <meta name="twitter:player" content="{url}/video" />
   <meta name="twitter:player:width" content="1920" />
   <meta name="twitter:player:height" content="1080" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-    rel="stylesheet" />
-  <style nonce="{nonce}">{css}</style>
+  <!-- Fonts are served from this origin (crates/clipxd-web/assets/fonts, OFL 1.1). They used to
+       come from fonts.googleapis.com, which put two third-party requests in front of every clip a
+       stranger opens and forced gstatic into the CSP. -->
+  <style nonce="{nonce}">{fonts}{css}</style>
   <!-- Umami analytics (privacy-friendly, self-hosted) -->
   <script nonce="{nonce}" defer src="https://analytics.rohan.sh/script.js" data-website-id="f0180529-adb3-4603-b5fa-8bc5bd19b4d5"></script>
 </head>
@@ -3412,6 +3411,7 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64, nonce: &str) -> Stri
 </body>
 </html>"##,
         css       = share_css(),
+        fonts     = FONT_FACE_CSS,
         js        = SHARE_JS,
         nonce     = nonce,
         topbar    = share_topbar(&url),
@@ -4309,6 +4309,44 @@ a:hover { text-decoration: underline; }
 
 /// JS for the share page — copy buttons + the Ask form.  Inlined so the
 /// page works without a network round-trip for the script.
+/// `@font-face` rules for the two bundled families, prepended to the share page's inline CSS.
+///
+/// Both files are *variable* fonts — Google serves byte-identical woff2 for every weight it
+/// advertises — so one file per family covers the whole 400–700 range the page uses.
+/// `font-display: swap` keeps first paint text-visible if the font is slow, exactly as the
+/// Google stylesheet did.
+const FONT_FACE_CSS: &str = r#"
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/space-grotesk.woff2') format('woff2');
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+"#;
+
+/// `GET /fonts/:name` — the two bundled woff2 files, compiled into the binary so there is no
+/// deploy step that can leave a box serving a page whose fonts 404.
+async fn get_font(Path(name): Path<String>) -> Result<impl IntoResponse, WebErr> {
+    let body: &'static [u8] = match name.as_str() {
+        "space-grotesk.woff2" => include_bytes!("../assets/fonts/space-grotesk.woff2"),
+        "jetbrains-mono.woff2" => include_bytes!("../assets/fonts/jetbrains-mono.woff2"),
+        _ => return Err((StatusCode::NOT_FOUND, "no such font".into())),
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, "font/woff2"),
+            // Content-addressed by name and immutable in practice — the file only changes when
+            // someone deliberately refreshes it, and then under the same name on a new deploy.
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        body,
+    ))
+}
+
 const SHARE_JS: &str = r##"
 // ---- player chrome -------------------------------------------------------------------
 // The share page is the surface a recipient actually lands on, and it shipped with a raw
