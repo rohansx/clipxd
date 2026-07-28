@@ -2882,7 +2882,7 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: 
                 if let Some(slug) = u.username.as_deref() {
                     let tail = share_slug_for(&idx.metadata.title, &id);
                     let target = format!("/u/{slug}/{tail}");
-                    return Ok(redirect_to(&headers, &target).into_response());
+                    return Ok(redirect_to(&headers, &target));
                 }
             }
         }
@@ -3102,7 +3102,7 @@ fn share_page_body(
         .into_response())
 }
 
-fn redirect_to(headers: &HeaderMap, target: &str) -> Html<String> {
+fn redirect_to(headers: &HeaderMap, target: &str) -> axum::response::Response {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
     // Trust X-Forwarded-Proto when we're behind Caddy/reverse-proxy, otherwise default to https
     // (production) or http (localhost).
@@ -3111,13 +3111,29 @@ fn redirect_to(headers: &HeaderMap, target: &str) -> Html<String> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("https");
     let abs = format!("{scheme}://{host}{target}");
-    Html(format!(
+    // The interstitial is our own static markup, but it's still a page we serve on the share
+    // surface — give it the same baseline headers rather than leaving one door unlocked.
+    let html = Html(format!(
         r##"<!doctype html><meta charset=utf-8><meta http-equiv=refresh content="0;url={abs}">
 <link rel=canonical href="{abs}"><title>Redirecting…</title>
 <body style="font:14px system-ui;background:#0a0d12;color:#e6edf3;padding:32px">
 <a href="{abs}" style="color:#58a6ff">{abs}</a>
 </body>"##
-    ))
+    ));
+    (
+        [
+            // No script of any kind belongs on an interstitial, so this is the strictest
+            // policy on the site: scripts are refused outright rather than nonce-gated.
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'".to_string(),
+            ),
+            (header::REFERRER_POLICY, "strict-origin-when-cross-origin".to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        html,
+    )
+        .into_response()
 }
 
 /// Inline SVG QR for `data` (no external requests — works offline on the viewer's phone).
