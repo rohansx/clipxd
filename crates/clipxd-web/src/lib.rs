@@ -109,6 +109,65 @@ pub struct AppState {
     /// Caps how many Phase-2 enrichments run at once. Every ingest detaches one; unbounded,
     /// a burst of recordings would stack ffmpeg+OCR jobs until the 4 GB box falls over.
     pub phase2_permits: Arc<tokio::sync::Semaphore>,
+    /// Fixed-window hit counters keyed by `"<bucket>:<client>"` — see [`rate_limit`].
+    rate: Arc<StdMutex<HashMap<String, (u32, std::time::Instant)>>>,
+}
+
+/// A bare [`AppState`] for unit tests that only need the in-process bits (no clips dir, no
+/// storage round trip, no auth) — currently the rate limiter.
+#[cfg(test)]
+fn app_state_for_test() -> AppState {
+    AppState {
+        storage: Arc::new(storage::StorageKind::Local { root: std::env::temp_dir() }),
+        clips_dir: Arc::new(std::env::temp_dir()),
+        public: false,
+        public_base: None,
+        auth: None,
+        stage_sessions: Arc::new(AsyncMutex::new(HashMap::new())),
+        clip_claims: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+        phase2_permits: Arc::new(tokio::sync::Semaphore::new(1)),
+        rate: Arc::new(StdMutex::new(HashMap::new())),
+    }
+}
+
+/// Reject a caller who is hammering an endpoint. Fixed window, in memory, per process.
+///
+/// There was no limiting of any kind before this, which left two concrete holes: `/auth/login`
+/// could be brute-forced at network speed, and `/clip/:id/query` — reachable by anyone with a
+/// public link — spends real money and a 45 s LLM budget per call, so a loop against one clip
+/// is both a bill and a denial of service against every other request on a 4 GB box.
+///
+/// Deliberately simple: one box, one process, no Redis. If clipxd ever runs more than one
+/// instance this becomes per-instance rather than global, which is a weaker limit but never a
+/// wrong one. Fails *open* on a poisoned lock — a limiter must not take the service down.
+fn rate_limit(s: &AppState, bucket: &str, client: &str, max: u32, window: std::time::Duration) -> Result<(), WebErr> {
+    let key = format!("{bucket}:{client}");
+    let now = std::time::Instant::now();
+    let Ok(mut map) = s.rate.lock() else { return Ok(()) };
+    if map.len() > 10_000 {
+        map.retain(|_, (_, started)| now.duration_since(*started) < window);
+    }
+    let entry = map.entry(key).or_insert((0, now));
+    if now.duration_since(entry.1) >= window {
+        *entry = (0, now);
+    }
+    entry.0 += 1;
+    if entry.0 > max {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "too many requests — slow down".into()));
+    }
+    Ok(())
+}
+
+/// Who to count against. Behind Caddy the peer address is always the proxy, so the first hop in
+/// `X-Forwarded-For` is the only thing that distinguishes callers. Spoofable in principle, but
+/// Caddy overwrites it for us here, and an unkeyed limiter would be worse than a spoofable one.
+fn client_key(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 /// Build the router serving clips out of `clips_dir`. With `public = true` the mutating and
@@ -134,6 +193,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         stage_sessions,
         clip_claims: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         phase2_permits: Arc::new(tokio::sync::Semaphore::new(2)),
+        rate: Arc::new(StdMutex::new(HashMap::new())),
     };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
     let mut router = Router::new()
@@ -492,7 +552,9 @@ struct LoginReq {
     password: String,
 }
 
-async fn auth_login(State(s): State<AppState>, Json(req): Json<LoginReq>) -> Result<Response, WebErr> {
+async fn auth_login(State(s): State<AppState>, headers: HeaderMap, Json(req): Json<LoginReq>) -> Result<Response, WebErr> {
+    // Password guessing is the one place where "unlimited attempts" is the whole attack.
+    rate_limit(&s, "login", &client_key(&headers), 10, std::time::Duration::from_secs(300))?;
     let a = auth_of(&s)?;
     let email = req.email.trim().to_lowercase();
     let user = a.db.find_by_email(&email).ok().flatten().ok_or((StatusCode::UNAUTHORIZED, "invalid email or password".into()))?;
@@ -1158,7 +1220,15 @@ struct CommitQuery {
 /// This does put an LLM round-trip on a GET, which the indexing-time passes deliberately avoid.
 /// `docgen` already accepts that tradeoff for a per-ask output, and an ask *is* a per-ask
 /// output; `llm::complete_with_keys` caps it at 60s.
-async fn get_query(State(s): State<AppState>, Path(id): Path<String>, Query(p): Query<Qs>) -> Result<Json<serde_json::Value>, WebErr> {
+async fn get_query(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(p): Query<Qs>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    // Every call can spend an LLM request and up to the full cascade budget. Generous enough
+    // that a person reading a clip never notices; tight enough that a loop can't run up a bill.
+    rate_limit(&s, "query", &client_key(&headers), 20, std::time::Duration::from_secs(60))?;
     let idx = load_index(&s, &id).await?;
     let q = p.q.as_deref().unwrap_or("");
     let (nvidia_key, gemini_key) = owner_llm_keys(&s.auth, &id);
@@ -1721,17 +1791,36 @@ async fn ingest_stage_append(
         let video_so_far = video_so_far.clone();
         move || -> anyhow::Result<()> {
             std::fs::write(&chunk_path, &body)?;
-            // Build the new snapshot beside the live one and swap it in with a single atomic
-            // rename. Writing `video-so-far.webm` in place truncated it to zero and refilled it
-            // while the previous chunk's `add_increment` was still reading it — ffprobe then hit
-            // a half-written file, failed, and the whole incremental pass bailed. That race is
-            // why "indexing while uploading" silently no-op'd on every recording in production;
-            // a reader now always sees one complete generation or the other.
-            // ponytail: still an O(n²) full rewrite per chunk — fine up to a few minutes; if long
-            // recordings matter, append in-order into a single handle and only re-concat on a gap.
-            let staging = dir.join("video-so-far.next");
-            concat_chunks(&dir, &staging)?;
-            std::fs::rename(&staging, &video_so_far)?;
+            // Grow the snapshot the readers use. Two properties matter here and they pull in
+            // opposite directions:
+            //
+            // 1. A reader (`add_increment`) must never see a half-written file. Writing
+            //    `video-so-far.webm` in place truncated it to zero and refilled it under the
+            //    previous chunk's still-running pass — ffprobe hit the hole, failed, and the
+            //    whole incremental pass bailed. That race is why "indexing while uploading"
+            //    silently no-op'd on every recording in production.
+            // 2. Re-concatenating every chunk on every chunk is O(n²) in both I/O and RAM: a
+            //    30-minute recording is ~360 chunks, and the last pass would read and rewrite
+            //    the entire multi-GB file — on a 4 GB box that is an OOM, not a slowdown.
+            //
+            // The in-order case (overwhelmingly the common one — one client, sequential PUTs)
+            // satisfies both: appending only ever *extends* the file, so a concurrent reader
+            // sees a valid prefix rather than a hole, and it costs one chunk's worth of I/O.
+            // Out-of-order or repeated seqs fall back to the full rebuild via a temp file plus
+            // an atomic rename, which is correct regardless of arrival order.
+            let expected_next = next_append_seq(&dir);
+            if Some(q.seq) == expected_next && video_so_far.exists() {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new().append(true).open(&video_so_far)?;
+                f.write_all(&body)?;
+                f.flush()?;
+                std::fs::write(dir.join(APPENDED_MARKER), (q.seq + 1).to_string())?;
+            } else {
+                let staging = dir.join("video-so-far.next");
+                concat_chunks(&dir, &staging)?;
+                std::fs::rename(&staging, &video_so_far)?;
+                std::fs::write(dir.join(APPENDED_MARKER), (chunk_seqs(&dir).last().map_or(0, |s| s + 1)).to_string())?;
+            }
             Ok(())
         }
     })
@@ -1770,6 +1859,17 @@ fn concat_chunks(dir: &std::path::Path, out: &std::path::Path) -> anyhow::Result
     }
     std::fs::write(out, all)?;
     Ok(())
+}
+
+/// Records how much of the chunk sequence `video-so-far.webm` already contains, so the next
+/// append knows whether it can extend the file or has to rebuild it. A tiny file rather than
+/// in-memory state because the appends run on detached blocking tasks with no shared context.
+const APPENDED_MARKER: &str = "appended-through.txt";
+
+/// The seq an incoming chunk must have for a pure append to be correct — i.e. one past whatever
+/// is already in `video-so-far.webm`. `None` when nothing has been appended yet.
+fn next_append_seq(dir: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(dir.join(APPENDED_MARKER)).ok()?.trim().parse().ok()
 }
 
 /// Which chunk sequence numbers actually landed in a stage dir.
@@ -2769,7 +2869,7 @@ async fn list_clips(State(s): State<AppState>) -> Html<String> {
     ))
 }
 
-async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Html<String>, WebErr> {
+async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<axum::response::Response, WebErr> {
     let idx = load_index(&s, &id).await?;
     // If the owner has a username, redirect to the branded /u/<username>/<slug>-<short>
     // form. We do the redirect on the bare /clip/:id hit (instead of from inside the
@@ -2781,7 +2881,7 @@ async fn share_page(State(s): State<AppState>, Path(id): Path<String>, headers: 
                 if let Some(slug) = u.username.as_deref() {
                     let tail = share_slug_for(&idx.metadata.title, &id);
                     let target = format!("/u/{slug}/{tail}");
-                    return Ok(redirect_to(&headers, &target));
+                    return Ok(redirect_to(&headers, &target).into_response());
                 }
             }
         }
@@ -2795,7 +2895,7 @@ async fn share_page_for_user(
     State(s): State<AppState>,
     Path((username, id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Html<String>, WebErr> {
+) -> Result<axum::response::Response, WebErr> {
     let _ = check_owner(&s, &username, &id)?;
     let idx = load_index(&s, &id).await?;
     let views = bump_view_count(&s, &id).await;
@@ -2811,7 +2911,7 @@ async fn share_page_for_slug(
     State(s): State<AppState>,
     Path((username, slug)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Html<String>, WebErr> {
+) -> Result<axum::response::Response, WebErr> {
     let auth = s.auth.as_ref().ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
     let id = resolve_share_slug(&auth.db, &username, &slug)
         .ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
@@ -2871,10 +2971,11 @@ async fn get_index_for_user(
 async fn get_query_for_user(
     State(s): State<AppState>,
     Path((username, id)): Path<(String, String)>,
+    headers: HeaderMap,
     Query(p): Query<Qs>,
 ) -> Result<Json<serde_json::Value>, WebErr> {
     check_owner(&s, &username, &id)?;
-    get_query(State(s), Path(id), Query(p)).await
+    get_query(State(s), Path(id), headers, Query(p)).await
 }
 
 async fn get_search_for_user(
@@ -2935,7 +3036,15 @@ fn share_page_body(
     headers: &HeaderMap,
     views: u64,
     username: Option<&str>,
-) -> Result<Html<String>, WebErr> {
+) -> Result<axum::response::Response, WebErr> {
+    // One unguessable value per response — the whole point of a nonce is that an injected
+    // <script> can't know it.
+    let nonce: String = {
+        use rand::Rng;
+        let mut b = [0u8; 16];
+        rand::thread_rng().fill(&mut b);
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    };
     // Absolute URL of THIS page, for the "scan to open on your phone" QR and every
     // "Copy link"/"Copy embed"/"Copy agent link" button: must match whatever's actually in the
     // visitor's address bar (the canonical /u/<username>/... form when the clip is owned by a
@@ -2962,7 +3071,34 @@ fn share_page_body(
         }
         None => format!("{base}/clip/{id}"),
     };
-    Ok(Html(share_html(&id, &idx, &url, views)))
+    // Content-Security-Policy for the server-rendered share page. The SPA has had a strict
+    // policy for weeks; these pages — the ones strangers open — had none at all, because their
+    // inline <script>/<style> blocks would be killed by a policy without nonces. So: mint a
+    // nonce per request and let only those blocks run.
+    //
+    // `frame-ancestors` stays open on purpose: "Copy embed" is a shipped feature, and clamping
+    // it would silently break every existing embed. `style-src` keeps 'unsafe-inline' because
+    // the page still carries inline style attributes (the player's aspect ratio) — script
+    // injection is the risk that matters, and that one is now nonce-gated.
+    let csp = format!(
+        "default-src 'self'; \
+         script-src 'nonce-{nonce}' https://analytics.rohan.sh; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob:; media-src 'self' blob:; \
+         font-src 'self' https://fonts.gstatic.com; \
+         connect-src 'self' https://analytics.rohan.sh; \
+         object-src 'none'; base-uri 'none'; form-action 'self'",
+        nonce = nonce
+    );
+    Ok((
+        [
+            (header::CONTENT_SECURITY_POLICY, csp),
+            (header::REFERRER_POLICY, "strict-origin-when-cross-origin".to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        Html(share_html(&id, &idx, &url, views, &nonce)),
+    )
+        .into_response())
 }
 
 fn redirect_to(headers: &HeaderMap, target: &str) -> Html<String> {
@@ -3147,7 +3283,7 @@ pub fn resolve_share_slug(db: &crate::auth::Db, username: &str, slug: &str) -> O
 ///   3. two-column body: main (chapters, key moments, events, transcript) +
 ///      sidebar (ask-an-agent, share, QR)
 ///   4. small footer
-fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
+fn share_html(id: &str, idx: &Index, url: &str, views: u64, nonce: &str) -> String {
     let title = html_escape(&idx.metadata.title);
     let qr = qr_svg(url);
     // Prefer the deep pass's real tl;dr (content-aware — "what happens in this recording")
@@ -3196,7 +3332,7 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
   <!-- Match whatever theme the visitor picked in the app (same origin, so this localStorage
        key is shared) before first paint — falls through to the CSS's own
        prefers-color-scheme media query if they never touched the toggle. -->
-  <script>try {{ var t = localStorage.getItem('clipxd:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); }} catch (e) {{}}</script>
+  <script nonce="{nonce}">try {{ var t = localStorage.getItem('clipxd:theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); }} catch (e) {{}}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{title} — clipxd</title>
   <meta name="description" content="{og_desc}" />
@@ -3217,9 +3353,9 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
   <link
     href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
     rel="stylesheet" />
-  <style>{css}</style>
+  <style nonce="{nonce}">{css}</style>
   <!-- Umami analytics (privacy-friendly, self-hosted) -->
-  <script defer src="https://analytics.rohan.sh/script.js" data-website-id="f0180529-adb3-4603-b5fa-8bc5bd19b4d5"></script>
+  <script nonce="{nonce}" defer src="https://analytics.rohan.sh/script.js" data-website-id="f0180529-adb3-4603-b5fa-8bc5bd19b4d5"></script>
 </head>
 <body>
   {topbar}
@@ -3272,11 +3408,12 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64) -> String {
     <span>· <a href="https://clipxd.com">clipxd.com</a></span>
   </footer>
 
-  <script>{js}</script>
+  <script nonce="{nonce}">{js}</script>
 </body>
 </html>"##,
         css       = share_css(),
         js        = SHARE_JS,
+        nonce     = nonce,
         topbar    = share_topbar(&url),
         src_dot   = r#"<span class="dot sodium"></span>"#,
         dur_lbl   = fmt_duration(dur),
@@ -4682,7 +4819,7 @@ mod tests {
         // The reported bug: a 4:3 clip rendered pillarboxed inside a forced-16:9 black void.
         let mut idx = outline_idx(vec![]);
         idx.metadata.resolution = [640, 480];
-        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0, "testnonce");
         assert!(html.contains("--ar:640/480"), "player must hug the real ratio");
         // Two caps. The fold cap alone let a 320x240 clip render at 880px — a blurry 2.75x
         // upscale that also pushed the outline off-screen — so the natural width caps it too.
@@ -4691,7 +4828,7 @@ mod tests {
         // A recording-in-progress stub has no probe yet — fall through to the CSS 16/9 default
         // rather than emitting a degenerate 0/0 ratio.
         idx.metadata.resolution = [0, 0];
-        let stub = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+        let stub = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0, "testnonce");
         assert!(!stub.contains("--ar:"), "a 0x0 stub must not emit a ratio at all");
         assert!(stub.contains(r#"<div class="player" id="player""#), "and renders the bare player");
     }
@@ -4699,7 +4836,7 @@ mod tests {
     #[test]
     fn share_player_degrades_to_native_controls_and_marks_the_salient_moments() {
         let idx = outline_idx(vec![moment(0.0, "opens the console", None), moment(12.5, "reads the error", None)]);
-        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0);
+        let html = super::share_html("clp_1", &idx, "https://x.test/clip/clp_1", 0, "testnonce");
 
         // Progressive enhancement: the served markup keeps `controls`, and the script removes
         // it only after the custom bar is installed. A JS failure must never leave a recipient
@@ -4850,6 +4987,54 @@ mod tests {
         assert_eq!(clip_ref_in_path("/clips"), None);
         // Path traversal in either component is refused rather than resolved.
         assert_eq!(clip_ref_in_path("/u/../etc/passwd"), None);
+    }
+
+    #[test]
+    fn the_rate_limiter_stops_a_hammering_client_without_touching_anyone_else() {
+        let s = super::app_state_for_test();
+        let win = std::time::Duration::from_secs(60);
+
+        for i in 1..=3 {
+            assert!(super::rate_limit(&s, "login", "1.2.3.4", 3, win).is_ok(), "attempt {i} is within budget");
+        }
+        let over = super::rate_limit(&s, "login", "1.2.3.4", 3, win).unwrap_err();
+        assert_eq!(over.0, super::StatusCode::TOO_MANY_REQUESTS);
+
+        // A different caller is unaffected...
+        assert!(super::rate_limit(&s, "login", "5.6.7.8", 3, win).is_ok());
+        // ...and so is a different endpoint for the same caller.
+        assert!(super::rate_limit(&s, "query", "1.2.3.4", 3, win).is_ok());
+
+        // A zero-length window is a fresh window on every call: the limiter must never wedge a
+        // client out permanently just because its clock bucket expired oddly.
+        let instant = std::time::Duration::from_secs(0);
+        for _ in 0..10 {
+            assert!(super::rate_limit(&s, "login", "9.9.9.9", 1, instant).is_ok());
+        }
+    }
+
+    #[test]
+    fn the_growing_snapshot_never_pollutes_the_committed_video() {
+        use super::{concat_chunks, next_append_seq, APPENDED_MARKER};
+        let dir = std::env::temp_dir().join(format!("clipxd-append-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(dir.join("chunk-000000.bin"), b"AAA").unwrap();
+        std::fs::write(dir.join("chunk-000001.bin"), b"BBB").unwrap();
+        // The bookkeeping the append path leaves behind, plus the reader's own snapshot.
+        std::fs::write(dir.join(APPENDED_MARKER), "2").unwrap();
+        std::fs::write(dir.join("video-so-far.webm"), b"AAABBB").unwrap();
+
+        assert_eq!(next_append_seq(&dir), Some(2), "the next chunk that may simply be appended");
+
+        // The committed video is rebuilt from the chunk files alone — neither the marker nor
+        // the growing snapshot may leak into it, or every recording would ship duplicated bytes.
+        let out = dir.join("commit.webm");
+        concat_chunks(&dir, &out).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"AAABBB");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

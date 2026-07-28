@@ -123,6 +123,54 @@ fn env_secs(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).filter(|n| *n > 0).unwrap_or(default)
 }
 
+/// One backend/model's live result from [`probe_backends`].
+pub struct ProbeResult {
+    pub backend: &'static str,
+    pub model: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// Call every configured backend/model with a trivial prompt and report what actually answers.
+///
+/// This exists because the failure mode is silent and slow: a retired model still *looks*
+/// configured, and the only symptom is titles that never generate and an Ask that takes a
+/// minute. Run it after changing keys, and whenever a provider deprecates something.
+pub async fn probe_backends() -> Vec<ProbeResult> {
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build() {
+        Ok(c) => c,
+        Err(e) => return vec![ProbeResult { backend: "http", model: String::new(), ok: false, detail: e.to_string() }],
+    };
+    let mut out = Vec::new();
+    const PROMPT: &str = "reply with the single word ok";
+
+    if let Some(key) = resolve_key(None, "OLLAMA_API_KEY") {
+        for m in ollama_models() {
+            let r = call_ollama(&client, PROMPT, &m, false, &key).await;
+            out.push(ProbeResult { backend: "ollama", model: m, ok: r.is_ok(), detail: describe(r) });
+        }
+    }
+    if let Some(key) = resolve_key(None, "NVIDIA_API_KEY") {
+        for m in nvidia_models() {
+            let r = call_nvidia(&client, PROMPT, &m, &key).await;
+            out.push(ProbeResult { backend: "nvidia", model: m, ok: r.is_ok(), detail: describe(r) });
+        }
+    }
+    if let Some(key) = resolve_key(None, "GEMINI_API_KEY") {
+        let r = call_gemini(&client, PROMPT, false, &key).await;
+        out.push(ProbeResult { backend: "gemini", model: "gemini".into(), ok: r.is_ok(), detail: describe(r) });
+    }
+    out
+}
+
+/// A one-line, key-free summary of a probe call.
+fn describe(r: Result<String>) -> String {
+    match r {
+        Ok(text) => text.trim().chars().take(40).collect(),
+        Err(e) => format!("{e:#}").chars().take(160).collect(),
+    }
+}
+
 /// `Some(explicit)` (trimmed, non-empty) wins; otherwise fall back to the named env var.
 fn resolve_key(explicit: Option<&str>, env_name: &str) -> Option<String> {
     explicit
@@ -209,10 +257,15 @@ async fn call_ollama(client: &reqwest::Client, prompt: &str, model: &str, json_m
 }
 
 /// Which NVIDIA-hosted models to try, in order, when `CLIPXD_NVIDIA_MODEL` isn't set to pin a
-/// single one. kimi-k2.6 was fastest and highest quality of these on this task in testing (see
-/// project memory) — minimax and glm are siblings on the same free tier, so a rate limit or
-/// outage on one is likely uncorrelated with the others, unlike retrying the same model.
-const NVIDIA_MODEL_CASCADE: &[&str] = &["moonshotai/kimi-k2.6", "minimaxai/minimax-m2.7", "z-ai/glm4.7"];
+/// single one.
+///
+/// Verified live from the production box on 2026-07-28 — the previous default
+/// (`moonshotai/kimi-k2.6`, `minimaxai/minimax-m2.7`, `z-ai/glm4.7`) was **entirely dead**:
+/// 404, 410 Gone and 410 Gone respectively, so every fallback attempt for months was three
+/// guaranteed failures costing real seconds before the request gave up. Hosted model catalogues
+/// rot; `clipxd-web --probe-llm` re-checks this list against the live API, and
+/// `CLIPXD_NVIDIA_MODELS` overrides it without a rebuild.
+const NVIDIA_MODEL_CASCADE: &[&str] = &["meta/llama-3.3-70b-instruct", "nvidia/llama-3.3-nemotron-super-49b-v1.5"];
 
 fn nvidia_models() -> Vec<String> {
     // Same resolution order Ollama already had — pin one, or set the whole cascade — because a

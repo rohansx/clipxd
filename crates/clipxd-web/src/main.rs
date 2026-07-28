@@ -39,6 +39,12 @@ struct Args {
     /// files are already correct, so nothing would otherwise be re-sent.
     #[arg(long)]
     remirror: bool,
+    /// One-off diagnostic: call every configured LLM backend/model with a trivial prompt and
+    /// report which ones actually answer, then exit. Run it after changing keys — a retired
+    /// model still looks configured, and its only symptom is titles that never generate and an
+    /// Ask that takes a minute.
+    #[arg(long)]
+    probe_llm: bool,
 }
 
 #[tokio::main]
@@ -57,6 +63,22 @@ async fn main() -> anyhow::Result<()> {
     }
     if args.repair {
         return repair_clips(&args.clips_dir, args.remirror).await;
+    }
+    if args.probe_llm {
+        let results = clipxd_web::llm::probe_backends().await;
+        if results.is_empty() {
+            println!("no LLM backend configured (set OLLAMA_API_KEY / NVIDIA_API_KEY / GEMINI_API_KEY)");
+            return Ok(());
+        }
+        let mut healthy = 0;
+        for r in &results {
+            println!("{:<4} {:<8} {:<45} {}", if r.ok { "OK" } else { "FAIL" }, r.backend, r.model, r.detail);
+            if r.ok {
+                healthy += 1;
+            }
+        }
+        println!("\n{healthy}/{} model(s) answered", results.len());
+        return Ok(());
     }
 
     let public = args.public
