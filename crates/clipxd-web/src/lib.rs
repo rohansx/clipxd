@@ -282,6 +282,9 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
     // stage dir that will never see a commit). Guarded: `app()` is also built in tests with
     // no runtime.
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // One boot-time pass to pick up anything a previous process left mid-flight.
+        let resume_state = state.clone();
+        handle.spawn(async move { resume_interrupted_enrichments(&resume_state).await });
         let sweep_state = state.clone();
         handle.spawn(async move {
             loop {
@@ -440,6 +443,61 @@ async fn sweep_orphaned_recording_stubs(s: &AppState) {
             eprintln!("sweeper: dropping orphaned empty recording stub {id}");
             let _ = std::fs::remove_dir_all(&clip_dir);
         }
+    }
+}
+
+/// Rescue clips whose enrichment died with the process.
+///
+/// `enriching` is an in-memory promise: a detached task is working on it. If that process goes
+/// away — a crash, a deploy restart, or the kernel OOM-killing it mid-index, which is exactly
+/// what production was doing — the status is left frozen and nothing ever finishes it. The clip
+/// sits there forever showing a spinner, with no transcript, no OCR, no captions.
+///
+/// Runs once at boot, sequentially, and only for clips whose index has been untouched for a
+/// while, so a genuinely in-flight enrichment on another worker is never stolen. Each clip is
+/// claimed first, so this can't race a commit or a manual re-enrich.
+async fn resume_interrupted_enrichments(s: &AppState) {
+    // Long enough that a big clip legitimately still enriching is never touched — phase 2 is
+    // minutes, not tens of minutes, even behind the concurrency semaphore.
+    const STALE_SECS: u64 = 20 * 60;
+    let Ok(entries) = std::fs::read_dir(s.clips_dir.as_path()) else { return };
+    let mut resumed = 0usize;
+    for e in entries.flatten() {
+        let id = e.file_name().to_string_lossy().to_string();
+        if !safe(&id) || std::env::temp_dir().join(format!("clipxd-stage-{id}")).exists() {
+            continue;
+        }
+        let clip_dir = e.path();
+        let index_path = clip_dir.join("index.json");
+        let Some(idx) = std::fs::read_to_string(&index_path).ok().and_then(|r| serde_json::from_str::<Index>(&r).ok())
+        else {
+            continue;
+        };
+        if idx.status != clipxd_index::Status::Enriching {
+            continue;
+        }
+        let stale = std::fs::metadata(&index_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|el| el.as_secs() > STALE_SECS);
+        if !stale {
+            continue;
+        }
+        let Some(video) = ["video.webm", "video.mp4", "source.mp4"].iter().map(|n| clip_dir.join(n)).find(|p| p.exists())
+        else {
+            // Nothing to enrich from; at least stop claiming it's in progress.
+            eprintln!("resume: {id} stuck enriching with no video — marking partial");
+            mark_partial(&clip_dir);
+            continue;
+        };
+        let Some(claim) = try_claim(&s.clip_claims, &id) else { continue };
+        eprintln!("resume: restarting interrupted enrichment for {id}");
+        spawn_phase2(s, id, clip_dir, video, None, claim, None);
+        resumed += 1;
+    }
+    if resumed > 0 {
+        eprintln!("resume: restarted {resumed} interrupted enrichment(s)");
     }
 }
 
