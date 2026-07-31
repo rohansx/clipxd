@@ -31,8 +31,14 @@
 		X-Frame-Options "DENY"
 		# Sensible referrer policy.
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# Disable powerful features we don't use.
-		Permissions-Policy "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+		# Powerful features: denied everywhere EXCEPT our own origin for the three the
+		# recorder is built on. An empty allowlist — `microphone=()` — does not mean "ask the
+		# user", it means "this feature is off for everyone including us", so getUserMedia was
+		# rejected instantly and the permission prompt never appeared. Every screen recording
+		# made while this was set is silent, with an empty transcript, and the camera bubble
+		# could never have worked either. `self` restores the normal browser prompt while still
+		# denying every embedded third-party frame.
+		Permissions-Policy "geolocation=(), microphone=(self), camera=(self), display-capture=(self), interest-cohort=()"
 		# Block MIME sniffing.
 		X-Content-Type-Options "nosniff"
 	}

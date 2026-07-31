@@ -1906,13 +1906,36 @@ async fn ingest_stage_append(
     // Fire-and-forget: index the growing video in the background so the PUT response (and
     // therefore the client's next chunk) never waits on ffmpeg/OCR work.
     if let Some(slot) = s.stage_sessions.lock().await.get(&session).cloned() {
-        tokio::task::spawn_blocking(move || {
-            if let Ok(mut guard) = slot.lock() {
-                if let Some(indexer) = guard.as_mut() {
-                    if let Err(e) = indexer.add_increment(&video_so_far, "Screen recording") {
-                        eprintln!("incremental add_increment failed for session {session}: {e:#} (continuing)");
+        // Where the live snapshot goes: the clip dir minted at stage-open, which already holds
+        // the `recording` stub the share URL resolves to.
+        let snapshot_dir = s.clips_dir.join(&session);
+        let s_snap = s.clone();
+        let snap_id = session.clone();
+        tokio::spawn(async move {
+            let published = tokio::task::spawn_blocking(move || {
+                let Ok(mut guard) = slot.lock() else { return false };
+                let Some(indexer) = guard.as_mut() else { return false };
+                if let Err(e) = indexer.add_increment(&video_so_far, "Screen recording") {
+                    eprintln!("incremental add_increment failed for session {session}: {e:#} (continuing)");
+                    return false;
+                }
+                match indexer.publish_snapshot(&snapshot_dir, &session) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        // Best-effort: the accumulated index is still in memory and finalize
+                        // writes it in full at commit. Only the *live* view suffers.
+                        eprintln!("incremental snapshot for {session}: {e:#} (continuing)");
+                        false
                     }
                 }
+            })
+            .await
+            .unwrap_or(false);
+            // Hosted reads hit object storage first, so a snapshot that only lands on local disk
+            // is a snapshot nobody sees — the same trap that made a stopped recording keep
+            // reporting "recording" for the whole enrichment window.
+            if published {
+                mirror_index(&s_snap, &snap_id, &s_snap.clips_dir.join(&snap_id)).await;
             }
         });
     }

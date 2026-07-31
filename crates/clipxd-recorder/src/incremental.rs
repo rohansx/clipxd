@@ -95,6 +95,51 @@ impl IncrementalIndexer {
         Ok(())
     }
 
+    /// Write what has been indexed *so far* into the clip's live `index.json`, so a recording
+    /// in progress shows real transcript / on-screen text / moments instead of an empty stub.
+    ///
+    /// The per-chunk passes have always run during recording — they just accumulated in memory
+    /// and published nothing until Stop, which made the share page's "the index fills in as the
+    /// recording happens" true internally and invisible externally. This publishes a snapshot.
+    ///
+    /// Deliberately partial: `status` stays [`Status::Recording`] and the stub's metadata
+    /// (duration 0, resolution 0) is left alone, because the real values come from probing the
+    /// finished container at commit. Only the streams are filled in. `finalize` later overwrites
+    /// this file wholesale, so nothing here can survive into the finished clip incorrectly.
+    pub fn publish_snapshot(&self, clip_dir: &Path, id: &str) -> Result<()> {
+        let index_path = clip_dir.join("index.json");
+        // Build on the existing stub so ownership-independent fields (title, created_at, source,
+        // the share-page summary line) survive; if it is unreadable there is nothing to publish
+        // into and the next pass will try again.
+        let Ok(raw) = std::fs::read_to_string(&index_path) else { return Ok(()) };
+        let Ok(mut index) = serde_json::from_str::<Index>(&raw) else { return Ok(()) };
+        if index.status != clipxd_index::Status::Recording {
+            return Ok(()); // commit already promoted it — the finalize path owns the file now
+        }
+        // Reuse the one enrichment→index conversion the finalize path uses, rather than
+        // duplicating the mapping here — zeros for the media info because the real duration and
+        // resolution only exist once the container is closed and probed at commit.
+        let converted = map::to_index(
+            id,
+            Source::Screen,
+            &media::MediaInfo { duration_s: 0.0, width: 0, height: 0, fps: 0.0 },
+            &index.metadata.title,
+            &index.metadata.created_at,
+            &self.enrichment,
+        );
+        index.transcript = self.transcript.clone();
+        index.on_screen_text = converted.on_screen_text;
+        index.visual_timeline = converted.visual_timeline;
+        clipxd_index::clean_index(&mut index);
+        let tmp = clip_dir.join("index.json.next");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&index)?)?;
+        // Atomic swap: a reader (the share page, the SPA's 3 s poll) never sees a half-written
+        // index — the same reason the staged video is renamed rather than rewritten in place.
+        std::fs::rename(&tmp, &index_path)?;
+        let _ = id;
+        Ok(())
+    }
+
     /// Transcribe the `[max_transcript_ms, boundary)` audio slice (minus holdback on a
     /// mid-recording pass) and append it. Extracting only the *new* slice — not the whole
     /// growing recording — is what keeps this cheap every ~15s chunk instead of O(n²) over a
@@ -273,6 +318,56 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_snapshot_publishes_streams_without_claiming_the_clip_is_finished() {
+        use clipxd_index::{Metadata, Source, Status};
+        let tmp = std::env::temp_dir().join(format!("clipxd-snap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // The stub the share URL resolves to during recording: zeroed metadata, no streams.
+        let mut stub = Index::new(
+            "clp_snap",
+            Source::Screen,
+            Metadata {
+                duration: 0.0,
+                resolution: [0, 0],
+                fps: 0.0,
+                created_at: "1700000000".into(),
+                title: "Screen recording".into(),
+                description: String::new(),
+                app_focus: vec![],
+                url_context: None,
+                has_video: true,
+            },
+        );
+        stub.status = Status::Recording;
+        std::fs::write(tmp.join("index.json"), serde_json::to_string(&stub).unwrap()).unwrap();
+
+        let mut indexer = IncrementalIndexer::new(tmp.join("frames"), 4.0, None);
+        indexer.transcript.push(TranscriptSegment { start: 0.0, end: 1.0, text: "hello".into(), speaker: None });
+        indexer.publish_snapshot(&tmp, "clp_snap").unwrap();
+
+        let live: Index = serde_json::from_str(&std::fs::read_to_string(tmp.join("index.json")).unwrap()).unwrap();
+        assert_eq!(live.transcript.len(), 1, "what has been indexed so far must be visible mid-recording");
+        assert_eq!(live.status, Status::Recording, "a snapshot must NOT claim the recording finished");
+        assert_eq!(live.metadata.duration, 0.0, "duration only becomes real when the container is probed at commit");
+        assert_eq!(live.metadata.title, "Screen recording", "stub fields survive the merge");
+
+        // Once commit promotes the clip, the finalize path owns index.json — a late snapshot
+        // from an in-flight pass must not stomp it back down to a partial view.
+        let mut promoted = live.clone();
+        promoted.status = Status::Enriching;
+        promoted.metadata.duration = 42.0;
+        std::fs::write(tmp.join("index.json"), serde_json::to_string(&promoted).unwrap()).unwrap();
+        indexer.publish_snapshot(&tmp, "clp_snap").unwrap();
+        let after: Index = serde_json::from_str(&std::fs::read_to_string(tmp.join("index.json")).unwrap()).unwrap();
+        assert_eq!(after.status, Status::Enriching);
+        assert_eq!(after.metadata.duration, 42.0, "a promoted index must survive a late snapshot untouched");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
     #[test]
     fn move_dir_relocates_contents() {
