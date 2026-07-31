@@ -1630,20 +1630,36 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
         }
         let bg_id = id.clone();
         let bg_dir = clip_dir.clone();
+        let storage_mirror = storage_arc.clone();
         // BYOK/local-mode caption override for the from-scratch path — the incremental path
         // already baked this into `indexer` back at `/ingest/stage` creation time.
         let caption_source = owner_caption_source(&auth, &bg_id);
-        let _ = tokio::task::spawn_blocking(move || {
+        let enrich_failed = tokio::task::spawn_blocking(move || {
             let result = match incremental {
                 Some(indexer) => indexer.finalize(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
                 None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0, caption_source).map(|_| ()),
             };
-            if let Err(e) = result {
-                eprintln!("background enrich failed for {bg_id}: {e:#}");
-                mark_partial(&bg_dir);
+            match result {
+                Ok(()) => false,
+                Err(e) => {
+                    eprintln!("background enrich failed for {bg_id}: {e:#}");
+                    mark_partial(&bg_dir);
+                    true
+                }
             }
         })
-        .await;
+        .await
+        .unwrap_or(true);
+        // `mark_partial` only touched local disk, and hosted reads hit storage first — so
+        // without this the clip keeps advertising the status it had before the failure. Done
+        // out here because the mirror is async and the enrichment above is a blocking task.
+        if enrich_failed {
+            if let Ok(st) = storage_mirror.make_storage().await {
+                if let Ok(raw) = std::fs::read(clip_dir.join("index.json")) {
+                    let _ = st.write_object(&format!("{id}/index.json"), raw, "application/json").await;
+                }
+            }
+        }
         // Browser-mode fusion: if the extension recorded this tab's video WITH a structured
         // trace, merge the trace's interaction/DOM streams into the just-built video index —
         // AFTER enrichment (same task, so it never races the finalize that writes index.json).
@@ -2068,9 +2084,16 @@ async fn ingest_stage_commit(
         .await
         {
             Ok(Ok(v)) => v,
-            Ok(Err(e)) => { eprintln!("commit assemble for {task_id}: {e:#}"); mark_partial(&clip_dir2); return; }
-            Err(e) => { eprintln!("commit assemble task for {task_id}: {e}"); mark_partial(&clip_dir2); return; }
+            Ok(Err(e)) => { eprintln!("commit assemble for {task_id}: {e:#}"); mark_partial_mirrored(&s2, &task_id, &clip_dir2).await; return; }
+            Err(e) => { eprintln!("commit assemble task for {task_id}: {e}"); mark_partial_mirrored(&s2, &task_id, &clip_dir2).await; return; }
         };
+        // Mirror the promoted stub NOW. `promote_recording_stub` flipped the local index from
+        // `recording` to `enriching` with the real duration, but hosted reads go to object
+        // storage FIRST — so without this the world keeps seeing the original stub for the whole
+        // enrichment window: "Recording in progress…" on a recording that stopped minutes ago,
+        // a 0:00 duration pill next to a player showing 1:57, and an Ask that says it is still
+        // recording. Only the end of enrichment mirrored, which is far too late.
+        mirror_index(&s2, &task_id, &clip_dir2).await;
         let incremental = match stage_slot {
             Some(slot) => tokio::task::spawn_blocking(move || slot.lock().ok().and_then(|mut g| g.take())).await.unwrap_or(None),
             None => None,
@@ -2079,6 +2102,24 @@ async fn ingest_stage_commit(
         spawn_phase2(&s2, task_id, clip_dir2, video, incremental, claim, browser_trace);
     });
     Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// Push a clip's current on-disk `index.json` to object storage.
+///
+/// Every status transition needs this in hosted mode: local disk is the source of truth for the
+/// process doing the work, but `read_object_or_local` asks storage first, so a status the world
+/// can see only changes when the mirror does.
+async fn mirror_index(s: &AppState, id: &str, clip_dir: &std::path::Path) {
+    match tokio::fs::read(clip_dir.join("index.json")).await {
+        Ok(raw) => write_object_best_effort(s, &format!("{id}/index.json"), raw, "application/json").await,
+        Err(e) => eprintln!("mirror_index {id}: {e}"),
+    }
+}
+
+/// `mark_partial` + the mirror, so a failed commit stops advertising itself as still recording.
+async fn mark_partial_mirrored(s: &AppState, id: &str, clip_dir: &std::path::Path) {
+    mark_partial(clip_dir);
+    mirror_index(s, id, clip_dir).await;
 }
 
 /// Assemble the committed video from a stage session's chunks and promote the `recording` stub
@@ -3437,7 +3478,7 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64, nonce: &str) -> Stri
     <div class="meta-row">
       <span class="pill">{src_dot} Screen recording</span>
       <span class="pill sodium">{dur_lbl}</span>
-      <span class="pill status-pill">{status}</span>
+      <span class="pill status-pill" id="statusPill" data-state="{state}">{status}</span>
       <span class="pill ghost" title="views">{views_lbl} view{views_plural}</span>
     </div>
     <div class="player"{player_style} id="player" data-marks="{marks}">
@@ -3503,6 +3544,11 @@ fn share_html(id: &str, idx: &Index, url: &str, views: u64, nonce: &str) -> Stri
             .collect::<Vec<_>>()
             .join(","),
         status    = share_status_pill(&idx.status),
+        state     = match idx.status {
+            clipxd_index::Status::Recording => "recording",
+            clipxd_index::Status::Enriching => "enriching",
+            _ => "done",
+        },
         views_lbl = format_view_count(views),
         views_plural = if views == 1 { "" } else { "s" },
         player_style = player_style,
@@ -4422,6 +4468,39 @@ async fn get_font(Path(name): Path<String>) -> Result<impl IntoResponse, WebErr>
 }
 
 const SHARE_JS: &str = r##"
+// ---- live status ----------------------------------------------------------------------
+// The page renders whatever status the clip had at request time and then never changes, while
+// its own banner promises "no need to refresh". For a clip that is still recording or indexing
+// that promise was simply false: a recording that stopped minutes ago kept saying "Recording in
+// progress…", with a 0:00 duration pill next to a player showing the real length.
+//
+// Poll the clip's own index (cheap: a small JSON on the same origin, allowed by connect-src
+// 'self') and reload once the state actually moves. A reload rather than a DOM patch because
+// the page is server-rendered — the summary, chapters, outline, transcript and duration all
+// arrive together, already built, instead of being reassembled here.
+(function () {
+  const pill = document.getElementById('statusPill');
+  const state = pill && pill.dataset.state;
+  if (state !== 'recording' && state !== 'enriching') return;
+  const path = location.pathname.replace(/\/$/, '') + '/index.json';
+  let tries = 0;
+  const timer = setInterval(async () => {
+    // Give up after ~15 minutes rather than polling a dead tab forever.
+    if (++tries > 180) return clearInterval(timer);
+    try {
+      const r = await fetch(path, { cache: 'no-store' });
+      if (!r.ok) return;
+      const idx = await r.json();
+      if (idx.status !== state) {
+        clearInterval(timer);
+        location.reload();
+      }
+    } catch (e) {
+      /* transient — try again on the next tick */
+    }
+  }, 5000);
+})();
+
 // ---- player chrome -------------------------------------------------------------------
 // The share page is the surface a recipient actually lands on, and it shipped with a raw
 // <video controls>: browser-default chrome, no speed control, no keyboard shortcuts, and no
