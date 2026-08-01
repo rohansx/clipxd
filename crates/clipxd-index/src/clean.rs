@@ -55,21 +55,93 @@ const NEAR_SIM: f64 = 0.6;
 /// already-clean ones) and idempotent.
 pub fn clean_index(index: &mut Index) {
     for m in &mut index.visual_timeline {
-        m.caption = strip_frame_preamble(&collapse_repetition(&m.caption));
+        m.caption = tighten_caption(&strip_frame_preamble(&collapse_repetition(&m.caption)));
         if let Some(l) = m.label.as_mut() {
             *l = strip_frame_preamble(l);
         }
     }
     for c in &mut index.summary.chapters {
-        c.title = strip_frame_preamble(&c.title);
+        c.title = tighten_caption(&strip_frame_preamble(&c.title));
     }
     dedup_visual_timeline(&mut index.visual_timeline);
+    thin_chapters(index);
     dedup_on_screen_text(&mut index.on_screen_text);
     truncate_tldr(&mut index.summary.tldr);
     index.search = Some(build_search(index));
     // A cleaned index carries the v2 shape (search + deduped streams), whether it was just
     // enriched or backfilled from a v1 clip — stamp it so consumers can trust the field.
     index.clipxd_version = CLIPXD_SCHEMA_VERSION.to_string();
+}
+
+/// A moment's caption is a *navigation label*, not a description of every pixel. Measured across
+/// production: 77 of 196 moments carried captions over 400 characters — paragraph-long inventories
+/// of every icon on screen. They make the chapter list unreadable, and for the agent they are
+/// mostly filler crowding out the parts that identify the moment.
+const CAPTION_TIGHT: usize = 240;
+
+/// Cut a caption to its first sentence(s) within [`CAPTION_TIGHT`].
+///
+/// Sentence-boundary rather than mid-word, and it keeps the *opening* — a captioner front-loads
+/// what the frame is and trails off into furniture ("…a sidebar on the left lists Settings,
+/// Clip, Recordings…"). Idempotent: an already-short caption is returned unchanged, and cutting
+/// an already-cut caption is a no-op.
+fn tighten_caption(text: &str) -> String {
+    let t = text.trim();
+    if t.chars().count() <= CAPTION_TIGHT {
+        return t.to_string();
+    }
+    // Prefer the last sentence end that fits; fall back to a word boundary.
+    let budget: String = t.chars().take(CAPTION_TIGHT).collect();
+    let cut = budget
+        .rfind(|c| matches!(c, '.' | '!' | '?'))
+        .map(|i| i + 1)
+        .filter(|i| *i > CAPTION_TIGHT / 3) // a sentence end that early means the rest is the real content
+        .or_else(|| budget.rfind(' '));
+    match cut {
+        Some(i) => {
+            let head = budget[..i].trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+            if head.ends_with(['.', '!', '?']) { head.to_string() } else { format!("{head}…") }
+        }
+        None => format!("{budget}…"),
+    }
+}
+
+/// Chapters have to earn their density from the clip's length.
+///
+/// The deep pass returns a fixed handful regardless of duration, which on a 19-second clip meant
+/// **eight** chapters — 25 per minute, one every 2.4 seconds. That isn't a table of contents, it's
+/// the moment list again. Roughly one chapter per [`CHAPTER_SECS`], always at least two (a
+/// beginning and a turn) when the pass produced any at all, keeping the earliest of each cluster
+/// so the timestamps still line up with where sections actually start.
+const CHAPTER_SECS: f64 = 25.0;
+
+fn thin_chapters(index: &mut Index) {
+    let n = index.summary.chapters.len();
+    if n < 3 {
+        return;
+    }
+    let dur = index.metadata.duration;
+    // Duration 0 means the container was never probed (a recording still in flight) — leave the
+    // chapters alone rather than thin against a length we don't know yet.
+    if dur <= 0.0 {
+        return;
+    }
+    let budget = ((dur / CHAPTER_SECS).round() as usize).clamp(2, n);
+    if budget >= n {
+        return;
+    }
+    index.summary.chapters.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    // Keep an evenly spread subset by time, always including the first.
+    let step = n as f64 / budget as f64;
+    let mut kept = Vec::with_capacity(budget);
+    let mut next = 0.0_f64;
+    for (i, c) in index.summary.chapters.iter().enumerate() {
+        if i as f64 >= next {
+            kept.push(c.clone());
+            next += step;
+        }
+    }
+    index.summary.chapters = kept;
 }
 
 /// Openers a frame captioner reaches for because it is describing *an image*, not narrating a
@@ -364,8 +436,34 @@ fn is_ocr_noise(s: &str) -> bool {
         return true;
     }
     // Needs at least one token with 3+ letters to carry meaning.
-    !s.split(|c: char| !c.is_alphanumeric())
-        .any(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3)
+    if !s.split(|c: char| !c.is_alphanumeric()).any(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3) {
+        return true;
+    }
+    is_glyph_confetti(s)
+}
+
+/// A span made almost entirely of one- and two-character tokens is what OCR returns when it is
+/// reading *chrome* rather than text — a browser's tab strip of favicons and window buttons comes
+/// back as `@ Bt @ Ba Oa Or Ou On Os OH ... + - @`. It carries nothing, and a screen recording of
+/// a browser produces it on every single frame.
+///
+/// Calibrated against the whole production corpus rather than by eye: at these thresholds it
+/// removes 38 of 3329 spans (1.1%), and every one of those 38 is chrome. Deliberately timid,
+/// because the failure modes are not symmetric — keeping a junk span costs a little noise in
+/// search, dropping a real one destroys index content that cannot be recovered. Both looser
+/// variants tested (stub ratio 0.6, or requiring a 6-letter word to survive) started taking real
+/// spans with them, like a chart label reading "Age: 53 days".
+fn is_glyph_confetti(s: &str) -> bool {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    if toks.len() < 4 {
+        return false;
+    }
+    let stubs = toks.iter().filter(|t| t.chars().filter(|c| c.is_alphanumeric()).count() <= 2).count();
+    if (stubs as f64) / (toks.len() as f64) < 0.7 {
+        return false;
+    }
+    // One real word anywhere is enough to keep the whole span.
+    !toks.iter().any(|t| t.chars().filter(|c| c.is_alphabetic()).count() >= 4)
 }
 
 #[cfg(test)]
@@ -393,6 +491,70 @@ mod tests {
 
     fn ost(t: f64, text: &str) -> OnScreenText {
         OnScreenText { start: t, end: t, text: text.into(), source: TextKind::Ocr, bbox: None }
+    }
+
+    #[test]
+    fn browser_chrome_is_dropped_but_sparse_real_text_survives() {
+        // Verbatim from production OCR: a browser tab strip read as glyphs.
+        for junk in [
+            "@ Bt @ Ba Oa Or Ou On Os OH Os Oa Os Osx Or Orn Qe Qu Qu @ x u Qu @r Qu Bv 6 + - @",
+            "< CEC x * © + - 8 x",
+            "ono eee 8 ® © + -",
+            "OF MOO O46 + - 9 x",
+        ] {
+            assert!(is_ocr_noise(junk), "should have been dropped: {junk:?}");
+        }
+        // Also from production, and all of it is real content the index must keep — each is
+        // mostly stub tokens, which is why the rule needs the "one real word" escape hatch.
+        for real in [
+            "| 8 0S Age: 53 days",
+            "© Other 1.3%",
+            "Feb Ma Apr Ma Jun Jul",
+            "utkrusht-github",
+            "© veyo salience gate",
+        ] {
+            assert!(!is_ocr_noise(real), "should have been kept: {real:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_caption_is_cut_to_a_sentence_and_chapters_thin_with_duration() {
+        let long = "A dark desktop with a browser window open. The sidebar on the left lists \
+            Settings, Clip, Recordings, Import and Audio. The top bar shows a recording indicator \
+            and a timer. Below that a waveform is visible, and to the right a panel lists the \
+            index streams with their backends and timestamps in a monospace font.";
+        let cut = tighten_caption(long);
+        assert!(cut.chars().count() <= CAPTION_TIGHT + 1, "not tightened: {cut:?}");
+        assert!(cut.starts_with("A dark desktop"), "the opening identifies the moment: {cut:?}");
+        assert_eq!(tighten_caption(&cut), cut, "tightening is idempotent");
+        let short = "Opens the payments settings page.";
+        assert_eq!(tighten_caption(short), short, "a short caption is untouched");
+
+        // 8 chapters on a 19-second clip is one every 2.4s — the moment list, not a contents.
+        let mut idx = Index::new("clp_1", Source::Screen, meta());
+        idx.metadata.duration = 19.0;
+        idx.summary.chapters = (0..8)
+            .map(|i| crate::schema::Chapter { start: i as f64 * 2.4, title: format!("beat {i}") })
+            .collect();
+        clean_index(&mut idx);
+        assert_eq!(idx.summary.chapters.len(), 2, "a 19s clip earns 2 chapters, not 8");
+        assert_eq!(idx.summary.chapters[0].start, 0.0, "the first chapter is always kept");
+
+        // A long clip keeps what the deep pass gave it.
+        let mut long_clip = Index::new("clp_2", Source::Screen, meta());
+        long_clip.metadata.duration = 300.0;
+        long_clip.summary.chapters =
+            (0..8).map(|i| crate::schema::Chapter { start: i as f64 * 30.0, title: format!("beat {i}") }).collect();
+        clean_index(&mut long_clip);
+        assert_eq!(long_clip.summary.chapters.len(), 8, "a 5-minute clip supports 8 chapters");
+
+        // A recording still in flight has no probed duration yet — never thin against that.
+        let mut live = Index::new("clp_3", Source::Screen, meta());
+        live.metadata.duration = 0.0;
+        live.summary.chapters =
+            (0..8).map(|i| crate::schema::Chapter { start: i as f64, title: format!("beat {i}") }).collect();
+        clean_index(&mut live);
+        assert_eq!(live.summary.chapters.len(), 8, "unknown duration must not thin anything");
     }
 
     #[test]
@@ -583,10 +745,22 @@ mod tests {
         // Collapsed from 7 sentences to 4: the two genuinely distinct ones ("repository page",
         // "address bar") plus at most 2 examples of the repeated "tab bar includes" template
         // (not all 5) — enough to show the pattern without the dump.
-        let kept = split_sentences(caption);
-        assert_eq!(kept.len(), 4, "expected collapse, kept: {caption:?}");
+        // The collapse itself is asserted on its own output: 7 sentences down to 4 — the two
+        // genuinely distinct ones plus at most 2 examples of the repeated "tab bar includes"
+        // template, enough to show the pattern without the dump.
+        let collapsed = collapse_repetition(degenerate);
+        assert_eq!(split_sentences(&collapsed).len(), 4, "expected collapse, got: {collapsed:?}");
+        assert_eq!(
+            collapsed.matches("tab bar includes").count(),
+            2,
+            "expected only 2 of 5 template repeats kept: {collapsed:?}"
+        );
+
+        // End to end, `clean_index` then caps the survivor at caption length, so the stored
+        // caption is shorter still — and keeps the opening, which is the part that identifies
+        // the moment.
+        assert!(caption.chars().count() <= CAPTION_TIGHT + 1, "caption not tightened: {caption:?}");
         assert!(caption.contains("GitHub repository page"));
-        assert_eq!(caption.matches("tab bar includes").count(), 2, "expected only 2 of 5 template repeats kept: {caption:?}");
     }
 
     #[test]
