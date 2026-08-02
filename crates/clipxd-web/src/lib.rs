@@ -3831,18 +3831,42 @@ fn share_main(id: &str, idx: &Index) -> String {
 /// Make a friendly label for an event row.  Format: "click at (x, y)" /
 /// "press 'a'" / "GET /foo" / "POST /bar (200)".  Returns the label plus a
 /// CSS class hint for tone.
+/// Last-resort description of a click with no accessible name: where it happened.
+///
+/// The two producers disagree on units — the screen recorder normalises to 0..1 (it has no DOM,
+/// only a fraction of the frame), while the browser extension reports viewport pixels. Rendering
+/// both as `x * 100` printed "click at (41200%, 23300%)" for extension events, so the unit is
+/// inferred from the magnitude rather than assumed.
+fn coordinate_fallback(kind: &str, data: &serde_json::Map<String, serde_json::Value>) -> String {
+    let xy = data
+        .get("x")
+        .and_then(|v| v.as_f64())
+        .zip(data.get("y").and_then(|v| v.as_f64()));
+    match xy {
+        Some((x, y)) if (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) => {
+            format!("{kind} at ({:.0}%, {:.0}%)", x * 100.0, y * 100.0)
+        }
+        Some((x, y)) => format!("{kind} at ({x:.0}, {y:.0})px"),
+        None => kind.to_string(),
+    }
+}
+
 fn humanize_event(e: &clipxd_index::Event) -> (String, &'static str) {
     use clipxd_index::Event as ClipEvent;
     match e {
         ClipEvent { kind: k, text: Some(t), data, .. } if k == "click" || k == "pointerdown" => {
-            // data shape: { x: f64, y: f64 } normalized
-            let pos = data.get("x").and_then(|v| v.as_f64())
-                .zip(data.get("y").and_then(|v| v.as_f64()));
-            let (label, cls) = match pos {
-                Some((x, y)) => (format!("{} at ({:.0}%, {:.0}%)", k, x * 100.0, y * 100.0), "ev-click"),
-                None => (t.clone(), "ev-other"),
+            // A click's *name* is the event. This used to render the coordinate and throw the
+            // label away, which is how a share page came to say "click at (51%, 36%)" — true,
+            // and useless to both a viewer and an agent.
+            let name = t.trim();
+            let role = data.get("role").and_then(|v| v.as_str()).filter(|r| !r.is_empty());
+            let label = match (name.is_empty(), role) {
+                (false, Some(role)) => format!("clicked {role} “{}”", truncate_chars(name, 60)),
+                (false, None) => format!("clicked “{}”", truncate_chars(name, 60)),
+                (true, Some(role)) => format!("clicked a {role}"),
+                (true, None) => coordinate_fallback(k, data),
             };
-            (label, cls)
+            (label, "ev-click")
         }
         ClipEvent { kind: k, text: Some(t), .. } if k == "key" || k == "keydown" || k == "keypress" => {
             (format!("press '{}'", t), "ev-key")
@@ -5173,6 +5197,42 @@ mod tests {
             assert!(try_claim(&claims, "clp_seq").is_none());
         } // _first drops here — e.g. the sweeper's promote_staged failed and returned early
         assert!(try_claim(&claims, "clp_seq").is_some(), "a released id must be claimable again");
+    }
+
+    #[test]
+    fn a_click_reads_as_a_sentence_not_a_coordinate() {
+        use super::humanize_event;
+        let ev = |kind: &str, text: Option<&str>, data: serde_json::Value| clipxd_index::Event {
+            t: 1.0,
+            kind: kind.to_string(),
+            text: text.map(str::to_string),
+            data: data.as_object().cloned().unwrap_or_default(),
+        };
+
+        // The case from the share page: a named button.
+        let (label, cls) = humanize_event(&ev(
+            "click",
+            Some("Generate credentials"),
+            serde_json::json!({ "role": "button", "x": 412, "y": 233 }),
+        ));
+        assert_eq!(label, "clicked button “Generate credentials”");
+        assert_eq!(cls, "ev-click");
+
+        // Named, but the capture client sent no role.
+        let (label, _) = humanize_event(&ev("click", Some("Sign in"), serde_json::json!({ "x": 10, "y": 20 })));
+        assert_eq!(label, "clicked “Sign in”");
+
+        // No name at all — the role still beats a coordinate.
+        let (label, _) = humanize_event(&ev("click", Some(""), serde_json::json!({ "role": "link" })));
+        assert_eq!(label, "clicked a link");
+
+        // Neither: fall back to position, and get the UNITS right. The screen recorder
+        // normalises to 0..1; the extension reports viewport pixels. Treating both as
+        // normalised printed "click at (41200%, 23300%)".
+        let (label, _) = humanize_event(&ev("click", Some(""), serde_json::json!({ "x": 0.51, "y": 0.36 })));
+        assert_eq!(label, "click at (51%, 36%)", "normalised coords render as a percentage");
+        let (label, _) = humanize_event(&ev("click", Some(""), serde_json::json!({ "x": 412, "y": 233 })));
+        assert_eq!(label, "click at (412, 233)px", "pixel coords must not be multiplied by 100");
     }
 
     #[test]

@@ -138,16 +138,28 @@ fn to_event(ev: &TraceEvent, t: f64) -> Option<Event> {
                     "error_text": error_text, "request_id": request_id, "initiator": initiator})),
             }
         }
-        Click { click_kind, target, label, x, y, .. } => {
+        Click { click_kind, target, label, role, chain, rect, href, x, y, .. } => {
             let kind = if click_kind == "contextmenu" { "context_menu" } else { "click" };
             Event {
                 t,
                 kind: kind.into(),
+                // The accessible name is the readable half of the event ("Generate credentials");
+                // the role says what kind of thing it was. Together they're a sentence, which is
+                // what an agent and a viewer both need — a coordinate is neither.
                 text: label.clone(),
-                data: obj(json!({"click_kind": click_kind, "target": target, "x": x, "y": y})),
+                data: obj(json!({
+                    "click_kind": click_kind,
+                    "target": target,
+                    "role": role,
+                    "chain": chain,
+                    "href": href,
+                    "rect": rect.map(|r| json!({"x": r.x, "y": r.y, "w": r.w, "h": r.h})),
+                    "x": x,
+                    "y": y,
+                })),
             }
         }
-        Input { target, label, value, checked, masked, submit, .. } => {
+        Input { target, label, role, chain, value, checked, masked, submit, .. } => {
             let kind = if *submit { "form_submit" } else { "input" };
             // never echo a masked value into data
             let v = if *masked { json!(null) } else { json!(value) };
@@ -155,7 +167,10 @@ fn to_event(ev: &TraceEvent, t: f64) -> Option<Event> {
                 t,
                 kind: kind.into(),
                 text: label.clone(),
-                data: obj(json!({"target": target, "value": v, "checked": checked, "masked": masked})),
+                data: obj(json!({
+                    "target": target, "role": role, "chain": chain,
+                    "value": v, "checked": checked, "masked": masked,
+                })),
             }
         }
         Scroll { target, x, y, .. } => Event {

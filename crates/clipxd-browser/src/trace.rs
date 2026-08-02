@@ -11,6 +11,15 @@ fn default_viewport() -> Viewport {
     Viewport { w: 1280, h: 800 }
 }
 
+/// A viewport-relative element box, as the capture client measured it.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct Rect {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Viewport {
     pub w: u32,
@@ -116,6 +125,20 @@ pub enum TraceEvent {
         target: String,
         #[serde(default)]
         label: Option<String>,
+        /// ARIA role, explicit or implied by the tag ("button", "link", "checkbox"). What the
+        /// element *is*, which a coordinate can never say.
+        #[serde(default)]
+        role: Option<String>,
+        /// The target plus a few ancestors — `button.primary < form#signup < main` — enough to
+        /// locate it again and to see where in the page it lived.
+        #[serde(default)]
+        chain: Option<String>,
+        /// Viewport-relative box of the element, for the cinematic camera and for "where on
+        /// screen did this happen" without re-deriving it from pixels.
+        #[serde(default)]
+        rect: Option<Rect>,
+        #[serde(default)]
+        href: Option<String>,
         #[serde(default)]
         x: Option<i64>,
         #[serde(default)]
@@ -127,6 +150,10 @@ pub enum TraceEvent {
         target: String,
         #[serde(default)]
         label: Option<String>,
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        chain: Option<String>,
         #[serde(default)]
         value: String,
         #[serde(default)]
