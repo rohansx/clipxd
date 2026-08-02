@@ -169,6 +169,9 @@
       const from = lastUrl;
       lastUrl = location.href;
       send({ type: "navigate", t_ms: now(), url: location.href, from, nav_kind: kind, title: document.title });
+      // New page, new text: forget what was sent so the new content isn't deduped away.
+      sentText = new Set();
+      setTimeout(snapshotText, 300);
     }
   };
   window.addEventListener("popstate", () => navCheck("popstate"));
@@ -191,6 +194,102 @@
     }
   });
 
+
+  // ---- visible-text snapshots -----------------------------------------------------------
+  // The whole point of Phase 1: the page already knows its own text and where it sits, so
+  // shipping that is exact and nearly free, where recovering it from pixels costs an OCR pass
+  // (measured: a 3.4 GB memory floor and minutes per clip) and invents text that was never on
+  // screen. The server already turns these into on_screen_text with source:"dom" — nothing
+  // downstream needed changing, the capture side simply never sent them.
+
+  // Elements whose text must never leave the tab. `.ph-no-capture` is PostHog's convention and
+  // costs nothing to honour; sites already marked up for them work here for free.
+  const MASK_SELECTOR =
+    'input[type="password"], [data-clipxd-mask], .ph-no-capture, .clipxd-mask, [autocomplete*="cc-"]';
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "svg"]);
+  // Bounds one snapshot's payload. The server caps on_screen_text anyway; this keeps the
+  // message itself small on a text-heavy page.
+  const MAX_RUNS_PER_SNAPSHOT = 120;
+
+  let sentText = new Set();
+
+  function shortSelector(el) {
+    if (!el || el.nodeType !== 1) return "";
+    let sel = el.tagName.toLowerCase();
+    if (el.id) return sel + "#" + el.id;
+    if (el.classList && el.classList.length) sel += "." + el.classList[0];
+    return sel;
+  }
+
+  /** Every text run currently visible in the viewport, with the element that owns it. */
+  function visibleTextRuns() {
+    const runs = [];
+    if (!document.body) return runs;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const text = node.nodeValue && node.nodeValue.trim();
+        if (!text || text.length < 2) return NodeFilter.FILTER_REJECT;
+        const el = node.parentElement;
+        if (!el || SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let node;
+    while ((node = walker.nextNode()) && runs.length < MAX_RUNS_PER_SNAPSHOT) {
+      const el = node.parentElement;
+      // offsetParent is null for display:none (and fixed elements, which we then rect-check).
+      if (!el.offsetParent && getComputedStyle(el).position !== "fixed") continue;
+      let r;
+      try {
+        r = el.getBoundingClientRect();
+      } catch (e) {
+        continue;
+      }
+      // On screen right now — text scrolled far out of view is not "on screen text".
+      if (!r || r.width === 0 || r.height === 0) continue;
+      if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
+      // Masked content is skipped HERE, in the tab, not flagged for the server to drop later.
+      // Sending it with sensitive:true still puts the secret on the wire and in the stored trace;
+      // only the derived index would have been clean. Masking at capture means never leaving.
+      if (el.closest && el.closest(MASK_SELECTOR)) continue;
+      runs.push({
+        selector: shortSelector(el),
+        role: el.getAttribute && el.getAttribute("role") ? el.getAttribute("role") : null,
+        text: node.nodeValue.trim().replace(/\s+/g, " ").slice(0, 300),
+      });
+    }
+    return runs;
+  }
+
+  /**
+   * Emit text that is on screen and hasn't been sent yet.
+   *
+   * Diffed rather than resent: a static page would otherwise ship its entire body on every tick,
+   * and the index would carry the same paragraph a hundred times. The dedup key is
+   * selector + text, so the *same* words reappearing somewhere else still register.
+   */
+  function snapshotText() {
+    if (!armed) return;
+    const t = now();
+    let sent = 0;
+    for (const run of visibleTextRuns()) {
+      const key = run.selector + "|" + run.text;
+      if (sentText.has(key)) continue;
+      sentText.add(key);
+      send({ type: "a11y_text", t_ms: t, selector: run.selector, role: run.role, text: run.text, sensitive: false });
+      sent++;
+    }
+    // A single-page app that swaps its whole body would otherwise grow this set without bound.
+    if (sentText.size > 4000) sentText = new Set();
+    return sent;
+  }
+
+  // Cadence matches the recorder's 5 s upload chunk, so each chunk of video lands with the text
+  // that was on screen while it was recorded — which is what makes the index fill in *during*
+  // the recording rather than at the end.
+  let textTimer = null;
+
   // arm / disarm from the background worker
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg || !msg.cmd) return;
@@ -200,8 +299,16 @@
       // seed with where we are + a coarse DOM snapshot
       send({ type: "navigate", t_ms: now(), url: location.href, nav_kind: "load", title: document.title });
       send({ type: "dom_snapshot", t_ms: now(), url: location.href, node_count: document.getElementsByTagName("*").length, text: (document.body ? document.body.innerText : "").slice(0, 4000) });
+      sentText = new Set();
+      snapshotText();
+      if (textTimer) clearInterval(textTimer);
+      textTimer = setInterval(snapshotText, 5000);
     } else if (msg.cmd === "disarm") {
+      // One last pass before going quiet, so the tail of the recording isn't missing its text.
+      snapshotText();
       armed = false;
+      if (textTimer) clearInterval(textTimer);
+      textTimer = null;
     }
   });
 })();

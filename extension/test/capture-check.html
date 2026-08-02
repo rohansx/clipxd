@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>clipxd — DOM text capture check</title>
+<style>
+  body { font: 14px system-ui; padding: 20px; }
+  .hidden { display: none; }
+  .offscreen { position: absolute; top: 3000px; }
+  #out { white-space: pre-wrap; background: #111; color: #0f0; padding: 12px; margin-top: 16px; }
+</style>
+<body>
+  <div id="out"></div>
+  <h1 id="title">Hetzner S3 credentials</h1>
+  <p class="intro">Generate a new access key for the bucket.</p>
+  <button class="btn primary" id="gen">Generate credentials</button>
+  <input type="password" value="hunter2-should-never-be-captured">
+  <div class="ph-no-capture">SECRET-MARKED-BLOCK-should-never-be-captured</div>
+  <div class="hidden">HIDDEN-should-never-be-captured</div>
+  <div class="offscreen">OFFSCREEN-should-never-be-captured</div>
+  <script>
+    // The file under test is the REAL extension content script; the shim below only replaces
+    // chrome.runtime (absent outside an extension) and exposes an arm() hook. Build it with:
+    //   node extension/test/build-harness.mjs
+    // then open this file in a browser. Expect four PASS lines and DONE.
+  </script>
+  <script src="./content-under-test.js"></script>
+  <script>
+    // Drive the code under test without a real extension: stub chrome.runtime and collect sends.
+    const captured = [];
+    window.__collect = (evt) => captured.push(evt);
+    setTimeout(() => {
+      window.__arm();
+      const texts = captured.filter(e => e.type === 'a11y_text');
+      const say = (s) => document.getElementById('out').textContent += s + "\n";
+      say('a11y_text events: ' + texts.length);
+      const all = texts.map(t => t.text).join(' | ');
+      say('captured: ' + all.slice(0, 300));
+      const leaked = ['hunter2', 'SECRET-MARKED-BLOCK', 'HIDDEN-', 'OFFSCREEN-']
+        .filter(bad => all.includes(bad));
+      say(texts.some(t => t.text.includes('Generate credentials')) ? 'PASS: button text captured' : 'FAIL: button text missing');
+      say(texts.some(t => t.text.includes('Hetzner S3 credentials')) ? 'PASS: heading captured' : 'FAIL: heading missing');
+      say(leaked.length === 0 ? 'PASS: nothing masked/hidden/offscreen leaked' : 'FAIL: leaked ' + leaked.join(','));
+      // clicks
+      document.getElementById('gen').click();
+      const click = captured.filter(e => e.type === 'click').pop();
+      say('click role=' + (click && click.role) + ' label=' + JSON.stringify(click && click.label));
+      say('click chain=' + (click && click.chain));
+      say('click rect=' + JSON.stringify(click && click.rect));
+      say((click && click.role === 'button' && click.label === 'Generate credentials') ? 'PASS: click is a sentence' : 'FAIL: click semantics missing');
+      say('DONE');
+    }, 400);
+  </script>
+</body>
