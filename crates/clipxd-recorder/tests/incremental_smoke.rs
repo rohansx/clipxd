@@ -75,7 +75,7 @@ fn incremental_matches_batch_on_delta_and_moment_coverage() {
     // --- batch path: enrich_clip on the same final video, from scratch ---
     let batch_dir = tmp.join("clip_batch");
     std::fs::create_dir_all(&batch_dir).unwrap();
-    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch", "Screen recording", &EventTrack::default(), 4.0, None).expect("batch enrich should succeed");
+    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch", "Screen recording", &EventTrack::default(), 4.0, None, false).expect("batch enrich should succeed");
 
     eprintln!("=== incremental moments ===");
     for m in &incremental_index.visual_timeline {
@@ -163,7 +163,7 @@ fn incremental_matches_batch_with_real_deltas_and_uneven_chunk_boundaries() {
 
     let batch_dir = tmp.join("clip_batch");
     std::fs::create_dir_all(&batch_dir).unwrap();
-    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch2", "Screen recording", &EventTrack::default(), 4.0, None).expect("batch enrich should succeed");
+    let batch_index = enrich_clip(&full, &batch_dir, "clp_test_batch2", "Screen recording", &EventTrack::default(), 4.0, None, false).expect("batch enrich should succeed");
 
     eprintln!("=== incremental (uneven chunks) ===");
     for m in &incremental_index.visual_timeline {

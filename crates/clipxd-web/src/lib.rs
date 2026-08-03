@@ -1613,6 +1613,18 @@ fn owner_caption_source(auth: &Option<AuthState>, id: &str) -> Option<veyo_enric
 }
 
 fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard, browser_trace: Option<String>) {
+    // Decide up front whether this clip's text is already supplied. Judged on the trace's
+    // *contents*, not its presence: an older extension build sends clicks and console lines but
+    // no DOM text, and skipping OCR for one of those would leave the clip with no on-screen text
+    // at all. The threshold is deliberately low — a handful of runs means the capture side is
+    // alive and shipping text, and a page with genuinely little text has little for OCR to find
+    // either.
+    const DOM_TEXT_ENOUGH: usize = 5;
+    let dom_runs = browser_trace.as_deref().map(clipxd_browser::dom_text_run_count).unwrap_or(0);
+    let skip_ocr = dom_runs >= DOM_TEXT_ENOUGH;
+    if skip_ocr {
+        eprintln!("phase2 {id}: {dom_runs} DOM text runs supplied by the capture client — skipping OCR");
+    }
     let storage_arc = s.storage.clone();
     let permits = s.phase2_permits.clone();
     let auth = s.auth.clone();
@@ -1637,7 +1649,7 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
         let enrich_failed = tokio::task::spawn_blocking(move || {
             let result = match incremental {
                 Some(indexer) => indexer.finalize(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default()).map(|_| ()),
-                None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0, caption_source).map(|_| ()),
+                None => clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, "Screen recording", &EventTrack::default(), 4.0, caption_source, skip_ocr).map(|_| ()),
             };
             match result {
                 Ok(()) => false,
@@ -2305,7 +2317,10 @@ async fn clip_re_enrich(State(s): State<AppState>, Path(id): Path<String>, heade
     // Same BYOK resolution as spawn_phase2 — resolved here because `s` doesn't cross the spawn.
     let (nvidia_key, gemini_key) = owner_llm_keys(&s.auth, &id);
     tokio::spawn(async move {
-        match clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0, caption_source) {
+        // Manual re-enrich: rebuild everything from the video, OCR included. The original DOM
+        // text (if any) was merged from a trace we no longer hold, so re-deriving text from the
+        // frames is the only source available here.
+        match clipxd_recorder::enrich_clip(&video, &bg_dir, &bg_id, &title, &events, 4.0, caption_source, false) {
             Err(e) => {
                 eprintln!("background re-enrich failed for {bg_id}: {e:#}");
                 if let Ok(s) = std::fs::read_to_string(bg_dir.join("index.json")) {

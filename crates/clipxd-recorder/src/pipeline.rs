@@ -33,7 +33,8 @@ pub fn record_from_video(video: &Path, events: &EventTrack, out_dir: &Path, samp
     let _ = std::fs::copy(video, clip_dir.join("video.mp4"));
     // No per-owner BYOK context here (CLI has no concept of a clip owner) — the server's
     // env-driven caption cascade applies unchanged.
-    let index = enrich_clip(video, &clip_dir, &id, &title, events, sample_fps, None)?;
+    // CLI path: a file on disk carries no DOM text, so OCR is the only text source there is.
+    let index = enrich_clip(video, &clip_dir, &id, &title, events, sample_fps, None, false)?;
     let zoom_keyframes = std::fs::read_to_string(clip_dir.join("zoom.json"))
         .ok()
         .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok())
@@ -134,6 +135,10 @@ pub fn promote_recording_stub(clip_dir: &Path, video: &Path, id: &str, title: &s
 /// when `Some`, overrides which captioner backs this one clip (BYOK Moondream key or a
 /// `caption_mode: local` clip owner) — see [`veyo_enrich::CaptionSource`]; `None` reproduces the
 /// server's usual env-driven cascade.
+///
+/// `skip_ocr` drops the OCR stage for a source that already supplies its own text — a browser
+/// recording ships the page's DOM text verbatim, with rects. Running OCR over those frames
+/// re-derives worse text at a measured ~3.4 GB floor and minutes per clip.
 pub fn enrich_clip(
     video: &Path,
     clip_dir: &Path,
@@ -142,6 +147,7 @@ pub fn enrich_clip(
     events: &EventTrack,
     sample_fps: f32,
     caption_source: Option<CaptionSource>,
+    skip_ocr: bool,
 ) -> Result<Index> {
     ensure!(video.exists(), "no such video: {}", video.display());
     let info = media::probe(video)?;
@@ -168,7 +174,10 @@ pub fn enrich_clip(
         let tx_handle = scope.spawn(|| audio.as_deref().map(crate::transcribe::transcribe).unwrap_or_default());
         let visual = (|| -> Result<(gate::GateOutput, veyo_enrich::Enrichment)> {
             let gated = gate::run_gate(&frames, (info.width.max(1), info.height.max(1)), title, CodecConfig::default())?;
-            let enricher = Enricher::with_caption_source(caption_source);
+            let enricher = {
+                let e = Enricher::with_caption_source(caption_source);
+                if skip_ocr { e.without_ocr() } else { e }
+            };
             let (tb, ob, cb) = enricher.backends();
             eprintln!("enrich backends: transcriber={tb} ocr={ob} caption={cb}");
             let enrichment = enricher.enrich(&EnrichInput {

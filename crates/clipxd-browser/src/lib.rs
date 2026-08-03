@@ -186,3 +186,64 @@ mod tests {
         assert!(idx.on_screen_text.len() <= 300, "snapshot not bounded: {}", idx.on_screen_text.len());
     }
 }
+
+/// How many DOM-verbatim text runs a trace carries.
+///
+/// The gate for skipping OCR. Presence of a *trace* is not enough: a tab recorded by an older
+/// extension build sends clicks and console lines but no `a11y_text`, and skipping OCR for one of
+/// those would leave the clip with no on-screen text at all. So the decision is made on content,
+/// not on whether the extension spoke to us.
+///
+/// Sensitive runs are excluded here for the same reason `push_on_screen_text` drops them: they
+/// never become index text, so they cannot justify skipping the pass that would.
+pub fn dom_text_run_count(trace_json: &str) -> usize {
+    let Ok(trace) = serde_json::from_str::<trace::BrowserTrace>(trace_json) else { return 0 };
+    trace
+        .events
+        .iter()
+        .filter(|e| matches!(e, trace::TraceEvent::A11yText { sensitive: false, .. }))
+        .count()
+}
+
+#[cfg(test)]
+mod dom_text_gate_tests {
+    use super::dom_text_run_count;
+
+    fn trace(events: &str) -> String {
+        format!(
+            r#"{{"clipxd_trace_version":"1","session_id":"s","captured_by":"test","started_at_ms":0,
+               "viewport":{{"w":1280,"h":800}},"url":"https://x.test","events":[{events}]}}"#
+        )
+    }
+
+    #[test]
+    fn only_real_dom_text_licenses_skipping_ocr() {
+        // An older extension build: rich trace, no DOM text. Skipping OCR here would leave the
+        // clip with no on-screen text at all, so the count must be zero.
+        let legacy = trace(
+            r#"{"type":"click","t_ms":10,"target":"button","label":"Go"},
+               {"type":"console","t_ms":20,"level":"error","text":"boom"}"#,
+        );
+        assert_eq!(dom_text_run_count(&legacy), 0);
+
+        // The current client, shipping the page's own text.
+        let modern = trace(
+            r#"{"type":"a11y_text","t_ms":10,"selector":"h1","text":"Hetzner S3 credentials"},
+               {"type":"a11y_text","t_ms":10,"selector":"button","text":"Generate credentials"},
+               {"type":"click","t_ms":30,"target":"button","label":"Generate credentials"}"#,
+        );
+        assert_eq!(dom_text_run_count(&modern), 2);
+
+        // Masked runs never become index text, so they cannot justify skipping the pass that
+        // would have produced some.
+        let masked = trace(
+            r#"{"type":"a11y_text","t_ms":10,"selector":"div","text":"redacted","sensitive":true},
+               {"type":"a11y_text","t_ms":11,"selector":"h1","text":"Title"}"#,
+        );
+        assert_eq!(dom_text_run_count(&masked), 1);
+
+        // Garbage in, no false confidence out.
+        assert_eq!(dom_text_run_count("not json"), 0);
+        assert_eq!(dom_text_run_count(""), 0);
+    }
+}
