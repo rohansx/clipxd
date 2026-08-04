@@ -253,6 +253,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
             .route("/clip/:id/claim", post(clip_claim))
             .route("/clip/:id/re-enrich", post(clip_re_enrich))
             .route("/clip/:id/local-captions", post(post_local_captions))
+            .route("/clip/:id/local-text", post(post_local_text))
             .route("/clip/:id/subtitle-style", post(set_subtitle_style))
             .route("/ingest", post(ingest))
             .route("/ingest/stage", post(ingest_stage_create))
@@ -1612,6 +1613,27 @@ fn owner_caption_source(auth: &Option<AuthState>, id: &str) -> Option<veyo_enric
     None
 }
 
+/// Whether this deployment runs OCR on the server.
+///
+/// OCR is the only heavy local inference left in the pipeline — captions, titles, chapters and
+/// Ask are all remote API calls costing no RAM, while PP-OCRv6 through ONNX Runtime peaks around
+/// 1.4 GB. On a shared host that is the single largest reason clipxd needs a big box, and it buys
+/// text that the *client* can often supply for free: a browser recording already ships the page's
+/// DOM text, and a screen recording can run OCR in the tab.
+///
+/// `CLIPXD_OCR_MODE`:
+///   - `server` (default) — run it here, as before.
+///   - `off` / `client`  — never run it here. Text comes from whatever the capture client sent.
+///
+/// The default stays `server` so no existing deployment silently loses its on-screen text; a host
+/// that wants the RAM back opts out explicitly.
+fn server_ocr_enabled() -> bool {
+    match std::env::var("CLIPXD_OCR_MODE").ok().as_deref().map(str::trim) {
+        Some("off") | Some("client") | Some("none") => false,
+        _ => true,
+    }
+}
+
 fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, incremental: Option<IncrementalIndexer>, claim: ClaimGuard, browser_trace: Option<String>) {
     // Decide up front whether this clip's text is already supplied. Judged on the trace's
     // *contents*, not its presence: an older extension build sends clicks and console lines but
@@ -1621,9 +1643,14 @@ fn spawn_phase2(s: &AppState, id: String, clip_dir: PathBuf, video: PathBuf, inc
     // either.
     const DOM_TEXT_ENOUGH: usize = 5;
     let dom_runs = browser_trace.as_deref().map(clipxd_browser::dom_text_run_count).unwrap_or(0);
-    let skip_ocr = dom_runs >= DOM_TEXT_ENOUGH;
+    let skip_ocr = dom_runs >= DOM_TEXT_ENOUGH || !server_ocr_enabled();
     if skip_ocr {
-        eprintln!("phase2 {id}: {dom_runs} DOM text runs supplied by the capture client — skipping OCR");
+        let why = if dom_runs >= DOM_TEXT_ENOUGH {
+            format!("{dom_runs} DOM text runs supplied by the capture client")
+        } else {
+            "CLIPXD_OCR_MODE is not `server`".to_string()
+        };
+        eprintln!("phase2 {id}: skipping OCR — {why}");
     }
     let storage_arc = s.storage.clone();
     let permits = s.phase2_permits.clone();
@@ -2458,6 +2485,83 @@ async fn post_local_captions(
     write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
 
     Ok(Json(serde_json::json!({ "ok": true, "added": added, "visual_timeline": index.visual_timeline.len() })))
+}
+
+/// One client-extracted text run.
+#[derive(Deserialize)]
+struct LocalTextIn {
+    /// Seconds into the clip.
+    t: f64,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct LocalTextBody {
+    text: Vec<LocalTextIn>,
+}
+
+/// `POST /clip/:id/local-text` — accept on-screen text the *client* extracted, and graft it into
+/// `on_screen_text`.
+///
+/// The counterpart to `CLIPXD_OCR_MODE=client`. Server-side OCR is the only heavy local inference
+/// left in the pipeline — captions, titles and Ask are all remote API calls costing no RAM, while
+/// PP-OCRv6 through ONNX Runtime peaks around 1.4 GB — so a deployment that would rather not pay
+/// that can have the recording tab do the work (WebGPU in the browser, the same shape as the
+/// existing local-captions path) and post the result here.
+///
+/// Marked `TextKind::Ocr` because that is what it is: text recovered from pixels, however it was
+/// recovered. Browser-extension recordings use the DOM path instead, which is exact and needs no
+/// model at all.
+async fn post_local_text(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<LocalTextBody>,
+) -> Result<Json<serde_json::Value>, WebErr> {
+    if !safe(&id) {
+        return Err((StatusCode::BAD_REQUEST, "bad id".into()));
+    }
+    require_clip_access(&s, &headers, &id)?;
+    if body.text.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "no text supplied".into()));
+    }
+    if body.text.len() > 2000 {
+        return Err((StatusCode::BAD_REQUEST, "too many runs (2000 max per call)".into()));
+    }
+
+    let mut index = load_index(&s, &id).await?;
+    let mut added = 0usize;
+    for run in &body.text {
+        if !run.t.is_finite() {
+            return Err((StatusCode::BAD_REQUEST, "'t' must be a finite number".into()));
+        }
+        let text = run.text.trim();
+        if text.is_empty() {
+            continue; // skip blanks rather than fail the batch
+        }
+        let t = run.t.max(0.0);
+        index.on_screen_text.push(clipxd_index::OnScreenText {
+            start: t,
+            end: t,
+            text: text.chars().take(300).collect(),
+            source: clipxd_index::TextKind::Ocr,
+            bbox: None,
+        });
+        added += 1;
+    }
+    if added == 0 {
+        return Err((StatusCode::BAD_REQUEST, "no non-empty text supplied".into()));
+    }
+
+    // clean_index dedups the stream and drops OCR confetti, so a client posting the same visible
+    // text every second doesn't inflate the index — the same guarantee the server-side path gets.
+    clipxd_index::clean_index(&mut index);
+    let dir = s.clips_dir.join(&id);
+    let index_json = serde_json::to_string_pretty(&index).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::write(dir.join("index.json"), &index_json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    write_object_best_effort(&s, &format!("{id}/index.json"), index_json.into_bytes(), "application/json").await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "added": added, "on_screen_text": index.on_screen_text.len() })))
 }
 
 /// Body of a `POST /clip/:id/subtitle-style` — the user's caption design choice. All fields
