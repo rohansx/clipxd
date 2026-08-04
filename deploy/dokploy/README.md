@@ -59,11 +59,19 @@ clip: **1.71 GB with server OCR, 0.35 GB without.**
   recording tab extracted itself. **A plain screen recording made without the extension gets no
   on-screen text in this mode** until the WebGPU extractor ships.
 
-### `CLIPXD_STORAGE` and the local-only option
+### Object storage: deliberately none
 
-Leaving it unset is a legitimate choice, not a degraded one. Every "disk says X but HTTP says Y"
-bug in this project came from the S3-first read path racing local writes. Local-only removes that
-class entirely — at the cost of no offsite copy, so back up the volume.
+`CLIPXD_STORAGE` is unset in this deployment, so clips live on the data volume and nowhere else.
+
+Two reasons, in order of weight. Hetzner Object Storage was billing roughly $1/month to hold under
+a gigabyte, which is poor value for a bucket that only ever mirrors what is already on disk. And
+every "the disk says X but HTTP says Y" bug this project has hit came from the S3-first read path
+racing local writes — a stopped recording still reporting "recording", a 0:00 duration beside a
+player showing 1:57. Removing the mirror removes that whole class.
+
+The cost is that there is no offsite copy: **back up the `clipxd-data` volume**. If an offsite
+copy becomes worth it, R2's free tier covers this size at no charge and needs only
+`CLIPXD_STORAGE` plus credentials — the code path still exists and is unchanged.
 
 ## State
 
@@ -72,11 +80,23 @@ only thing not reconstructible from the images. **Back up the volume, not the co
 
 ## Migrating from the VM
 
+Clip IDs are the product — share links must survive — so this is a file copy, not a re-import.
+Re-ingesting the videos would mint new ids and lose ownership, comments and view counts.
+
+Run from the Dokploy host (Dokploy exposes no exec or upload API, so this needs shell access
+there):
+
 ```sh
-# clips + auth DB (908 MB at time of writing)
-rsync -avz clipxd@<vm>:/var/lib/clipxd/clips/ ./clips/
-docker cp ./clips/. <web-container>:/data/clips/
+# 1. pull the clips + SQLite auth DB off the VM (908 MB at time of writing)
+rsync -avz --progress clipxd@<vm-ip>:/var/lib/clipxd/clips/ /tmp/clipxd-clips/
+
+# 2. copy into the running container's volume
+docker cp /tmp/clipxd-clips/. \
+  "$(docker ps --filter name=clipxd-stack.*web --format '{{.Names}}' | head -1)":/data/clips/
+
+# 3. the container runs as root, but make ownership explicit anyway
+docker exec "$(docker ps --filter name=clipxd-stack.*web --format '{{.Names}}' | head -1)" \
+  sh -c 'ls /data/clips | wc -l'   # expect ~26 clip directories + clipxd.db
 ```
 
-Then cut DNS over. Keep the VM running until the new deployment has served real traffic — the
-share URLs are the product, and a link that 404s during a cutover is worse than a slow one.
+Then cut DNS over, and keep the VM running until the new deployment has served real traffic.
