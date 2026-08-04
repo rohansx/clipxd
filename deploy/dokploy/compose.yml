@@ -1,0 +1,71 @@
+# clipxd on Dokploy.
+#
+# Two services rather than one: `edge` is Caddy plus the built SPA (routing, cache headers, the
+# CSP), `web` is the Rust service. Traefik terminates TLS in front of `edge` — set the domain on
+# the edge service in Dokploy and point it at port 80.
+#
+# Images are built in CI (.github/workflows/images.yml) rather than by Dokploy, because the Rust
+# workspace path-depends on the sibling veyo repo: a build context of this repo alone cannot
+# resolve it. CI checks out both, builds, and pushes here.
+
+services:
+  web:
+    image: ghcr.io/rohansx/clipxd-web:${CLIPXD_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      # --- identity / auth -------------------------------------------------------------------
+      CLIPXD_AUTH: "1"
+      CLIPXD_JWT_SECRET: ${CLIPXD_JWT_SECRET:?set a stable secret — a per-boot value logs everyone out on restart}
+      CLIPXD_PUBLIC_BASE: ${CLIPXD_PUBLIC_BASE:-https://clipxd.com}
+
+      # --- object storage --------------------------------------------------------------------
+      # R2. Leave CLIPXD_STORAGE unset to run entirely off the data volume instead — the code
+      # falls back to local storage, and every "disk says X, HTTP says Y" bug this project has
+      # hit came from the S3-first read path, so local-only is a legitimate simplification.
+      CLIPXD_STORAGE: ${CLIPXD_STORAGE:-}
+      AWS_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+
+      # --- inference -------------------------------------------------------------------------
+      # `off` keeps the ~1.4 GB PP-OCRv6 model out of this container; on-screen text then comes
+      # from the capture client (DOM text from the extension, or the WebGPU extractor). `server`
+      # restores the old behaviour. Everything else — captions, titles, chapters, Ask — is a
+      # remote API call and costs no memory here either way.
+      CLIPXD_OCR_MODE: ${CLIPXD_OCR_MODE:-server}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MOONDREAM_API_KEY: ${MOONDREAM_API_KEY:-}
+      CLIPXD_CAPTION_URL: ${CLIPXD_CAPTION_URL:-}
+      CLIPXD_NVIDIA_MODELS: ${CLIPXD_NVIDIA_MODELS:-meta/llama-3.3-70b-instruct,nvidia/llama-3.3-nemotron-super-49b-v1.5}
+    volumes:
+      - clipxd-data:/data
+    # Enrichment is the only thing here that is ever memory-hungry: ~0.35 GB without server OCR,
+    # ~1.7 GB with it. The cap is what keeps a bad clip from taking the host down — on the old
+    # VM an OOM killed the whole service and stranded every in-flight clip nine times over.
+    deploy:
+      resources:
+        limits:
+          memory: ${CLIPXD_WEB_MEMORY:-2G}
+    healthcheck:
+      # /clips requires auth, so it answers 401 rather than 200 — which still proves the router
+      # is up. Any HTTP response at all is the signal; a connection refusal is not.
+      test: ["CMD-SHELL", "ffprobe -version >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  edge:
+    image: ghcr.io/rohansx/clipxd-edge:${CLIPXD_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - web
+    # Dokploy attaches the domain and TLS to this service; it listens plain :80 behind Traefik.
+    expose:
+      - "80"
+
+volumes:
+  # Clips, the SQLite auth DB, and the OCR model cache. The only state that is not
+  # reconstructible from the images — back this up, not the containers.
+  clipxd-data:

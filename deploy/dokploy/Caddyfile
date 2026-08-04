@@ -1,0 +1,123 @@
+# clipxd reverse proxy + static SPA, with automatic HTTPS (Let's Encrypt).
+# {$CLIPXD_DOMAIN} is supplied via Caddy's environment (set in deploy.sh / systemd).
+#
+# Routing: the backend owns the clip/api/auth surface; everything else is the React SPA.
+#   /clip/*  → public share pages + per-clip JSON/video/query  (backend)
+#   /clips, /ingest*, /import, /net, /auth/*, /settings/keys    (backend, auth-gated)
+#   /  and  /assets/*                                            (static SPA)
+#
+# /ingest* (not just /ingest) is required: the streaming stage-upload endpoints live at
+# /ingest/stage, /ingest/stage/:session, and /ingest/stage/:session/commit — an exact-path
+# matcher would let all three fall through to the static file_server, which 405s on
+# POST/PUT instead of reaching the backend.
+#
+# /settings/keys is listed as an EXACT path, not /settings* — the bare /settings route is
+# the SPA's own client-side page and must keep falling through to the static handler (which
+# serves index.html so React Router can take over); only its /settings/keys BYOK API call
+# belongs to the backend.
+
+# Traefik terminates TLS in front of this container, so no cert management happens here.
+# Everything below — routing, headers, the CSP — is what Caddy was always really doing on the VM
+# and lifts over unchanged; translating it into Traefik middleware is exactly where subtle
+# breakage lives (we already shipped one bug from a routing rule that looked fine).
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+
+	encode zstd gzip
+
+	# Security headers — applied to every response so a stray 404 from
+	# the file_server can't leak with no headers at all.
+	header {
+		# HSTS deliberately omitted: Traefik terminates TLS and owns that header. Setting it
+		# here too would be harmless but misleading about which layer enforces it.
+		# Cross-origin isolation — required for SharedArrayBuffer if we
+		# ever turn it on, otherwise a free defensive win.
+		Cross-Origin-Opener-Policy "same-origin"
+		# No embedding — clipxd is an app, not a frame target.
+		X-Frame-Options "DENY"
+		# Sensible referrer policy.
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Powerful features: denied everywhere EXCEPT our own origin for the three the
+		# recorder is built on. An empty allowlist — `microphone=()` — does not mean "ask the
+		# user", it means "this feature is off for everyone including us", so getUserMedia was
+		# rejected instantly and the permission prompt never appeared. Every screen recording
+		# made while this was set is silent, with an empty transcript, and the camera bubble
+		# could never have worked either. `self` restores the normal browser prompt while still
+		# denying every embedded third-party frame.
+		Permissions-Policy "geolocation=(), microphone=(self), camera=(self), display-capture=(self), interest-cohort=()"
+		# Block MIME sniffing.
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Backend surface
+	# /fonts/* is served by the Rust binary (the woff2 files are compiled into it) because the
+	# share page is server-rendered by the backend and must reference fonts that exist wherever
+	# it runs — including a self-hosted box with no Caddy. Without this path here, the static
+	# file_server below answered /fonts/*.woff2 with the SPA's index.html, so the share page
+	# asked for a font and got HTML: no error anywhere, just silently unstyled type.
+	@backend path /clip/* /clips /ingest* /import /net /auth/* /u/* /settings/keys /fonts/*
+	handle @backend {
+		reverse_proxy web:8787
+	}
+
+	# Static single-page app (Vite build output)
+	@assets path /assets/*
+	handle @assets {
+		root * /srv
+		# Vite hashes asset filenames, so a 1-year immutable cache is safe
+		# (a content change = new hash = new URL).
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	@staticfile path /favicon.svg /favicon.*.png /og-image.svg /og-image.* /robots.txt /sitemap.xml /manifest.json
+	handle @staticfile {
+		root * /srv
+		# Same as assets but shorter — these are referenced by name from
+		# crawlers and may be edited in place.
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		# Don't let the SPA HTML get cached aggressively — clients expect
+		# new deploys to show up on refresh.
+		header Cache-Control "public, max-age=0, must-revalidate"
+
+		# Content-Security-Policy — scoped to the SPA document ONLY (this catch-all
+		# serves index.html for every client route). It is deliberately NOT in the
+		# global header block above, because the server-rendered share pages under
+		# @backend (/clip/*, /u/*) rely on inline <script> blocks a strict script-src
+		# would kill; those keep their existing headers untouched.
+		#
+		# Allowlist verified against the live site with a headless browser (only
+		# origins the SPA actually loads): self and the self-hosted Umami analytics.
+		# Fonts are no longer fetched from Google — they're served from /fonts/* by the
+		# backend — so font-src/style-src are now plain 'self', and the font-swap onload
+		# handler (hash MhtPZ…) is gone with the <link> that carried it.
+		# script-src carries NO 'unsafe-inline'; the one remaining inline handler is
+		# allowed by exact hash via 'unsafe-hashes':
+		#   NpaJc… = this.rel='stylesheet';this.onload=null  (CSS preload onload, generated
+		#            by the cssPreload plugin in app/vite.config.ts — if that string ever
+		#            changes, this hash MUST change with it or the site ships UNSTYLED:
+		#            the <noscript> stylesheet fallback is inert for JS users, so the
+		#            blocked onload silently strands the CSS as a preload. This exact
+		#            failure shipped on 2026-07-16 and was caught by screenshot QA.)
+		# require-trusted-types-for was validated to boot the full React + framer-motion
+		# + react-helmet stack with zero violations (and the app + those deps contain no
+		# innerHTML/dangerouslySetInnerHTML sinks).
+		header Content-Security-Policy "default-src 'self'; script-src 'self' https://analytics.rohan.sh 'unsafe-hashes' 'sha256-NpaJcuv2ARPjhXEqngifINSNwqzoF4Q9/8I+QhIlt9Q='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://analytics.rohan.sh; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; require-trusted-types-for 'script'; upgrade-insecure-requests"
+		file_server
+	}
+
+	# Large uploads (screen recordings) go through /ingest
+	request_body {
+		max_size 512MB
+	}
+}

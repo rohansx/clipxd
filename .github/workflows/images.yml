@@ -1,0 +1,82 @@
+# Build the container images and push them to GHCR.
+#
+# CI builds them rather than Dokploy because the Rust workspace path-depends on the sibling veyo
+# repo (veyo-core / veyo-enrich). A build context of this repo alone cannot resolve those, so the
+# job checks out both side by side and builds with the parent directory as context — the layout
+# the Dockerfile documents.
+name: images
+
+on:
+  push:
+    branches: [master]
+    paths:
+      # Only rebuild when something that lands in an image changes. Docs and the audit notes
+      # don't need a 10-minute Rust build.
+      - "crates/**"
+      - "app/**"
+      - "extension/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
+      - "deploy/dokploy/**"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out clipxd
+        uses: actions/checkout@v4
+        with:
+          path: clipxd
+
+      # Public repo, so no token needed. If veyo ever goes private this needs a PAT with
+      # read access — the default GITHUB_TOKEN is scoped to this repository only.
+      - name: Check out veyo (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: rohansx/veyo
+          path: veyo
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push clipxd-web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: clipxd/Dockerfile
+          target: web
+          push: true
+          tags: |
+            ghcr.io/rohansx/clipxd-web:latest
+            ghcr.io/rohansx/clipxd-web:${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Build and push clipxd-edge
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: clipxd/Dockerfile
+          target: edge
+          push: true
+          tags: |
+            ghcr.io/rohansx/clipxd-edge:latest
+            ghcr.io/rohansx/clipxd-edge:${{ github.sha }}
+          cache-from: type=gha,scope=edge
+          cache-to: type=gha,scope=edge,mode=max
