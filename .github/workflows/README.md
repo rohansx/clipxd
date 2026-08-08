@@ -1,6 +1,7 @@
 # CI / CD — clipxd
 
-Both workflows live under `.github/workflows/`.
+The workflows live under `.github/workflows/`: `ci.yml`, `render-check.yml`, `deploy.yml`,
+`images.yml`.
 
 ## `ci.yml` — runs on every PR + direct push (master, design/**)
 
@@ -8,10 +9,27 @@ Two parallel jobs, both required:
 
 | Job       | What it checks                                                   | Time   |
 | --------- | ---------------------------------------------------------------- | ------ |
-| `web`     | `tsc --noEmit` + `vite build`, plus a smoke check that the SEO assets actually ship (og-image.svg, JSON-LD, manifest, etc.) | ~1 min |
-| `rust`    | `cargo check --workspace --all-targets` (no link, no build — just the types) | ~3 min |
+| `web`     | `tsc --noEmit` + `vite build`, the two runnable editor checks (below), plus a smoke check that the SEO assets actually ship (og-image.svg, JSON-LD, manifest, etc.) | ~1 min |
+| `rust`    | `cargo check --workspace --all-targets` (no link, no build — just the types) + `cargo test --workspace` | ~5 min |
+
+The `web` job runs two checks a type-checker cannot do:
+
+- `node app/src/regions.check.ts` — the editor's `cropRect()` against `crop_rect()` in
+  `crates/clipxd-cinematic`. Needs Node ≥ 22.18 (type stripping), hence `node-version: 22`.
+- `app/src/RegionTrack.select.check.tsx` — bundled with esbuild and clicked in headless Chrome
+  (`/usr/bin/google-chrome`, preinstalled on the runner). It mounts the **real** component; its
+  predecessor re-implemented the click handler inline and so could not fail on the bug it
+  documented.
 
 Concurrency-cancelled on the same ref, so a `git push` + `git push --force` doesn't double up.
+
+## `render-check.yml` — path-gated, NOT on every push
+
+`tools/render-audio-check.sh`: ~20 real renders, asserting the beeps still land on the flashes
+(audio sync), that speed ramps are the rate asked for, and that scratch dirs are isolated and
+reclaimed. It needs ffmpeg and a debug build of `clipxd` + `clipxd-web`, so it only runs when
+`crates/clipxd-{cli,cinematic,web}/**` or the script itself changes. Because it is path-gated it
+reports no status on PRs that touch nothing relevant — keep `ci` as the required check, not this.
 
 ## `deploy.yml` — runs on every push to **master** + manual `workflow_dispatch`
 

@@ -1,0 +1,72 @@
+name: render check
+
+# tools/render-audio-check.sh is the evidence behind the renderer's audio/speed/scratch fixes:
+# it renders ~20 fixtures and asserts that the beeps still land on the flashes, that -shortest
+# no longer truncates the picture, that a 1.5x ramp is 1.5x, and that scratch dirs are isolated
+# and reclaimed. Nothing in the unit tests reaches the ffmpeg invocation, so this is the only
+# thing that fails when the encode path regresses.
+#
+# It needs ffmpeg plus a DEBUG BUILD of both binaries, i.e. minutes, not seconds — so it is
+# gated on the paths that can break it instead of running on every push. Editing app/** cannot
+# change the encode path and does not trigger it.
+# ponytail: workflow-level `paths:` rather than a changed-files action — the tradeoff is that a
+# PR touching none of these paths reports no status at all, so do not make this a *required*
+# check in branch protection; make the `ci` workflow the required one.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/clipxd-cli/**'
+      - 'crates/clipxd-cinematic/**'
+      - 'crates/clipxd-web/**'
+      - 'tools/render-audio-check.sh'
+      - '.github/workflows/render-check.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'crates/clipxd-cli/**'
+      - 'crates/clipxd-cinematic/**'
+      - 'crates/clipxd-web/**'
+      - 'tools/render-audio-check.sh'
+      - '.github/workflows/render-check.yml'
+
+concurrency:
+  group: render-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: renderer end-to-end (audio sync, speed, scratch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the veyo path-dep repo as a sibling
+        # Same reason as the rust job in ci.yml: cargo loads every workspace member's manifest,
+        # and some of them have path deps on ../veyo.
+        run: git clone --depth 1 https://github.com/rohansx/veyo.git ../veyo
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: target → .
+
+      - name: Install ffmpeg
+        # Not on the ubuntu runner image; the whole check is ffmpeg fixtures and ffprobe probes.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Build the binaries the check drives
+        # Debug, not release: the script defaults to target/debug, and case 15 skips itself
+        # without clipxd-web — a skip that would quietly drop the concurrent-render coverage.
+        run: cargo build -p clipxd-cli -p clipxd-web
+
+      - name: tools/render-audio-check.sh
+        # Exits non-zero if any case fails, which fails the job.
+        run: tools/render-audio-check.sh

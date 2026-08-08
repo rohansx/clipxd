@@ -312,7 +312,7 @@ export function ClipPage({ id, seekTo, showToast }: ClipPageProps) {
           hasVideo={hasVideo}
           videoRef={videoRef}
           developing={developing}
-          manualScale={manual?.scale}
+          manualZoom={manual}
           speedRate={speed?.rate}
           seek={seek}
           regions={regions}

@@ -27,7 +27,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22, not 20: `node src/regions.check.ts` runs the TypeScript check file directly,
+          # which needs Node's built-in type stripping (>= 22.18).
+          node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
@@ -40,6 +42,29 @@ jobs:
         run: |
           npx tsc --noEmit
           npx vite build
+
+      - name: Crop geometry check (app/src/regions.check.ts)
+        working-directory: app
+        # The editor's cropRect() must stay in step with crop_rect() in
+        # crates/clipxd-cinematic/src/render.rs, or the focus overlay previews a crop the render
+        # never delivers. Exits non-zero on mismatch.
+        run: node src/regions.check.ts
+
+      - name: Region selection check (app/src/RegionTrack.select.check.tsx)
+        working-directory: app
+        # Mounts the REAL <RegionTrack> in headless Chrome and clicks it — a click used to select
+        # a region and then immediately deselect it (bubbled click), which no type-checker sees.
+        run: |
+          set -euo pipefail
+          # Both ship on the ubuntu runner image. If neither is there the assignment fails and so
+          # does the step — a missing browser must not read as a passing check.
+          CHROME=${CHROME:-$(command -v google-chrome || command -v chromium)}
+          d=$(mktemp -d)
+          npx esbuild src/RegionTrack.select.check.tsx --bundle --jsx=automatic \
+            --define:process.env.NODE_ENV='"production"' --outfile="$d/sel.js"
+          printf '<!doctype html><body><script src="sel.js"></script>' > "$d/sel.html"
+          "$CHROME" --headless=new --no-sandbox --disable-gpu --dump-dom "file://$d/sel.html" \
+            | tail -1 | tee /dev/stderr | grep -qx '<html>RESULT ok</html>'
 
       - name: Confirm SEO assets ship
         working-directory: app

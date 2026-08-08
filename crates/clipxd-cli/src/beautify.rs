@@ -50,13 +50,16 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         }
         None => auto(),
     };
-    // the editor's .clipxd project: manual zoom regions override the auto-zoom (centered snap)
+    // The editor's .clipxd project: manual zoom regions override the auto-zoom. The focus point
+    // comes from the region too — it used to be hardcoded to the centre, so two renders that
+    // differed only in focus came out byte-identical while the editor's `FocusOverlay` happily
+    // previewed a crop the renderer would never deliver.
     let project = opts.project.as_deref().and_then(load_project).unwrap_or_default();
     for kf in track.iter_mut() {
         if let Some(z) = project.zoom_regions.iter().find(|z| kf.t >= z.start && kf.t <= z.end) {
             kf.scale = z.scale;
-            kf.cx = 0.5;
-            kf.cy = 0.5;
+            kf.cx = z.cx;
+            kf.cy = z.cy;
         }
     }
     let pills = keystroke_pills(&ev.keys, 0.4, 1.2);
@@ -77,9 +80,19 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         opts.bg, opts.mockup, opts.format
     );
 
-    let tmp = std::env::temp_dir().join("clipxd-beautify");
+    // Per-render scratch dir. It used to be a fixed `clipxd-beautify` that was wiped on entry,
+    // so two renders in flight at once (the web service renders per request) deleted each
+    // other's frames mid-export. `Scratch` removes it on the way out, `?`-returns included —
+    // and `sweep_stale_scratch` covers the deaths `Drop` cannot (SIGKILL / OOM-kill).
+    let parent = std::env::temp_dir();
+    sweep_stale_scratch(&parent, SCRATCH_MAX_AGE);
+    let tmp = parent.join(format!(
+        "clipxd-beautify-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _scratch = Scratch(tmp.clone());
     let (fin, fout) = (tmp.join("in"), tmp.join("out"));
-    let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&fin)?;
     std::fs::create_dir_all(&fout)?;
     run(Command::new("ffmpeg").args(["-y", "-i"]).arg(video).args(["-vf", &format!("fps={}", info.fps)]).arg(fin.join("%05d.png")))?;
@@ -91,23 +104,15 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
     frames.sort();
     ensure!(!frames.is_empty(), "no frames extracted");
 
-    // apply the project's trim (drop spans) + speed (decimate spans) → the output frame order
-    let emit: Vec<usize> = (0..frames.len())
-        .filter(|&i| {
-            let t = i as f64 / info.fps as f64;
-            if project.edit_regions.iter().any(|e| e.kind == "trim" && t >= e.start && t < e.end) {
-                return false; // cut
-            }
-            if let Some(s) = project.edit_regions.iter().find(|e| e.kind == "speed" && t >= e.start && t <= e.end) {
-                let r = s.rate.round().max(1.0) as usize;
-                if r > 1 && i % r != 0 {
-                    return false; // play r× faster by keeping every r-th frame
-                }
-            }
-            true
-        })
-        .collect();
+    // Apply the project's trim (drop spans) + speed (rate spans) → the output frame order.
+    // The timeline runs to the *extracted frame count*, not the probed duration: a WebM
+    // assembled from MediaRecorder chunks probes short, and a timeline that ended early would
+    // silently drop the tail frames of an unedited render.
+    let timeline = spans(&project.edit_regions, frames.len() as f64 / info.fps as f64);
+    let cuts = cuts(&timeline, frames.len(), info.fps as f64);
+    let emit = emit_order(&cuts);
     ensure!(!emit.is_empty(), "every frame was trimmed");
+    frame_budget(emit.len())?;
     eprintln!(
         "project: {} zoom-region(s), {} edit(s) → emit {}/{} frames",
         project.zoom_regions.len(), project.edit_regions.len(), emit.len(), frames.len()
@@ -203,7 +208,269 @@ pub fn beautify(video: &Path, events: Option<&Path>, out: &Path, opts: &Beautify
         Ok(())
     })?;
 
-    encode(&fout, info.fps, &opts.format, out)
+    encode(&fout, info.fps, &opts.format, out, video, &cuts)
+}
+
+/// Deletes a render's scratch dir when it drops — including on the `?` early-returns in
+/// `beautify`, each of which would otherwise leak a full PNG dump of the clip.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// How long a scratch dir may exist before a later render treats it as abandoned. See
+/// `sweep_stale_scratch` for why it is this generous.
+const SCRATCH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// Reclaim scratch dirs left behind by renders that died before `Scratch::drop` could run:
+/// SIGKILL, OOM-kill, `docker stop`. Without this the per-render dir is an *unbounded* leak —
+/// verified, a SIGKILLed render left 3.8 MB of PNGs that no later render ever reclaimed,
+/// and this service does get OOM-killed. (The fixed dir it replaced was wiped on entry, so it
+/// held at most one clip's frames however many renders had crashed; this restores that bound
+/// without giving up the per-render isolation.)
+///
+/// Age is the discriminator, not PID liveness: a recycled PID would make a dead render's dir
+/// look alive forever, and there is no portable way to ask "is that render still going". The
+/// dir's own mtime is fixed at creation (frames are written into its `in`/`out` children), so
+/// this means "started more than six hours ago" — orders of magnitude longer than any render
+/// of any clip, and therefore never a *concurrent* render's dir.
+fn sweep_stale_scratch(parent: &Path, older_than: std::time::Duration) {
+    let Ok(rd) = std::fs::read_dir(parent) else { return };
+    for e in rd.flatten() {
+        if !e.file_name().to_string_lossy().starts_with("clipxd-beautify-") {
+            continue;
+        }
+        let stale = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > older_than);
+        if stale {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+/// A kept span of *source* time and the rate it was *asked* to play back at; trimmed spans are
+/// simply absent. Intermediate only: a rate is a real number but a span is emitted as a whole
+/// number of frames, so what the picture actually did is a `Cut`, and that — not this — is what
+/// the audio has to follow.
+#[derive(Debug, Clone, PartialEq)]
+struct Span {
+    start: f64,
+    end: f64,
+    rate: f64,
+}
+
+/// Decompose the source timeline `[0, end)` into kept spans, honouring the project's `trim`
+/// (drop) and `speed` (rate) regions. Cuts at every region boundary and classifies each slice
+/// by its midpoint, which stays correct when the editor emits overlapping regions.
+///
+/// Adjacent slices at the same rate are merged, so twelve 1s regions all at 1.5× become one
+/// 12s span — worth knowing when writing a fixture that means to exercise several spans.
+fn spans(edits: &[EditRegionJ], end: f64) -> Vec<Span> {
+    let mut bounds: Vec<f64> = vec![0.0, end];
+    for e in edits {
+        bounds.extend([e.start, e.end].into_iter().filter(|t| *t > 0.0 && *t < end));
+    }
+    bounds.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut out: Vec<Span> = Vec::new();
+    for w in bounds.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if b - a < 1e-9 {
+            continue;
+        }
+        let m = (a + b) / 2.0;
+        // matches the original half-open trim / closed speed tests, so an unedited or
+        // trim-only project keeps behaving exactly as it did
+        if edits.iter().any(|e| e.kind == "trim" && m >= e.start && m < e.end) {
+            continue;
+        }
+        let rate = edits
+            .iter()
+            .find(|e| e.kind == "speed" && m >= e.start && m <= e.end)
+            // the project file is user-supplied JSON: rate 0 would divide by zero below and
+            // rate 0.001 would expand one source frame into a thousand output frames
+            .map(|e| e.rate.clamp(0.1, 100.0))
+            .unwrap_or(1.0);
+        match out.last_mut() {
+            Some(l) if (l.end - a).abs() < 1e-9 && (l.rate - rate).abs() < 1e-9 => l.end = b,
+            _ => out.push(Span { start: a, end: b, rate }),
+        }
+    }
+    out
+}
+
+/// A kept span as the render actually resolved it: source frames `i0 .. i0 + n`, emitted as
+/// `m` output frames. This is the single source of truth the picture *and* the sound both read.
+///
+/// `m` is the point. A span's requested rate is a real number, but the emitted length is a whole
+/// number of frames, so the rate the video really played is `n / m`, not what was asked for.
+/// Handing the audio the requested rate instead left every span up to half a frame out, always
+/// in the same direction: a 12-region project measured 20 ms adrift at the first region and
+/// 180 ms by the last. Driving `atempo` from `n / m` makes each span's audio exactly as long as
+/// the frames that span emitted, so the error cannot accumulate.
+#[derive(Debug, Clone, PartialEq)]
+struct Cut {
+    i0: usize,
+    n: usize,
+    m: usize,
+}
+
+impl Cut {
+    /// The rate the picture *actually* played this span at.
+    fn rate(&self) -> f64 {
+        self.n as f64 / self.m as f64
+    }
+}
+
+/// Resolve the requested timeline against the frames that were really extracted.
+fn cuts(timeline: &[Span], frames: usize, fps: f64) -> Vec<Cut> {
+    timeline
+        .iter()
+        .filter_map(|s| {
+            // source frames whose timestamp falls in [start, end) — adjacent spans share a
+            // boundary, so ceil on both ends tiles the timeline with no gap and no overlap
+            let i0 = (s.start * fps).ceil().max(0.0) as usize;
+            let i1 = ((s.end * fps).ceil() as usize).min(frames);
+            let n = i1.saturating_sub(i0);
+            // a span that rounds to zero output frames contributes nothing to either stream
+            let m = (n as f64 / s.rate).round() as usize;
+            (n > 0 && m > 0).then_some(Cut { i0, n, m })
+        })
+        .collect()
+}
+
+/// Output frame *j* ← source frame `emit_order(..)[j]`. Output fps stays constant; the rate
+/// decides *which* source frame each output frame samples.
+///
+/// That choice is the whole fix. The old code kept every `rate.round().max(1.0)`-th source
+/// frame, so 1.5× snapped to 2× and nothing below 1× could slow down at all. Sampling a
+/// fractional source position instead makes 1.5× exactly 1.5× and lets rate < 1 repeat
+/// frames. Integer rates still land on the same frames the modulo picked (2× → 0,2,4…), and
+/// with no edits `m == n` and `j * 1.0 == j`, so an unedited render is frame-for-frame what
+/// it was before this change.
+///
+/// Per-cut integer arithmetic, deliberately: accumulating `1.0/rate` across 180 frames at
+/// 1.5× sums to 119.999…, one frame short.
+fn emit_order(cuts: &[Cut]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(cuts.iter().map(|c| c.m).sum());
+    for c in cuts {
+        for j in 0..c.m {
+            out.push(c.i0 + ((j as f64 * c.rate()) as usize).min(c.n - 1));
+        }
+    }
+    out
+}
+
+/// Ceiling on how many frames ONE render may emit — 20 minutes of output at 30 fps, past any
+/// clip this tool is for.
+///
+/// The bound has to be on the product, not on the rate. `spans` clamps `rate` at 0.1 and stops
+/// there, so `m = round(n / rate)` lets a hand-written `.clipxd` ask for ten output frames per
+/// source frame, and `emit_order` writes one full-resolution PNG per *output* frame. Measured at
+/// 2560x1440: ~1.0 MB per frame across the two scratch dirs, so a 2 s clip at rate 0 (clamped to
+/// 0.1) filled 92 MB in 45 s with 113 of its 600 frames written and no end in sight. The old
+/// `rate.round().max(1.0)` could never emit more frames than it read; slow motion can.
+const MAX_OUTPUT_FRAMES: usize = 36_000;
+
+/// Refuse an over-budget timeline *before* the first output PNG is written, rather than filling
+/// the disk and dying somewhere in the middle of the render.
+fn frame_budget(emit: usize) -> Result<()> {
+    ensure!(
+        emit <= MAX_OUTPUT_FRAMES,
+        "this edit would emit {emit} output frames, over the {MAX_OUTPUT_FRAMES}-frame render \
+         limit ({} minutes at 30fps) — slow motion emits 1/rate frames per source frame (rate 0.1 \
+         is 10x), so raise the rate or trim the clip",
+        MAX_OUTPUT_FRAMES / (30 * 60)
+    );
+    Ok(())
+}
+
+/// `atempo` is documented for 0.5–2.0 per instance, so a rate outside that band is factored
+/// into a chain of in-range steps (5× → 2 × 2 × 1.25). Rate 1.0 needs no filter at all.
+fn atempo_chain(rate: f64) -> Vec<f64> {
+    let (mut steps, mut r) = (Vec::new(), rate);
+    while r > 2.0 {
+        steps.push(2.0);
+        r /= 2.0;
+    }
+    while r < 0.5 {
+        steps.push(0.5);
+        r *= 2.0;
+    }
+    if (r - 1.0).abs() > 1e-6 {
+        steps.push(r);
+    }
+    steps
+}
+
+/// The `-filter_complex` that puts the source audio through the *same* cuts the picture got:
+/// one `atrim` per kept cut (speed-ramped with `atempo`), concatenated back into `[aout]`.
+/// Input 0 is the rendered PNG sequence, input 1 the source video — hence `[1:a]`.
+///
+/// The rendered video is authoritative — it is exactly `m` composited PNGs — so every cut is
+/// fitted to its own `m / fps` seconds, padding with silence when the source runs out and
+/// cutting when it runs long. Three shipped bugs live in that sentence:
+///
+///   * `-shortest` used to do the fitting, and it fits the *video* to the audio. A 6 s clip
+///     with a 3 s track rendered 3 s (90 of 180 frames); with the 0.05 s track a suspended
+///     `AudioContext` produces, it rendered TWO FRAMES — exit 0 both times.
+///   * a cut whose source audio has already ended (trim keeping [2,6) of a 2 s track) yields an
+///     *empty* `atrim`, and concat of an empty segment dropped the video stream from the muxed
+///     output entirely — an audio-only file shipped as a successful render. `apad` makes it
+///     silence of the right length instead.
+///   * `asetpts=PTS-STARTPTS` threw away the audio stream's start offset, pulling the whole
+///     soundtrack early by it (measured: 956 ms, every beep a flash early). Shifting by the
+///     cut's own start instead and letting `aresample=…:first_pts=0` fill the leading gap with
+///     silence keeps it — the source really was silent there. `asetpts` is still what lets
+///     `concat` join cuts 2..n, it just no longer lies about where cut 1 began.
+fn audio_filter(cuts: &[Cut], fps: f64) -> String {
+    let single = cuts.len() == 1;
+    let chains: Vec<String> = cuts
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let (a, b) = (c.i0 as f64 / fps, (c.i0 + c.n) as f64 / fps);
+            let tempo: String = atempo_chain(c.rate()).iter().map(|r| format!(",atempo={r:.6}")).collect();
+            let label = if single { "[aout]".to_string() } else { format!("[a{i}]") };
+            format!(
+                "[1:a]atrim=start={a:.6}:end={b:.6},asetpts=PTS-{a:.6}/TB,\
+                 aresample=async=1:first_pts=0{tempo},apad,atrim=end={:.6}{label}",
+                c.m as f64 / fps
+            )
+        })
+        .collect();
+    if single {
+        return chains.join("");
+    }
+    let ins: String = (0..cuts.len()).map(|i| format!("[a{i}]")).collect();
+    format!("{};{ins}concat=n={}:v=0:a=1[aout]", chains.join(";"), cuts.len())
+}
+
+/// Does the source carry an audio stream? A screen recording captured without a mic has
+/// none, and pointing the filtergraph at `[1:a]` there makes ffmpeg abort the *whole* export
+/// — turning a working (if silent) render into a failed one.
+///
+/// A `Result`, not a `bool`, deliberately. The `.is_ok_and(…)` this replaces folded three
+/// different outcomes into `false`: no audio track, no `ffprobe` on PATH, and a container ffprobe
+/// could not read (half-written, truncated). The last two then rendered the clip *silently* and
+/// exited 0 — the same "succeeded, but the output is wrong and nothing said so" shape as the
+/// `-shortest` truncation this file exists to have fixed. Absence is an answer; failing to ask
+/// is not.
+fn has_audio(video: &Path) -> Result<bool> {
+    let o = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0"])
+        .arg(video)
+        .output()
+        .context("running ffprobe (is ffmpeg installed?)")?;
+    ensure!(o.status.success(), "ffprobe could not read {} ({}): {}", video.display(), o.status, tail(&o.stderr, 500));
+    Ok(!o.stdout.trim_ascii().is_empty())
 }
 
 fn draw_pill(canvas: &mut RgbaImage, layout: &clipxd_cinematic::FrameLayout, font: &ab_glyph::FontVec, txt: &str) {
@@ -230,21 +497,42 @@ fn pixelate(img: &mut RgbaImage, b: &BlurRegion) {
     imageops::overlay(img, &mosaic, rx as i64, ry as i64);
 }
 
-fn encode(frames_dir: &Path, fps: f32, format: &str, out: &Path) -> Result<()> {
+/// Mux the rendered PNG sequence with the source's audio, put through the same edits.
+///
+/// Every export used to be silent: only the PNG pattern was ever handed to ffmpeg. GIF still
+/// is (the container carries no audio), and so is a source with no audio track — see `has_audio`.
+fn encode(frames_dir: &Path, fps: f32, format: &str, out: &Path, source: &Path, cuts: &[Cut]) -> Result<()> {
     let pattern = frames_dir.join("%05d.png");
     let mut c = Command::new("ffmpeg");
     c.args(["-y", "-framerate", &fps.to_string(), "-i"]).arg(&pattern);
+
+    let audio = format != "gif" && !cuts.is_empty() && has_audio(source)?;
+    if audio {
+        c.arg("-i").arg(source);
+        c.args(["-filter_complex", &audio_filter(cuts, fps as f64)]);
+        c.args(["-map", "0:v", "-map", "[aout]"]);
+    }
     match format {
         "gif" => {
             c.args(["-vf", "fps=15,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"]);
         }
         "webm" => {
             c.args(["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"]);
+            if audio {
+                c.args(["-c:a", "libopus"]);
+            }
         }
         _ => {
             c.args(["-c:v", "libx264", "-pix_fmt", "yuv420p"]);
+            if audio {
+                c.args(["-c:a", "aac"]);
+            }
         }
     }
+    // Deliberately NO `-shortest`: it truncates whichever stream is longer, and the audio track
+    // is the one that can be short (a 6 s clip with a 3 s track rendered 3 s, and the 0.05 s
+    // track a suspended AudioContext produces rendered two frames). `audio_filter` already fits
+    // the sound to the picture, so there is nothing left for `-shortest` to do but damage.
     run(c.arg(out))
 }
 
@@ -436,6 +724,10 @@ struct ZoomRegionJ {
     start: f64,
     end: f64,
     scale: f64,
+    /// Focus point in normalised source-frame coordinates (0..1, top-left origin) — the same
+    /// pair `ZoomKeyframe` carries, and what `ZoomRegion` in `app/src/regions.ts` writes.
+    cx: f64,
+    cy: f64,
 }
 
 struct EditRegionJ {
@@ -451,7 +743,19 @@ fn load_project(p: &Path) -> Option<Project> {
         .as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|z| Some(ZoomRegionJ { start: z["start"].as_f64()?, end: z["end"].as_f64()?, scale: z["scale"].as_f64()? }))
+                .filter_map(|z| {
+                    Some(ZoomRegionJ {
+                        start: z["start"].as_f64()?,
+                        end: z["end"].as_f64()?,
+                        scale: z["scale"].as_f64()?,
+                        // Optional and clamped: the project file is user-supplied JSON, and a
+                        // region written before the editor had a focus control has neither key.
+                        // 0.5 is the centre the renderer used to hardcode, so those still render
+                        // exactly as they did.
+                        cx: z["cx"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0),
+                        cy: z["cy"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0),
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -505,20 +809,35 @@ fn hex(s: &str) -> [u8; 3] {
 }
 
 /// A premium mesh-gradient wallpaper behind the video (the "beautification" background).
-/// Named presets — "aurora" (default), "dusk", "ocean", "violet", "noir" — or a hex colour.
-/// Painted once per render, not per frame.
+/// Named presets — "aurora" (default), "dusk", "ocean", "violet", "noir", "mint" — or a hex
+/// colour. Painted once per render, not per frame.
+///
+/// The base + blob colours mirror `CAMERA_BG_PRESETS` in `app/src/CameraConfig.ts` so the
+/// swatch the user picks matches what gets baked in. A preset added there must be added here
+/// *and* to `safe_bg` in `crates/clipxd-web/src/lib.rs`, which is what
+/// `every_wallpaper_the_ui_offers_survives_safe_bg` guards — it reads the arms below by name,
+/// so every preset the UI offers must appear as a named arm even when it shares the fallback's
+/// palette. A preset that only reaches `_` renders Aurora and says nothing about it.
 fn wallpaper(bg: &str, w: u32, h: u32) -> RgbaImage {
     if bg.starts_with('#') {
         return solid(w, h, hex(bg));
     }
     // base colour + radial colour blobs (fx, fy, radius_frac, rgb)
-    let (base, blobs): ([u8; 3], &[(f32, f32, f32, [u8; 3])]) = match bg {
+    type Palette = ([u8; 3], &'static [(f32, f32, f32, [u8; 3])]);
+    // the signature look, and what anything unrecognised falls back to (matches the app's backdrop)
+    const AURORA: Palette = (
+        [8, 11, 22],
+        &[(0.12, 0.1, 0.72, [60, 110, 230]), (0.88, 0.14, 0.66, [120, 80, 230]), (0.8, 0.92, 0.72, [40, 200, 160]), (0.1, 0.95, 0.66, [230, 90, 150])],
+    );
+    let (base, blobs): Palette = match bg {
         "noir" => ([10, 12, 16], &[(0.2, 0.1, 0.7, [40, 46, 60]), (0.85, 0.95, 0.7, [22, 26, 36])]),
         "dusk" => ([20, 16, 34], &[(0.15, 0.1, 0.75, [90, 70, 200]), (0.88, 0.18, 0.65, [205, 80, 150]), (0.7, 0.95, 0.7, [60, 90, 185])]),
         "ocean" => ([7, 18, 30], &[(0.18, 0.15, 0.75, [40, 120, 205]), (0.86, 0.9, 0.7, [30, 185, 175]), (0.6, 0.25, 0.55, [80, 90, 220])]),
         "violet" => ([16, 10, 28], &[(0.2, 0.2, 0.75, [130, 80, 235]), (0.85, 0.15, 0.65, [210, 90, 200]), (0.5, 0.95, 0.7, [90, 70, 215])]),
-        // "aurora" / "gradient" / anything else → the signature look (matches the app's backdrop)
-        _ => ([8, 11, 22], &[(0.12, 0.1, 0.72, [60, 110, 230]), (0.88, 0.14, 0.66, [120, 80, 230]), (0.8, 0.92, 0.72, [40, 200, 160]), (0.1, 0.95, 0.66, [230, 90, 150])]),
+        // #06201c + #2bbf9a / #cdecc0 / #8ad7d0 — the "mint" entry in CameraConfig.ts
+        "mint" => ([6, 32, 28], &[(0.22, 0.2, 0.72, [43, 191, 154]), (0.8, 0.82, 0.66, [205, 236, 192]), (0.7, 0.18, 0.55, [138, 215, 208])]),
+        "aurora" | "gradient" => AURORA,
+        _ => AURORA,
     };
     mesh(w, h, base, blobs)
 }
@@ -552,9 +871,28 @@ fn mesh(w: u32, h: u32, base: [u8; 3], blobs: &[(f32, f32, f32, [u8; 3])]) -> Rg
     img
 }
 
+/// Run an ffmpeg command and, when it fails, say what it said.
+///
+/// This used to be `Stdio::null()` on both streams and `ensure!(…, "ffmpeg failed")`, so those two
+/// words were the entire production signal for a broken `-filter_complex` — a string this file
+/// builds by machine out of user-supplied JSON, whose shape nothing else records. The stderr tail
+/// is where ffmpeg puts the actual complaint, and the command line is what makes it reproducible.
 fn run(c: &mut Command) -> Result<()> {
-    ensure!(c.stdout(Stdio::null()).stderr(Stdio::null()).status()?.success(), "ffmpeg failed");
+    let cmd = format!("{c:?}");
+    let o = c.stdout(Stdio::null()).output().with_context(|| format!("spawning {cmd}"))?;
+    ensure!(o.status.success(), "ffmpeg failed ({}): {}\ncommand: {cmd}", o.status, tail(&o.stderr, 1500));
     Ok(())
+}
+
+/// The last `n` bytes of a child's stderr as text — ffmpeg prints the reason it died at the end,
+/// after however many lines of banner.
+fn tail(bytes: &[u8], n: usize) -> String {
+    let s = String::from_utf8_lossy(bytes).trim().to_string();
+    if s.len() <= n {
+        return s;
+    }
+    let cut = (s.len() - n..s.len()).find(|i| s.is_char_boundary(*i)).unwrap_or(s.len());
+    format!("…{}", &s[cut..])
 }
 
 
@@ -717,6 +1055,328 @@ fn draw_caption(canvas: &mut RgbaImage, layout: &FrameLayout, font: &ab_glyph::F
             caret += ww + space;
         }
         y += line_h;
+    }
+}
+
+#[cfg(test)]
+mod timeline_tests {
+    use super::*;
+
+    fn edit(kind: &str, start: f64, end: f64, rate: f64) -> EditRegionJ {
+        EditRegionJ { kind: kind.into(), start, end, rate }
+    }
+
+    /// 180 frames at 30fps — the 6.0s fixture `tools/render-audio-check.sh` renders.
+    fn resolve(edits: &[EditRegionJ]) -> Vec<Cut> {
+        cuts(&spans(edits, 6.0), 180, 30.0)
+    }
+
+    /// The regression that matters most: adding trim/speed support must not perturb the
+    /// ordinary render. No edits ⇒ every source frame emitted once, in order.
+    #[test]
+    fn an_empty_edit_list_emits_every_frame_exactly_once() {
+        assert_eq!(spans(&[], 6.0), vec![Span { start: 0.0, end: 6.0, rate: 1.0 }]);
+        assert_eq!(resolve(&[]), vec![Cut { i0: 0, n: 180, m: 180 }]);
+        assert_eq!(emit_order(&resolve(&[])), (0..180).collect::<Vec<_>>());
+    }
+
+    /// The bug: `rate.round().max(1.0)` turned 1.5 into 2, so a 1.5× ramp ran at double speed.
+    /// 1.5× must emit two output frames per three source frames — no more, no less.
+    #[test]
+    fn a_1_5x_ramp_runs_at_exactly_1_5x() {
+        let c = resolve(&[edit("speed", 0.0, 6.0, 1.5)]);
+        let e = emit_order(&c);
+        assert_eq!(e.len(), 120, "180 frames at 1.5x is 120 frames, not 90 (2x)");
+        assert!(e.windows(2).all(|w| w[0] < w[1]), "frames must stay in order and unique");
+    }
+
+    /// The other half of the same bug: `.max(1.0)` meant nothing could ever slow down.
+    #[test]
+    fn a_half_speed_ramp_slows_down_by_repeating_frames() {
+        let e = emit_order(&resolve(&[edit("speed", 0.0, 6.0, 0.5)]));
+        assert_eq!(e.len(), 360);
+        assert_eq!(&e[..4], &[0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn a_trim_drops_its_span_and_leaves_the_rest_untouched() {
+        let t = spans(&[edit("trim", 2.0, 4.0, 1.0)], 6.0);
+        assert_eq!(t, vec![Span { start: 0.0, end: 2.0, rate: 1.0 }, Span { start: 4.0, end: 6.0, rate: 1.0 }]);
+        let e = emit_order(&cuts(&t, 180, 30.0));
+        assert_eq!(e.len(), 120);
+        assert!(!e.iter().any(|&i| (60..120).contains(&i)), "the trimmed frames must not appear");
+    }
+
+    #[test]
+    fn a_speed_region_inside_a_trim_still_resolves_to_a_cut() {
+        // overlapping regions are reachable from the editor; trim must win
+        let t = spans(&[edit("trim", 1.0, 3.0, 1.0), edit("speed", 2.0, 4.0, 2.0)], 6.0);
+        assert_eq!(t, vec![
+            Span { start: 0.0, end: 1.0, rate: 1.0 },
+            Span { start: 3.0, end: 4.0, rate: 2.0 },
+            Span { start: 4.0, end: 6.0, rate: 1.0 },
+        ]);
+    }
+
+    #[test]
+    fn a_nonsense_rate_cannot_divide_by_zero_or_explode_the_frame_count() {
+        // rate comes from a user-supplied .clipxd file, not from the editor's clamp
+        assert_eq!(spans(&[edit("speed", 0.0, 6.0, 0.0)], 6.0)[0].rate, 0.1);
+        assert_eq!(spans(&[edit("speed", 0.0, 6.0, -4.0)], 6.0)[0].rate, 0.1);
+
+        // The clamp bounds the multiplier, not the product, and the product is what fills the
+        // disk: rate 0.1 is ten full-resolution output PNGs per source frame. This assertion used
+        // to stop at the 1800 below and call it correct — 10x, pinned as the intended behaviour.
+        let boom = emit_order(&resolve(&[edit("speed", 0.0, 6.0, 0.0)]));
+        assert_eq!(boom.len(), 1800, "180 source frames at the 0.1 floor is 10x");
+        assert!(frame_budget(boom.len()).is_ok(), "6 s of slow motion is not what we mean to refuse");
+
+        // the same edit on a real clip — 10 minutes at 30fps — is 180_000 output frames, and at
+        // 1440p roughly 1 MB each. It must be refused, by a message that says what the limit is.
+        let real = emit_order(&cuts(&spans(&[edit("speed", 0.0, 600.0, 0.0)], 600.0), 18_000, 30.0));
+        assert!(real.len() > MAX_OUTPUT_FRAMES, "{} frames should be over budget", real.len());
+        let err = frame_budget(real.len()).unwrap_err().to_string();
+        assert!(err.contains(&MAX_OUTPUT_FRAMES.to_string()), "the refusal must name the limit: {err}");
+    }
+
+    /// `has_audio` used to be `.is_ok_and(…)`, which answered "no audio track" for a missing
+    /// ffprobe and for a container it could not read — and a wrong "no" there renders the clip
+    /// silent and exits 0. Absence must be distinguishable from failure to ask.
+    #[test]
+    fn a_probe_that_fails_is_an_error_not_an_answer_of_no_audio() {
+        let p = std::env::temp_dir().join(format!("clipxd-hasaudio-{}.mp4", std::process::id()));
+        std::fs::write(&p, b"this is not a container").unwrap();
+        let r = has_audio(&p);
+        let _ = std::fs::remove_file(&p);
+        assert!(r.is_err(), "a file ffprobe cannot read must not answer \"no audio\": {r:?}");
+    }
+
+    #[test]
+    fn atempo_chains_only_outside_0_5_to_2_0() {
+        assert_eq!(atempo_chain(1.0), Vec::<f64>::new());
+        assert_eq!(atempo_chain(1.5), vec![1.5]);
+        assert_eq!(atempo_chain(2.0), vec![2.0]);
+        assert_eq!(atempo_chain(0.5), vec![0.5]);
+        assert_eq!(atempo_chain(4.0), vec![2.0, 2.0]);
+        assert_eq!(atempo_chain(5.0), vec![2.0, 2.0, 1.25]);
+        assert_eq!(atempo_chain(0.25), vec![0.5, 0.5]);
+        // and the chain must multiply back to the requested rate, every step in ffmpeg's range
+        for r in [0.1, 0.3, 0.75, 1.0, 1.5, 3.0, 7.0, 100.0] {
+            let steps = atempo_chain(r);
+            let got: f64 = steps.iter().product();
+            assert!((got - r).abs() < 1e-9, "atempo_chain({r}) = {steps:?} multiplies to {got}");
+            assert!(steps.iter().all(|s| (0.5..=2.0).contains(s)), "step out of ffmpeg's range for {r}: {steps:?}");
+        }
+    }
+
+    #[test]
+    fn the_audio_filter_follows_the_same_cuts_the_video_does() {
+        // one cut → no concat wrapper needed
+        let one = audio_filter(&resolve(&[]), 30.0);
+        assert_eq!(
+            one,
+            "[1:a]atrim=start=0.000000:end=6.000000,asetpts=PTS-0.000000/TB,\
+             aresample=async=1:first_pts=0,apad,atrim=end=6.000000[aout]"
+        );
+
+        // a trim → two atrims concatenated, so the audio loses exactly what the video lost
+        let cut = audio_filter(&resolve(&[edit("trim", 2.0, 4.0, 1.0)]), 30.0);
+        assert_eq!(
+            cut,
+            "[1:a]atrim=start=0.000000:end=2.000000,asetpts=PTS-0.000000/TB,\
+             aresample=async=1:first_pts=0,apad,atrim=end=2.000000[a0];\
+             [1:a]atrim=start=4.000000:end=6.000000,asetpts=PTS-4.000000/TB,\
+             aresample=async=1:first_pts=0,apad,atrim=end=2.000000[a1];\
+             [a0][a1]concat=n=2:v=0:a=1[aout]"
+        );
+
+        // a speed ramp → the same cut, sped up by atempo so it stays in sync
+        let fast = audio_filter(&resolve(&[edit("speed", 0.0, 6.0, 1.5)]), 30.0);
+        assert!(fast.contains("atempo=1.500000"), "{fast}");
+        assert!(fast.ends_with("[aout]"), "{fast}");
+
+        // out-of-range rate → chained atempo, never a single illegal one
+        let vfast = audio_filter(&resolve(&[edit("speed", 0.0, 6.0, 4.0)]), 30.0);
+        assert_eq!(vfast.matches("atempo=2.000000").count(), 2, "{vfast}");
+
+        // atempo runs at the rate the picture ACTUALLY played, not the one that was asked for:
+        // 180 frames at a requested 1.7 emit round(180/1.7) = 106 frames, i.e. 180/106 = 1.698113.
+        // Handing atempo the raw 1.7 leaves this cut's audio 6ms short of its own frames, and
+        // that shortfall is what accumulated into 180ms across a 12-region project.
+        let odd = resolve(&[edit("speed", 0.0, 6.0, 1.7)]);
+        assert_eq!(odd[0].m, 106);
+        let f = audio_filter(&odd, 30.0);
+        assert!(f.contains("atempo=1.698113"), "{f}");
+        assert!(!f.contains("atempo=1.700000"), "atempo got the requested rate, not the emitted one: {f}");
+    }
+
+    /// `asetpts=PTS-STARTPTS` on the first cut discarded the audio stream's start offset, so a
+    /// source whose audio begins at 0.978s played its whole soundtrack ~1s early — every beep
+    /// one flash ahead of the flash it belonged to. The shift has to be the cut's own start.
+    #[test]
+    fn the_first_cut_shifts_by_its_own_start_not_by_the_first_sample() {
+        let f = audio_filter(&resolve(&[]), 30.0);
+        assert!(!f.contains("PTS-STARTPTS"), "STARTPTS throws away the stream's start offset: {f}");
+        assert!(f.contains("asetpts=PTS-0.000000/TB"), "{f}");
+        // and the leading gap it preserves must become real silence, not a hole
+        assert!(f.contains("aresample=async=1:first_pts=0"), "{f}");
+    }
+
+    /// Every cut is fitted to its own emitted length — padded with silence when the source
+    /// audio ran out, cut when it ran long. This is what replaced `-shortest`, which fitted the
+    /// *video* to the audio and rendered a 6s clip with a 3s track as 3s.
+    #[test]
+    fn every_cut_is_padded_and_trimmed_to_the_frames_it_emitted() {
+        for edits in [vec![], vec![edit("trim", 0.0, 2.0, 1.0)], vec![edit("speed", 0.0, 6.0, 1.7)]] {
+            let c = resolve(&edits);
+            let f = audio_filter(&c, 30.0);
+            assert_eq!(f.matches("apad").count(), c.len(), "{f}");
+            for cut in &c {
+                assert!(f.contains(&format!("apad,atrim=end={:.6}", cut.m as f64 / 30.0)), "{f}");
+            }
+        }
+    }
+
+    /// Read back what `audio_filter` *actually emitted*, cut by cut: the source span it takes
+    /// (`atrim=start=a:end=b`), the product of its `atempo` steps, and the length it fits that
+    /// span to (`apad,atrim=end=fit`).
+    ///
+    /// Parsing the production string is the whole point. The two tests below used to recompute
+    /// `atempo_chain(cut.rate())` and `cut.m` themselves, which makes the "audio" side
+    /// `(n/fps) / (n/m) = m/fps` — exactly the video length it was being compared against. Both
+    /// stayed green with the bug they are named for put back.
+    ///
+    /// Everything in the graph is formatted to 6 decimals, so comparisons against it get [`TOL`],
+    /// not equality.
+    fn chains(graph: &str) -> Vec<(f64, f64, f64, f64)> {
+        fn num(s: &str) -> f64 {
+            s.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect::<String>().parse().unwrap()
+        }
+        graph
+            .split(';')
+            .filter(|c| c.starts_with("[1:a]"))
+            .map(|c| {
+                let a = num(c.split("atrim=start=").nth(1).expect("no atrim start"));
+                let b = num(c.split(":end=").nth(1).expect("no atrim end"));
+                // no atempo at all (rate 1.0) is an empty product, i.e. 1.0 — the right identity
+                let tempo: f64 = c.split("atempo=").skip(1).map(num).product();
+                let fit = num(c.split("apad,atrim=end=").nth(1).expect("no apad,atrim fit"));
+                (a, b, tempo, fit)
+            })
+            .collect()
+    }
+
+    /// 0.1 ms. Slack for the filtergraph's 6-decimal formatting only — the drift these tests
+    /// exist for was 20 ms at the FIRST region and 180 ms by the last, i.e. 200x this and up.
+    const TOL: f64 = 1e-4;
+
+    /// The drift that shipped: `emit_order` quantised each span to whole frames while the audio
+    /// got `atempo` at the *raw* requested rate, so every region contributed up to half a frame
+    /// of permanent offset in the same direction. Measured on a 12-region render: audio led
+    /// video by 20 ms at the first region and 180 ms by the last.
+    ///
+    /// Twelve regions with *distinct* rates — equal adjacent rates merge in `spans()`, which is
+    /// how the first attempt at this fixture accidentally measured a single span and drifted 8ms.
+    ///
+    /// The sound comes out of the `audio_filter` string, the picture out of `emit_order`. Neither
+    /// side is recomputed here, so driving `atempo` from anything but `n/m` goes red at cut 0.
+    #[test]
+    fn twelve_speed_regions_do_not_drift_audio_away_from_video() {
+        let edits: Vec<EditRegionJ> =
+            (0..12).map(|k| edit("speed", k as f64, k as f64 + 1.0, 1.70 + 0.01 * k as f64)).collect();
+        let c = cuts(&spans(&edits, 12.0), 360, 30.0);
+        assert_eq!(c.len(), 12, "adjacent regions must not merge here, or the test proves nothing");
+        let g = chains(&audio_filter(&c, 30.0));
+        assert_eq!(g.len(), 12, "one filter chain per cut");
+
+        let (mut video, mut audio) = (0.0_f64, 0.0_f64);
+        for (i, (&(a, b, tempo, fit), cut)) in g.iter().zip(&c).enumerate() {
+            // what ffmpeg will produce for this chain: (b-a) seconds of source played at `tempo`
+            audio += (b - a) / tempo;
+            // what the renderer will write for this cut: the frames `emit_order` really pushes
+            let frames = emit_order(std::slice::from_ref(cut)).len() as f64 / 30.0;
+            video += frames;
+            assert!((fit - frames).abs() < TOL, "cut {i} fits its audio to {fit}s but emits {frames}s of frames");
+            assert!((audio - video).abs() < TOL, "drifted {:.0}ms by cut {i}", (audio - video) * 1000.0);
+        }
+    }
+
+    /// Audio and video must come out the length the EDIT LIST asked for — a number worked out by
+    /// hand here, not recomputed from the code under test. The picture is measured with
+    /// `emit_order`, the sound with the `audio_filter` string.
+    ///
+    /// What this replaces compared `emit_order(&c).len()` against `sum(c.m)`; `emit_order` pushes
+    /// exactly `c.m` entries per cut, so both sides were the video length and the "two
+    /// independently-computed durations" in its doc comment did not exist. It stayed green with
+    /// every cut's audio fitted to the wrong stream length.
+    #[test]
+    fn audio_and_video_timelines_agree_with_the_length_the_edits_ask_for() {
+        // (edits, output frames they ask for) against the 180-frame / 6.0s / 30fps fixture
+        let cases: Vec<(Vec<EditRegionJ>, usize)> = vec![
+            (vec![], 180),                             // untouched
+            (vec![edit("speed", 0.0, 6.0, 1.5)], 120), // 180 / 1.5
+            (vec![edit("trim", 1.0, 2.0, 1.0)], 150),  // 180 - 30
+            // 30 kept + 30 kept + 60 at 2x + 30 kept
+            (vec![edit("trim", 1.0, 2.0, 1.0), edit("speed", 3.0, 5.0, 2.0)], 120),
+            (vec![edit("speed", 0.0, 3.0, 0.5), edit("speed", 3.0, 6.0, 3.0)], 210), // 90/0.5 + 90/3
+            // round(60/1.7) + round(60/2.3) + round(60/0.7) = 35 + 26 + 86
+            (vec![edit("speed", 0.0, 2.0, 1.7), edit("speed", 2.0, 4.0, 2.3), edit("speed", 4.0, 6.0, 0.7)], 147),
+        ];
+        for (edits, want) in cases {
+            let c = resolve(&edits);
+            assert_eq!(emit_order(&c).len(), want, "picture: {c:?}");
+            let sound: f64 = chains(&audio_filter(&c, 30.0)).iter().map(|&(_, _, _, fit)| fit).sum();
+            assert!((sound - want as f64 / 30.0).abs() < TOL, "sound {sound}s vs {want} frames of picture");
+        }
+    }
+
+    /// The focus point is user-supplied JSON and used to be ignored entirely (`kf.cx = 0.5`
+    /// hardcoded), so two renders differing only in focus came out byte-identical.
+    #[test]
+    fn a_zoom_regions_focus_point_is_read_and_clamped() {
+        let write = |json: &str| {
+            let p = std::env::temp_dir().join(format!("clipxd-zoomtest-{}.json", std::process::id()));
+            std::fs::write(&p, json).unwrap();
+            let z = load_project(&p).unwrap().zoom_regions;
+            let _ = std::fs::remove_file(&p);
+            z
+        };
+
+        let z = write(r#"{"zoom_regions":[{"start":0,"end":1,"scale":2,"cx":0.1,"cy":0.9}]}"#);
+        assert_eq!((z[0].cx, z[0].cy), (0.1, 0.9));
+
+        // a project written before the editor had a focus control keeps the old centred crop
+        let old = write(r#"{"zoom_regions":[{"start":0,"end":1,"scale":2}]}"#);
+        assert_eq!((old[0].cx, old[0].cy), (0.5, 0.5));
+
+        // out-of-range values would sample off-frame
+        let wild = write(r#"{"zoom_regions":[{"start":0,"end":1,"scale":2,"cx":-3,"cy":42}]}"#);
+        assert_eq!((wild[0].cx, wild[0].cy), (0.0, 1.0));
+    }
+
+    /// The per-render scratch dir is only reclaimed by `Scratch::drop`, which SIGKILL and
+    /// OOM-kill skip; `sweep_stale_scratch` is what bounds the leak. It must not touch a
+    /// concurrent render's dir, which is why the discriminator is age.
+    #[test]
+    fn the_scratch_sweep_reclaims_old_dirs_and_spares_live_ones() {
+        use std::time::Duration;
+        let root = std::env::temp_dir().join(format!("clipxd-sweeptest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (mine, theirs, other) =
+            (root.join("clipxd-beautify-1-1"), root.join("clipxd-beautify-2-2"), root.join("not-ours"));
+        for d in [&mine, &theirs, &other] {
+            std::fs::create_dir_all(d.join("in")).unwrap();
+        }
+
+        // a concurrent render's dir is younger than the cutoff and must survive
+        sweep_stale_scratch(&root, Duration::from_secs(6 * 3600));
+        assert!(mine.exists() && theirs.exists(), "the sweep ate a live render's scratch dir");
+
+        // an abandoned one is older than the cutoff and must go — with its contents
+        sweep_stale_scratch(&root, Duration::ZERO);
+        assert!(!mine.exists() && !theirs.exists(), "the sweep left a dead render's frames behind");
+        assert!(other.exists(), "the sweep must only touch clipxd-beautify-* dirs");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

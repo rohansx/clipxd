@@ -109,6 +109,10 @@ pub struct AppState {
     /// Caps how many Phase-2 enrichments run at once. Every ingest detaches one; unbounded,
     /// a burst of recordings would stack ffmpeg+OCR jobs until the 4 GB box falls over.
     pub phase2_permits: Arc<tokio::sync::Semaphore>,
+    /// Caps how many `POST /clip/:id/render` calls run at once — see `render_clip`. Separate from
+    /// `phase2_permits` on purpose: a render is a user waiting on a response, and queueing it
+    /// behind minutes of background enrichment would be a timeout, not a bound.
+    pub render_permits: Arc<tokio::sync::Semaphore>,
     /// Fixed-window hit counters keyed by `"<bucket>:<client>"` — see [`rate_limit`].
     rate: Arc<StdMutex<HashMap<String, (u32, std::time::Instant)>>>,
 }
@@ -126,6 +130,7 @@ fn app_state_for_test() -> AppState {
         stage_sessions: Arc::new(AsyncMutex::new(HashMap::new())),
         clip_claims: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         phase2_permits: Arc::new(tokio::sync::Semaphore::new(1)),
+        render_permits: Arc::new(tokio::sync::Semaphore::new(1)),
         rate: Arc::new(StdMutex::new(HashMap::new())),
     }
 }
@@ -193,6 +198,7 @@ pub fn app(clips_dir: PathBuf, public: bool) -> Router {
         stage_sessions,
         clip_claims: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         phase2_permits: Arc::new(tokio::sync::Semaphore::new(2)),
+        render_permits: Arc::new(tokio::sync::Semaphore::new(2)),
         rate: Arc::new(StdMutex::new(HashMap::new())),
     };
     // read-only surface — always present, safe to expose publicly (unguessable share links)
@@ -2624,16 +2630,29 @@ async fn set_subtitle_style(
     Ok(Json(serde_json::json!({ "ok": true, "subtitle_style": index.subtitle_style })))
 }
 
-/// Resolve the `clipxd` CLI: a sibling release build (fast), then the debug sibling, then PATH.
+/// Resolve the `clipxd` CLI: the binary sitting next to this one, then a sibling `../release`
+/// build, then PATH. And say which, because getting this wrong is invisible.
+///
+/// The order used to be `../release` first, which is only ever a *different build* from the one
+/// running: `target/debug/clipxd-web` shelled out to `target/release/clipxd`, so on this box a
+/// freshly-built service kept rendering with a binary from three weeks earlier — verified, that
+/// release build ignores zoom focus entirely and two focus points came out byte-identical, while
+/// the debug build beside it renders them correctly.
+///
+/// This does not change production. The container installs both binaries into `/usr/local/bin`
+/// (see `Dockerfile`), where `../release/clipxd` does not exist and the sibling always did the
+/// work — the swap only stops picking up a stale artifact on a dev box.
 fn clipxd_bin() -> PathBuf {
     let exe = std::env::current_exe().ok();
     let dir = exe.as_ref().and_then(|p| p.parent());
+    let sibling = dir.map(|d| d.join("clipxd"));
     let release = dir.and_then(|d| d.parent()).map(|t| t.join("release").join("clipxd"));
-    let debug = dir.map(|d| d.join("clipxd"));
-    release
+    let bin = sibling
         .filter(|p| p.exists())
-        .or_else(|| debug.filter(|p| p.exists()))
-        .unwrap_or_else(|| PathBuf::from("clipxd"))
+        .or_else(|| release.filter(|p| p.exists()))
+        .unwrap_or_else(|| PathBuf::from("clipxd"));
+    eprintln!("clipxd CLI: {}", bin.display());
+    bin
 }
 
 /// Snapshot the set of clip-dir names currently in `dir` (so we can spot a freshly imported one).
@@ -2955,11 +2974,59 @@ struct RenderQ {
 }
 
 /// Whitelist the wallpaper name (preset or hex) so it's safe to pass to the renderer.
+///
+/// This list must cover every id `WALLPAPERS` offers in `app/src/WatchBody.tsx` — anything
+/// missing falls through to the `_` arm and silently renders Aurora instead, which is exactly
+/// how "mint" shipped broken. `every_wallpaper_the_ui_offers_survives_safe_bg` reads that file
+/// and fails here if the two lists drift apart again.
 fn safe_bg(s: Option<&str>) -> String {
     match s {
-        Some(b) if ["aurora", "dusk", "ocean", "violet", "noir", "gradient"].contains(&b) => b.to_string(),
+        Some(b) if ["aurora", "dusk", "ocean", "violet", "noir", "mint", "gradient"].contains(&b) => b.to_string(),
         Some(b) if b.starts_with('#') && b.len() <= 7 && b[1..].chars().all(|c| c.is_ascii_hexdigit()) => b.to_string(),
         _ => "aurora".to_string(),
+    }
+}
+
+/// A scratch path for ONE render request. Keyed on the request, not the clip.
+///
+/// Keying on the clip id alone meant two people rendering the same clip — or one person hitting
+/// Export twice — shared `clipxd-proj-{id}.json` and `clipxd-render-{id}.{fmt}`, and whichever
+/// request finished first unlinked both. Three simultaneous renders of one clip produced: an
+/// HTTP 500 although the renderer exited 0, a half-written file served as 200 ("Invalid NAL unit
+/// size"), and one request handed another request's video with its trim silently missing.
+/// `api.ts` always POSTs a body, so the project file is written on *every* render.
+fn render_scratch(id: &str, req: &str, ext: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("clipxd-render-{id}-{req}.{ext}"))
+}
+
+/// Deletes a render's scratch files when it drops — on the early returns, on the `?`s, on a
+/// panic, and on the ordinary success path.
+///
+/// Making the path unique per request fixed the collisions but removed the only thing that had
+/// been reclaiming these files: the old path was fixed per clip, so the next render of that clip
+/// overwrote it and the leak was bounded at one file per clip. Now every request mints its own,
+/// and the `remove_file` calls sit at the bottom of the `spawn_blocking` closure behind two `?`s
+/// and three earlier returns — the 404 for a clip with no video leaked the project file every
+/// time (measured: 5 POSTs, 5x 404, 5 files, each up to `DefaultBodyLimit`'s 512 MB).
+///
+/// RAII rather than more `remove_file` calls because the next early return added to `render_clip`
+/// will not remember to clean up, and this way it does not have to.
+#[derive(Default)]
+struct RenderScratch(Vec<std::path::PathBuf>);
+
+impl RenderScratch {
+    /// Hand back the path, and reclaim it whatever happens next.
+    fn track(&mut self, p: std::path::PathBuf) -> std::path::PathBuf {
+        self.0.push(p.clone());
+        p
+    }
+}
+
+impl Drop for RenderScratch {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 
@@ -2971,11 +3038,26 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         return Err((StatusCode::BAD_REQUEST, "bad id".into()));
     }
     require_clip_access(&s, &headers, &id)?;
+    // The heaviest endpoint in the service, and until now the only unbounded one: each render
+    // holds a full PNG dump of the clip in its own scratch dir (they used to share one) and
+    // buffers the whole finished file in a `Vec<u8>`, inside a 2 GB cgroup. Same shape as
+    // `phase2_permits`, taken before anything is written so queued requests hold no disk.
+    let permit = s
+        .render_permits
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "renderer is shutting down".to_string()))?;
+    // unique per request — see `render_scratch`. `mint_clip_id` is already the collision-free
+    // token minter here (timestamp + rand), so reuse it rather than growing a second one.
+    let req = mint_clip_id();
+    // every path out of here reclaims what it wrote — see `RenderScratch`
+    let mut scratch = RenderScratch::default();
     // the POST body, if present, is the editor's .clipxd project (zoom/trim/speed) → bake it in
     let project_file = if body.is_empty() {
         None
     } else {
-        let pf = std::env::temp_dir().join(format!("clipxd-proj-{id}.json"));
+        let pf = scratch.track(render_scratch(&id, &req, "clipxd.json"));
         std::fs::write(&pf, &body).ok().map(|_| pf)
     };
     let dir = s.clips_dir.join(&id);
@@ -2995,10 +3077,15 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
         _ => "mp4",
     };
     let mockup = p.mockup.unwrap_or(true);
-    let out = std::env::temp_dir().join(format!("clipxd-render-{id}.{fmt}"));
-    let bin = clipxd_bin(); // release → debug → PATH
-    let (out2, fmt2, proj, bg2, ev2) = (out.clone(), fmt.to_string(), project_file.clone(), bg, events);
+    let out = scratch.track(render_scratch(&id, &req, fmt));
+    let bin = clipxd_bin(); // sibling → ../release → PATH, and it says which
+    let (out2, fmt2, proj, bg2, ev2, id2) = (out.clone(), fmt.to_string(), project_file.clone(), bg, events, id.clone());
     let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        // Both live exactly as long as the work that needs them. The permit rides into the
+        // closure rather than staying in the handler because a client that disconnects mid-render
+        // cancels the handler's future while ffmpeg keeps going — releasing the permit there would
+        // let the next request start a second render alongside the abandoned one.
+        let (_scratch, _permit) = (scratch, permit);
         let mut c = std::process::Command::new(&bin);
         c.arg("beautify").arg(&video).args(["--format", &fmt2, "--padding", "8", "--bg", &bg2]);
         if zoom.exists() {
@@ -3020,13 +3107,19 @@ async fn render_clip(State(s): State<AppState>, Path(id): Path<String>, Query(p)
             c.arg("--captions").arg(dir.join("index.json"));
         }
         c.arg("--out").arg(&out2);
-        let st = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
-        let b = if st.success() { std::fs::read(&out2)? } else { Vec::new() };
-        let _ = std::fs::remove_file(&out2);
-        if let Some(pf) = &proj {
-            let _ = std::fs::remove_file(pf);
+        // Capture stderr instead of discarding it. `beautify` builds its audio `-filter_complex`
+        // by machine out of the user's edit list, and with both streams nulled the only signal a
+        // malformed graph produced was a bare 500 — same treatment `POST /import` already gives
+        // its child process, so match that rather than invent a third convention.
+        let o = c.stdout(std::process::Stdio::null()).output()?;
+        if !o.status.success() {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("render {id2}: beautify failed ({})\n{err}", o.status);
+            let tail: String = err.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("; ");
+            anyhow::bail!("beautify exited {}: {tail}", o.status);
         }
-        anyhow::ensure!(!b.is_empty(), "beautify produced no output");
+        let b = std::fs::read(&out2)?;
+        anyhow::ensure!(!b.is_empty(), "beautify exited 0 but wrote an empty file");
         Ok(b)
     })
     .await
@@ -5020,8 +5113,8 @@ if (askIn)  askIn.addEventListener('keydown', e => { if (e.key === 'Enter') doAs
 #[cfg(test)]
 mod tests {
     use super::{
-        format_view_count, html_escape, merge_browser_trace_into_clip, mint_clip_id, share_base, share_slug_for, short_tail,
-        slugify_title, truncate_chars, try_claim, validate_chunks, ClipClaims,
+        format_view_count, html_escape, merge_browser_trace_into_clip, mint_clip_id, render_scratch, safe_bg, share_base,
+        share_slug_for, short_tail, slugify_title, truncate_chars, try_claim, validate_chunks, ClipClaims,
     };
     use std::sync::{Arc, Mutex as StdMutex};
 
@@ -5470,4 +5563,107 @@ mod tests {
             assert!(seen.insert(mint_clip_id()), "mint_clip_id produced a duplicate");
         }
     }
+
+    /// The UI's wallpaper list, `safe_bg`'s whitelist and `wallpaper()`'s match arms are three
+    /// hand-maintained lists that must agree. They didn't: `WatchBody.tsx` offered "mint",
+    /// `safe_bg` didn't whitelist it, so picking Mint fell through to the `_` arm and rendered
+    /// Aurora with no error anywhere.
+    ///
+    /// `safe_bg` alone is not enough to guard that. `wallpaper()` has its own `_ =>` Aurora
+    /// fallback, so adding a preset to the TSX *and* to `safe_bg` and forgetting the renderer
+    /// left this test green while every render came out Aurora — proven by temporarily adding
+    /// "sunset" to both. Hence the second half: every id must also be a named arm of
+    /// `wallpaper()`, which is why "aurora"/"gradient" are spelled out there even though they
+    /// share the fallback's palette.
+    ///
+    /// Both lists are read out of the source rather than restated here, so forgetting either
+    /// side fails.
+    #[test]
+    fn every_wallpaper_the_ui_offers_survives_safe_bg_and_the_renderer() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // the Rust crates are built without app/ in some container contexts
+        let (Ok(tsx), Ok(rs)) = (
+            std::fs::read_to_string(root.join("../../app/src/WatchBody.tsx")),
+            std::fs::read_to_string(root.join("../clipxd-cli/src/beautify.rs")),
+        ) else {
+            return;
+        };
+
+        let list = tsx
+            .split_once("const WALLPAPERS")
+            .and_then(|(_, rest)| rest.split_once('['))
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(inner, _)| inner.to_string())
+            .expect("WALLPAPERS filter list not found in WatchBody.tsx — did its shape change?");
+        let ids: Vec<String> = list
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // the body of `fn wallpaper`, up to the next top-level item
+        let arms = rs
+            .split_once("\nfn wallpaper(")
+            .and_then(|(_, rest)| rest.split_once("\nfn "))
+            .map(|(body, _)| body.to_string())
+            .expect("fn wallpaper not found in clipxd-cli/src/beautify.rs — did it move?");
+
+        assert!(ids.len() >= 5, "parsed only {ids:?} from WatchBody.tsx — the parse, not the lists, is wrong");
+        assert!(ids.iter().any(|i| i == "mint"), "expected 'mint' among {ids:?}");
+        for id in &ids {
+            assert_eq!(&safe_bg(Some(id)), id, "wallpaper '{id}' is offered by the UI but safe_bg rewrites it");
+            assert!(
+                arms.contains(&format!("\"{id}\" =>")) || arms.contains(&format!("\"{id}\" |")),
+                "wallpaper '{id}' is offered by the UI but is not a named arm of wallpaper() in \
+                 clipxd-cli/src/beautify.rs — it would silently render as Aurora"
+            );
+        }
+        // and the fallback still holds for anything not on the list
+        assert_eq!(safe_bg(Some("../etc/passwd")), "aurora");
+        assert_eq!(safe_bg(None), "aurora");
+        assert_eq!(safe_bg(Some("#0d1117")), "#0d1117");
+    }
+
+    /// Two concurrent renders of the same clip must not share scratch files. They did — the
+    /// paths were keyed on the clip id alone, and whichever request finished first unlinked
+    /// both, so a second in-flight request got a 500, a truncated file, or someone else's video.
+    #[test]
+    fn concurrent_renders_of_one_clip_get_their_own_scratch_files() {
+        let (a, b) = (mint_clip_id(), mint_clip_id());
+        let (pa, pb) = (render_scratch("clp_x", &a, "mp4"), render_scratch("clp_x", &b, "mp4"));
+        assert_ne!(pa, pb, "two requests for the same clip collided on {pa:?}");
+        // the project file must not collide with the output either
+        assert_ne!(pa, render_scratch("clp_x", &a, "clipxd.json"));
+        // and the clip id stays in the name, so a stray file is still traceable to its clip
+        assert!(pa.to_string_lossy().contains("clp_x"), "{pa:?}");
+    }
+
+    /// Making the path unique per request removed the only thing that reclaimed it: the old fixed
+    /// path was overwritten by the clip's next render. Nothing sweeps `clipxd-render-*`, so the
+    /// guard is the whole story — and the path that leaked in production is the *early return*
+    /// (`404 no video`, taken after the project file is written), not the happy one.
+    #[test]
+    fn every_exit_path_reclaims_a_renders_scratch_files() {
+        let req = mint_clip_id();
+        let (proj, out) = (render_scratch("clp_guard", &req, "clipxd.json"), render_scratch("clp_guard", &req, "mp4"));
+
+        // an early return: track the project file, then bail before the output is ever produced
+        let early = || -> Result<(), ()> {
+            let mut s = super::RenderScratch::default();
+            std::fs::write(s.track(proj.clone()), b"{}").unwrap();
+            assert!(proj.exists());
+            Err(()) // ← the `no video` 404
+        };
+        assert!(early().is_err());
+        assert!(!proj.exists(), "the 404 path leaked {proj:?} — 5 POSTs left 5 of these");
+
+        // and the ordinary path, output file included
+        {
+            let mut s = super::RenderScratch::default();
+            std::fs::write(s.track(proj.clone()), b"{}").unwrap();
+            std::fs::write(s.track(out.clone()), b"video").unwrap();
+        }
+        assert!(!proj.exists() && !out.exists(), "the success path leaked {proj:?} / {out:?}");
+    }
+
 }

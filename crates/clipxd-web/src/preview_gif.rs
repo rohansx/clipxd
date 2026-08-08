@@ -30,7 +30,7 @@ pub async fn generate(storage: &dyn storage::Storage, id: &str, idx: &Index) -> 
         bail!("clip has no salient frames yet to build a preview from");
     }
 
-    let tmp = std::env::temp_dir().join(format!("clipxd-preview-gif-{id}-{}", std::process::id()));
+    let tmp = scratch_path(id);
     tokio::fs::create_dir_all(&tmp).await.context("scratch dir")?;
     let cleanup = ScratchDir(tmp.clone());
 
@@ -75,6 +75,18 @@ fn pick_frames(idx: &Index) -> Vec<String> {
     }
     let step = refs.len() as f64 / MAX_FRAMES as f64;
     (0..MAX_FRAMES).map(|i| refs[((i as f64 * step) as usize).min(refs.len() - 1)].to_string()).collect()
+}
+
+/// A scratch dir for ONE preview-GIF request.
+///
+/// It was `clipxd-preview-gif-{id}-{pid}` — clip id plus process id, which is a single shared path
+/// for every concurrent `GET /clip/:id/preview.gif` in this process, and [`ScratchDir`]'s `Drop`
+/// is a `remove_dir_all`. Two viewers unfurling one link at the same time, and the first to finish
+/// deletes the second's frames out from under ffmpeg. Precisely the defect `render_scratch` in
+/// `lib.rs` was just fixed for, so this borrows its token minter rather than inventing a second
+/// scheme.
+fn scratch_path(id: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("clipxd-preview-gif-{id}-{}", crate::mint_clip_id()))
 }
 
 /// RAII best-effort cleanup of the scratch dir — GIF generation failing shouldn't leak temp
@@ -126,6 +138,15 @@ mod tests {
         // strictly increasing frame numbers -> timeline order preserved, not shuffled
         let nums: Vec<i32> = picked.iter().map(|p| p.trim_start_matches("frames/").trim_end_matches(".jpg").parse().unwrap()).collect();
         assert!(nums.windows(2).all(|w| w[0] < w[1]), "{nums:?} should be strictly increasing");
+    }
+
+    /// Two concurrent previews of ONE clip in ONE process must not land on the same directory —
+    /// the loser's frames get `remove_dir_all`d mid-encode. See [`scratch_path`].
+    #[test]
+    fn two_previews_of_one_clip_do_not_share_a_scratch_dir() {
+        assert_ne!(scratch_path("clp_x"), scratch_path("clp_x"), "concurrent requests collided");
+        // still traceable back to the clip it belongs to
+        assert!(scratch_path("clp_x").to_string_lossy().contains("clp_x"));
     }
 
     #[test]
